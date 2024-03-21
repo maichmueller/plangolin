@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = 'rgnet'
+version = '0.1'
+authors = [
+    { name = 'Michael Aichmueller', email = 'm.aichmueller@gmail.com' },
+    { name = 'Jakob Krude', email = 'jakob.krude@gmail.com' }
+]
+license = { file = "LICENSE.md" }
+description = 'Relational Graph Neural Networks'
+readme = "README.md"
+keywords = [
+    "graph-neural-network",
+    "gnn",
+    "relational",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.8",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+# development dependency groups
+dev = [
+    'pytest',
+    'pytest-cov'
+]
+
+[project.urls]
+Source = 'https://git.rwth-aachen.de/i6/general/rgnet'
+
+[tool.black]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.nox
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
