@@ -7,67 +7,46 @@ import networkx as nx
 from pymimir import State, Problem
 
 
-class NameToIndexMap:
-    def __init__(self):
-        self.table: Dict[str | None, int] = {None: 0}
-
-    def __getitem__(self, string: str):
-        if string not in self.table:
-            self.table[string] = len(self.table)
-        return self.table[string]
-
-    def size(self):
-        return len(self.table)
-
-
 class ColorGraphEncoder:
     def __init__(self, problem: Problem):
-        index_map = NameToIndexMap()
-        for i, elem in enumerate(
-            itertools.chain(
-                ("o_" + object_.name for object_ in problem.objects),
-                ("t_" + type_.name for type_ in problem.domain.types),
-                (
-                    f"p_{predicate.name}:{i}"
-                    for predicate in problem.domain.predicates
-                    for i in range(predicate.arity)
-                ),
-                (
-                    f"p_{predicate.name}_g:{i}"
-                    for predicate in problem.domain.predicates
-                    for i in range(predicate.arity)
-                ),
-                (
-                    f"~p_{predicate.name}_g:{i}"
-                    for predicate in problem.domain.predicates
-                    for i in range(predicate.arity)
-                ),
-            ),
-        ):
-            index_map.table[elem] = i
-        self._index_map = index_map
+        feature_map: Dict[str | None, int] = {None: 0}
+        for object_ in problem.objects:
+            feature_map["o_" + object_.name] = 0
+        for i, typ in enumerate(problem.domain.types):
+            feature_map["t_" + typ.name] = 1 + i
+        for pred in problem.domain.predicates:
+            a, b, c = 0, 0, 0
+            for a in range(pred.arity):
+                feature_map["p_{predicate.name}:{i}"] = 1 + i + a
+            for b in range(pred.arity):
+                feature_map["p_{predicate.name}_g:{i}"] = 1 + i + a + b
+            for c in range(pred.arity):
+                feature_map["~p_{predicate.name}_g:{i}"] = 1 + i + a + b + c
+        self._color_feature_map = feature_map
         self._problem = problem
 
     def encode(self, state: State):
         graph = nx.Graph(state=state)
 
-        curr_predicate_node = self._index_map.size()
+        curr_predicate_node = 0
 
         # Add vertices
         for obj in self._problem.objects:
             graph.add_node(
-                self._index_map[f"o_{obj.name}"],
-                color=self._index_map[f"t_{obj.type.name}"],
+                self._color_feature_map[f"o_{obj.name}"],
+                color=self._color_feature_map[f"t_{obj.type.name}"],
                 info=obj.type.name,
             )
 
             # Add atom edges
             for atom, prefix, suffix in itertools.chain(
+                # the regular atoms of the state first
                 zip(
                     filter(lambda a: a.predicate.name != "=", state.get_atoms()),
                     itertools.repeat(""),
                     itertools.repeat(""),
                 ),
+                # then the goal atoms
                 (
                     (literal.atom, "~" if literal.negated else "", "_g")
                     for literal in self._problem.goal
@@ -75,12 +54,12 @@ class ColorGraphEncoder:
             ):
                 prev_node_id = None
                 for pos, atom_obj in enumerate(atom.terms):
-                    object_node = self._index_map["o_" + atom_obj.name]
+                    object_node = self._color_feature_map["o_" + atom_obj.name]
                     node_str = f"{prefix}p_{atom.predicate.name}{suffix}:{pos}"
                     # Add predicate node
                     graph.add_node(
                         curr_predicate_node,
-                        color=self._index_map[node_str],
+                        color=self._color_feature_map[node_str],
                         info=node_str,
                     )
                     # Connect predicate node to object node
