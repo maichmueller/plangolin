@@ -1,6 +1,7 @@
 from typing import Optional
 
 import networkx as nx
+import torch
 
 
 def get_colors(graph: nx.Graph):
@@ -12,3 +13,7 @@ def require_not_none(obj, message: Optional[str] = None):
         raise ValueError(
             message if message is not None else f"Required obj to be not None"
         )
+
+
+def get_device_cuda_if_possible():
+    torch.device("cuda" if torch.cuda.is_available() else "cpu")
