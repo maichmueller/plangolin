@@ -6,8 +6,6 @@ import torch_geometric as pyg
 from pymimir import State, Problem, Domain
 from torch_geometric.data import Data
 
-from rgnet.utils import require_not_none
-
 
 class ColorGraphEncoder:
     def __init__(self, domain: Domain):
@@ -30,7 +28,7 @@ class ColorGraphEncoder:
 
     def encode(self, state: State, problem: Optional[Problem] = None):
         problem = problem if problem is not None else state.get_problem()
-        require_not_none(problem, "Problem was neither given nor part of the state")
+        assert problem is not None, "Problem was neither given nor part of the state"
         graph = nx.Graph(state=state)
         for obj in problem.objects:
             graph.add_node(
