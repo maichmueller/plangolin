@@ -34,3 +34,6 @@ class PureGNN(nn.Module):
         aggregated = pyg.nn.global_add_pool(x, batch)
         # reduce from embeddings_size to one -> shape [batch_size, 1]
         return self.readout(aggregated)
+
+    def num_parameter(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)

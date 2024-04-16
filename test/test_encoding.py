@@ -6,8 +6,6 @@ from rgnet.encoding import ColorGraphEncoder
 import networkx as nx
 import matplotlib.pyplot as plt
 
-draw_graph = True
-
 
 def _draw_networkx_graph(graph: nx.Graph):
     nx.draw_networkx(

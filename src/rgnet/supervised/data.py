@@ -50,7 +50,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
                 data.y = float(space.get_distance_to_goal_state(state))
                 data_list.append(data)
             if self.log:
-                logging.info(f"Processed {i} / {len(self.problems)} problems")
+                logging.info(f"Processed {i+1} / {len(self.problems)} problems")
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
