@@ -1,6 +1,7 @@
 import logging
 from typing import Union, List, Tuple, Optional, Callable
 
+import torch
 from pymimir import Problem, StateSpace, GroundedSuccessorGenerator
 from torch_geometric.data import InMemoryDataset, Data
 
@@ -59,3 +60,11 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
 
         self.save(data_list, self.processed_paths[0])
+
+    def get_label_distribution(self) -> torch.Tensor:
+        """
+        Return a tensor of label frequencies. where the i-th element
+         is the frequency of i in the dataset.
+        :return: torch.Tensor of frequencies of shape Size([max(self.y) + 1])
+        """
+        return torch.bincount(self.y.int())
