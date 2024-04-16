@@ -13,16 +13,23 @@ class ColorGraphEncoder:
         i = None  # error trigger incase there are no types in the problem
         for i, typ in enumerate(domain.types):
             feature_map["t_" + typ.name] = i
+        offset = i + 1
         for pred in domain.predicates:
-            offset = i + 1
-            for pos in range(pred.arity):
-                feature_map[f"p_{pred.name}:{pos}"] = offset + pos
-                offset += 1
-            for pos in range(pred.arity):
-                feature_map[f"p_{pred.name}_g:{pos}"] = offset + pos
-                offset += 1
-            for pos in range(pred.arity):
-                feature_map[f"~p_{pred.name}_g:{pos}"] = offset + pos
+            if pred.arity == 0:
+                feature_map[f"p_{pred.name}"] = offset
+                feature_map[f"p_{pred.name}_g"] = offset + 1
+                feature_map[f"~p_{pred.name}_g"] = offset + 2
+                offset += 3
+            else:
+                for pos in range(pred.arity):
+                    feature_map[f"p_{pred.name}:{pos}"] = offset
+                    offset += 1
+                for pos in range(pred.arity):
+                    feature_map[f"p_{pred.name}_g:{pos}"] = offset
+                    offset += 1
+                for pos in range(pred.arity):
+                    feature_map[f"~p_{pred.name}_g:{pos}"] = offset
+                    offset += 1
         self._color_feature_map = feature_map
         self._domain = domain
 
@@ -49,13 +56,22 @@ class ColorGraphEncoder:
         for atom, prefix, suffix in itertools.chain(state_atoms, goal_atoms):
             pred_name = atom.predicate.name
             prev_predicate_node = None
+            obj_names = ",".join(obj.name for obj in atom.terms)
+
+            if atom.predicate.arity == 0:
+                predicate_node = f"{prefix}{pred_name}({obj_names}){suffix}"
+                graph.add_node(
+                    predicate_node,
+                    color=self._color_feature_map[f"{prefix}p_{pred_name}{suffix}"],
+                )
             for pos, obj in enumerate(atom.terms):
                 object_node = obj.name
-                predicate_node = f"{prefix}p_{pred_name}{suffix}:{pos}"
+                color = self._color_feature_map[f"{prefix}p_{pred_name}{suffix}:{pos}"]
+                predicate_node = f"{prefix}{pred_name}({obj_names}){suffix}:{pos}"
 
                 graph.add_node(
                     predicate_node,
-                    color=self._color_feature_map[predicate_node],
+                    color=color,
                 )
                 # Connect predicate node to object node
                 graph.add_edge(object_node, predicate_node)
