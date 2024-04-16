@@ -4,9 +4,7 @@ from typing import Tuple, List, Optional
 
 import pymimir as mi
 
-
-def _path_of_str(path: pathlib.Path | str) -> pathlib.Path:
-    return path if isinstance(path, pathlib.Path) else pathlib.Path(path)
+from rgnet.utils import path_of_str
 
 
 def import_all_from(
@@ -18,7 +16,7 @@ def import_all_from(
     :param domain_name: The exact file name (without suffix) of the domain-file
     :return: A tuple of domain and list of problems.
     """
-    directory = _path_of_str(directory)
+    directory = path_of_str(directory)
     assert directory.is_dir(), str(directory)
     domain_file = (directory / domain_name).with_suffix(".pddl")
     if not domain_file.exists():
@@ -30,7 +28,7 @@ def import_all_from(
 def import_problems(
     directory: pathlib.Path | str, domain: mi.Domain, domain_name: Optional[str] = None
 ) -> List[mi.Problem]:
-    directory: pathlib.Path = _path_of_str(directory)
+    directory: pathlib.Path = path_of_str(directory)
     assert directory.is_dir(), str(directory)
     domain_name = domain.name if domain_name is None else domain_name
 

@@ -9,7 +9,12 @@ class PureGNN(nn.Module):
         self.linear = nn.Linear(in_channel, embedding_size)
         self.layer = nn.ModuleList(
             [
-                pyg.nn.GCNConv(embedding_size, embedding_size, node_dim=0)
+                pyg.nn.GENConv(
+                    in_channels=embedding_size,
+                    out_channels=embedding_size,
+                    aggr="softmax",
+                    node_dim=0,
+                )
                 for _ in range(num_layer)
             ]
         )

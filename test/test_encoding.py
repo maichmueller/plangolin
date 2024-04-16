@@ -3,8 +3,6 @@ import networkx as nx
 import pymimir as mi
 
 from rgnet.encoding import ColorGraphEncoder
-import networkx as nx
-import matplotlib.pyplot as plt
 
 
 def _draw_networkx_graph(graph: nx.Graph):
