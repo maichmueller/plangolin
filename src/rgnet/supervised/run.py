@@ -10,7 +10,7 @@ from rgnet.encoding import ColorGraphEncoder
 from rgnet.pddl_import import import_all_from, import_problems
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 from rgnet.supervised.training import Trainer
-from rgnet.utils import get_device_cuda_if_possible
+from rgnet.utils import get_device_cuda_if_possible, time_delta_now
 
 
 def run():
@@ -43,7 +43,7 @@ def run():
     evaluation_set = MultiInstanceSupervisedSet(
         evaluation_problems, ColorGraphEncoder(domain), root=test_set_path
     )
-    logging.info(f"Took {time.time() - import_time}s to construct the dataset.")
+    logging.info(f"Took {time_delta_now(import_time)} to construct the dataset.")
 
     logging.info(f"Training dataset contains {len(training_set)} graphs/states")
     # logging.info(training_set.get_summary())
@@ -59,11 +59,11 @@ def run():
     )
     trainer.train()
 
-    logging.info(f"Took {time.time() - start_time_training:.2f}s to train the model")
+    logging.info(f"Took {time_delta_now(start_time_training)} to train the model")
 
     logging.info(f"Saved model can be found at {model_save_path}")
 
-    logging.info(f"Completed run after {time.time() - start_time:.2f}s.")
+    logging.info(f"Completed run after {time_delta_now(start_time)}.")
 
 
 if __name__ == "__main__":

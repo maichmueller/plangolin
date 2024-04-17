@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch_geometric as pyg
 
 from rgnet.model import PureGNN
-from rgnet.utils import get_device_cuda_if_possible, path_of_str
+from rgnet.utils import get_device_cuda_if_possible, path_of_str, time_delta_now
 
 
 class Trainer:
@@ -56,7 +56,7 @@ class Trainer:
                 optimizer.step()
 
             logging.info(
-                f"Completed {epoch+1} of {self.epochs} epochs in {time.time() - epoch_start_time:.2f}s"
+                f"Completed {epoch+1} of {self.epochs} epochs in {time_delta_now(epoch_start_time)}"
             )
 
             if self.evaluate_after_epoch:
