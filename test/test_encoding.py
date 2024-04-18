@@ -19,12 +19,13 @@ def _draw_networkx_graph(graph: nx.Graph):
 
 def test_encoding_initial():
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/problem.pddl").parse(domain)
+    problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
     state_space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
-    state = state_space.get_initial_state()
-    graph = ColorGraphEncoder(domain).encode(state)
-    # 4 objects, 2 predicates of arity one and one goal predicate of arity 2
-    assert 4 + (2 + 2) == len(graph.nodes)
+    initial_state = state_space.get_initial_state()
+    graph = ColorGraphEncoder(domain).encode(initial_state)
+    # 2 objects,
+    # 2 * clear, 2 * ontable, 2 * on(a,b)_g, 1 * handempty
+    assert 2 + (2 + 2 + 2 + 1) == len(graph.nodes)
     # the predicate holding is neither in the state nor in the goal
     assert all("holding" not in node_name for node_name in graph.nodes)
     assert all("color" in attr for _, attr in graph.nodes.data())
@@ -32,14 +33,15 @@ def test_encoding_initial():
 
 def test_encoding_goal_state():
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/problem.pddl").parse(domain)
+    problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
     state_space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
-    state = state_space.get_goal_states()[0]
-    graph = ColorGraphEncoder(domain).encode(state)
-    # 4 objects, (2 +1 * 2) state predicates and one goal predicate of arity 2
-    assert 4 + (4 + 2) == len(graph.nodes)
+    goal_state = state_space.get_goal_states()[0]
+    graph = ColorGraphEncoder(domain).encode(goal_state)
+    # 2 objects,
+    # 1 * clear, 1 * ontable, 2 * on(a,b)_g, 2* on(a,b), 1 * handempty
+    assert 2 + (1 + 1 + 2 + 2 + 1) == len(graph.nodes)
     # on is a goal atom and true in the current state
-    assert "p_on_g:0" in graph.nodes and "p_on:0" in graph.nodes
+    assert "on(a,b)_g:0" in graph.nodes and "on(a,b):0" in graph.nodes
     # the predicate holding is neither in the state nor in the goal
     assert all("holding" not in node_name for node_name in graph.nodes)
     assert all("color" in attr for _, attr in graph.nodes.data())
