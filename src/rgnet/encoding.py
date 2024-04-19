@@ -15,14 +15,14 @@ class ColorGraphEncoder:
     each atom will receive multiple nodes which
     """
 
-    def __init__(self, domain: Domain, add_predicate_nodes: bool = True):
+    def __init__(self, domain: Domain, add_global_predicate_nodes: bool = False):
         """
         Initialize the color graph encoder
 
         Parameters
         ----------
         domain: pymimir.Domain, the domain over which instance-states will be encoded
-        add_predicate_nodes: bool, whether to add summarising predicate nodes to the graph.
+        add_global_predicate_nodes: bool, whether to add summarising predicate nodes to the graph.
             Predicate nodes will connect with respective pos-0-atom nodes.
         """
         feature_map: Dict[str | None, int] = {None: 0}
@@ -43,7 +43,7 @@ class ColorGraphEncoder:
                     feature_map[f"~p_{pred.name}_g:{pos}"] = offset + 2
                     offset += 3
 
-        self.add_predicate_nodes = add_predicate_nodes
+        self.add_predicate_nodes = add_global_predicate_nodes
         self._feature_map = feature_map
         self._domain = domain
 
@@ -60,11 +60,20 @@ class ColorGraphEncoder:
         assert problem is not None, "Problem was neither given nor part of the state"
         graph = nx.Graph(state=state)
 
-        for pred in self.domain.predicates:
-            graph.add_node(
-                pred.name,
-                feature=self._feature_map[None],
-            )
+        if self.add_predicate_nodes:
+            for pred in self.domain.predicates:
+                graph.add_node(
+                    pred.name,
+                    feature=self._feature_map[None],
+                )
+                graph.add_node(
+                    f"{pred.name}_g",
+                    feature=self._feature_map[None],
+                )
+                graph.add_node(
+                    f"~{pred.name}_g",
+                    feature=self._feature_map[None],
+                )
 
         for obj in problem.objects:
             graph.add_node(
@@ -91,7 +100,7 @@ class ColorGraphEncoder:
                 atom_node = f"{prefix}{pred_name}({obj_names}){suffix}"
                 graph.add_node(
                     atom_node,
-                    color=self._feature_map[f"{prefix}p_{pred_name}{suffix}"],
+                    feature=self._feature_map[f"{prefix}p_{pred_name}{suffix}"],
                 )
             for pos, obj in enumerate(atom.terms):
                 object_node = obj.name
@@ -110,6 +119,8 @@ class ColorGraphEncoder:
                 elif self.add_predicate_nodes:
                     # pos 0-node gets the connection to the predicate summarising node
                     graph.add_edge(atom.predicate.name, atom_node)
+                    if suffix:
+                        graph.add_edge(f"{prefix}{atom.predicate.name}_g", atom_node)
 
                 prev_predicate_node = atom_node
         return graph
