@@ -47,7 +47,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         for i, problem in enumerate(self.problems):
             space = StateSpace.new(problem, GroundedSuccessorGenerator(problem))
             for state in space.get_states():
-                data: Data = self.encoder.encoding_to_pyg_data(state)
+                data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
                 data.y = float(space.get_distance_to_goal_state(state))
                 data_list.append(data)
             if self.log:
