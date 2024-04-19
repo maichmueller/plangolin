@@ -40,7 +40,8 @@ where = ["src"]
 # development dependency groups
 dev = [
     'pytest',
-    'pytest-cov'
+    'pytest-cov',
+    'pre-commit'
 ]
 
 [project.urls]
