@@ -3,7 +3,7 @@ from typing import Dict, Optional
 
 import networkx as nx
 import torch_geometric as pyg
-from pymimir import State, Problem, Domain
+from pymimir import Domain, Problem, State
 from torch_geometric.data import Data
 
 

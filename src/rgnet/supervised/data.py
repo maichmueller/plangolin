@@ -1,9 +1,9 @@
 import logging
-from typing import Union, List, Tuple, Optional, Callable
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
-from pymimir import Problem, StateSpace, GroundedSuccessorGenerator
-from torch_geometric.data import InMemoryDataset, Data
+from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
+from torch_geometric.data import Data, InMemoryDataset
 
 from rgnet.encoding import ColorGraphEncoder
 

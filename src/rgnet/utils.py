@@ -1,14 +1,12 @@
-import time
-from datetime import timedelta
-
-import networkx as nx
-import torch
-
 import logging
 import pathlib
-from typing import Tuple, List, Optional
+import time
+from datetime import timedelta
+from typing import List, Optional, Tuple
 
+import networkx as nx
 import pymimir as mi
+import torch
 
 
 def get_colors(graph: nx.Graph):

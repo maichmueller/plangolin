@@ -7,14 +7,18 @@ from datetime import datetime
 import torch
 import torch_geometric as pyg
 import wandb
-from lightning.pytorch import seed_everything, Trainer
+from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 
 from rgnet.encoding import ColorGraphEncoder
 from rgnet.model import PureGNN
-from rgnet.utils import import_all_from, import_problems
 from rgnet.supervised.data import MultiInstanceSupervisedSet
-from rgnet.utils import get_device_cuda_if_possible, time_delta_now
+from rgnet.utils import (
+    get_device_cuda_if_possible,
+    import_all_from,
+    import_problems,
+    time_delta_now,
+)
 
 
 def _dataset_of(problems, domain, root):

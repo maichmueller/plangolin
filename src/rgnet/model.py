@@ -2,7 +2,7 @@ import lightning as L
 import torch
 import torch.nn.functional as F
 import torch_geometric as pyg
-from torch import nn, Tensor
+from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
