@@ -12,7 +12,7 @@ from lightning.pytorch.loggers import WandbLogger
 
 from rgnet.encoding import ColorGraphEncoder
 from rgnet.model import PureGNN
-from rgnet.pddl_import import import_all_from, import_problems
+from rgnet.utils import import_all_from, import_problems
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 from rgnet.utils import get_device_cuda_if_possible, time_delta_now
 
