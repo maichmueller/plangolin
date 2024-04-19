@@ -30,7 +30,9 @@ def _dataset_of(problems, domain, root):
 def _setup_datasets(problem_path: str, dataset_path: str, batch_size: int):
     domain, problems = import_all_from(problem_path)
     training_set = _dataset_of(problems, domain, dataset_path + "/train")
-    train_loader = pyg.loader.DataLoader(training_set, batch_size, shuffle=True)
+    train_loader = pyg.loader.DataLoader(
+        training_set, batch_size, shuffle=True, num_workers=10
+    )
 
     evaluation_set = _dataset_of(
         import_problems(problem_path + "/eval", domain), domain, dataset_path + "/eval"
@@ -40,7 +42,7 @@ def _setup_datasets(problem_path: str, dataset_path: str, batch_size: int):
         import_problems(problem_path + "/test", domain), domain, dataset_path + "/test"
     )
     eval_loader, test_loader = [
-        pyg.loader.DataLoader(dset, batch_size, shuffle=False)
+        pyg.loader.DataLoader(dset, batch_size, shuffle=False, num_workers=10)
         for dset in (evaluation_set, test_set)
     ]
 
@@ -96,7 +98,12 @@ def run(
     wlogger.watch(model)
     wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
 
-    trainer = Trainer(accelerator="gpu", devices=1, max_epochs=epochs, logger=wlogger)
+    trainer = Trainer(
+        accelerator="auto",
+        devices=1,
+        max_epochs=epochs,
+        logger=wlogger,
+    )
 
     logging.info("Starting training")
     trainer.fit(

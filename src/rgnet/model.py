@@ -1,16 +1,16 @@
-import lightning as L
 import torch
 import torch.nn.functional as F
 import torch_geometric as pyg
+from lightning import LightningModule
 from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
 
-class PureGNN(L.LightningModule):
-
+class PureGNN(LightningModule):
     def __init__(self, in_channel: int, embedding_size: int, num_layer: int) -> None:
         super().__init__()
+        self.l1_loss = nn.L1Loss(reduction="mean")
         self.linear = nn.Linear(in_channel, embedding_size)
         self.layer = nn.ModuleList()
         for i in range(num_layer):
@@ -57,7 +57,7 @@ class PureGNN(L.LightningModule):
     def training_step(self, batch, batch_index) -> torch.Tensor:
         x, edge_index = batch.x, batch.edge_index
         out = self(x, edge_index, batch.batch)
-        loss: Tensor = F.l1_loss(out, batch.y)
+        loss: Tensor = self.l1_loss(out, batch.y)
         self.log("train_loss", loss, batch_size=batch.batch_size)
         return loss
 
