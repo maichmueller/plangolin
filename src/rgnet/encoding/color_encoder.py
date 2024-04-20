@@ -10,6 +10,7 @@ from pymimir import Atom, Domain, Literal, Object, Predicate, Problem, State, Ty
 from torch_geometric.data import Data
 
 from rgnet.encoding.encoder_base import StateEncoderBase
+from rgnet.encoding.node_names import node_of
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
 
@@ -71,7 +72,7 @@ class ColorGraphEncoder(StateEncoderBase):
 
         for obj in problem.objects:
             graph.add_node(
-                self.node_of(obj),
+                node_of(obj),
                 feature=self.feature(obj.type),
                 info=obj.type.name,
             )
@@ -79,7 +80,7 @@ class ColorGraphEncoder(StateEncoderBase):
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
             if self.add_predicate_nodes:
                 graph.add_node(
-                    self.node_of(atom_or_literal, as_predicate=True),
+                    node_of(atom_or_literal, as_predicate=True),
                     feature=self.feature(None),
                 )
 
@@ -88,12 +89,12 @@ class ColorGraphEncoder(StateEncoderBase):
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
             if atom.predicate.arity == 0:
                 graph.add_node(
-                    self.node_of(atom_or_literal),
+                    node_of(atom_or_literal),
                     feature=self.feature(atom_or_literal),
                 )
             for pos, obj in enumerate(atom.terms):
-                object_node = self.node_of(obj, pos)
-                atom_or_literal_node = self.node_of(atom_or_literal, pos)
+                object_node = node_of(obj, pos)
+                atom_or_literal_node = node_of(atom_or_literal, pos)
 
                 graph.add_node(
                     atom_or_literal_node,
@@ -107,7 +108,7 @@ class ColorGraphEncoder(StateEncoderBase):
                 elif self.add_predicate_nodes:
                     # pos 0-node gets the connection to the predicate summarising node
                     graph.add_edge(
-                        self.node_of(
+                        node_of(
                             atom_or_literal,
                             as_predicate=True,
                         ),
@@ -159,51 +160,3 @@ class ColorGraphEncoder(StateEncoderBase):
     @feature.register
     def _(self, type_: Type, _: Any = None):
         return self._feature_map[ColorKey(type_.name, -1, False, False)]
-
-    @singledispatchmethod
-    def node_of(self, *args, **kwargs) -> str | None:
-        return None
-
-    @node_of.register
-    def atom_node(
-        self,
-        atom: Atom,
-        pos: int | None = None,
-        *args,
-        as_predicate: bool = False,
-        **kwargs,
-    ) -> str | None:
-        if as_predicate:
-            return self.node_of(atom.predicate, is_goal=False, is_negated=False)
-        return f"{atom.get_name()}:{pos}"
-
-    @node_of.register
-    def predicate_node(
-        self, predicate: Predicate, *, is_goal: bool, is_negated: bool, **kwargs
-    ) -> str | None:
-        if not self.add_predicate_nodes:
-            return None
-        negation = "~" if is_negated else ""
-        suffix = "_g" if is_goal else ""
-        return f"{negation}{predicate.name}{suffix}"
-
-    @node_of.register
-    def literal_node(
-        self,
-        literal: Literal,
-        pos: int | None = None,
-        *,
-        as_predicate: bool = False,
-        **kwargs,
-    ) -> str | None:
-        if as_predicate:
-            return self.node_of(
-                literal.atom.predicate, is_goal=True, is_negated=literal.negated
-            )
-        negation = "~" if literal.negated else ""
-        pos_string = f":{pos}" if pos is not None else ""
-        return f"{negation}{literal.atom.get_name()}_g{pos_string}"
-
-    @node_of.register
-    def object_node(self, obj: Object, *args, **kwargs) -> str | None:
-        return obj.name
