@@ -1,10 +1,14 @@
 import itertools
+import warnings
 from collections import namedtuple
+from copy import copy
+from enum import Enum
 from functools import singledispatchmethod
 from types import NoneType
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple, TypeVar
 
 import networkx as nx
+import numpy as np
 import torch_geometric as pyg
 from pymimir import Atom, Domain, Literal, Object, Predicate, Problem, State, Type
 from torch_geometric.data import Data
@@ -15,6 +19,15 @@ from rgnet.encoding.node_names import node_of
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
 
 
+class FeatureMode(Enum):
+    # mere integer naming the category
+    categorical = 0
+    # one-hot vector encoding
+    one_hot = 1
+    # combinatorial encoding of features in a vector of user-determined length
+    combinatorial = 2
+
+
 class ColorGraphEncoder(StateEncoderBase):
     """
     A state encoder into an associated colored state-graph for a specified domain.
@@ -23,7 +36,13 @@ class ColorGraphEncoder(StateEncoderBase):
     each atom will receive multiple nodes which
     """
 
-    def __init__(self, domain: Domain, add_global_predicate_nodes: bool = False):
+    def __init__(
+        self,
+        domain: Domain,
+        feature_mode: FeatureMode = FeatureMode.categorical,
+        add_global_predicate_nodes: bool = False,
+        feature_enc_len: Optional[int] = None,
+    ):
         """
         Initialize the color graph encoder
 
@@ -33,29 +52,80 @@ class ColorGraphEncoder(StateEncoderBase):
         add_global_predicate_nodes: bool, whether to add summarising predicate nodes to the graph.
             Predicate nodes will connect with respective pos-0-atom nodes, if applicable.
         """
-        self._domain = domain
-        self._feature_map = self._build_feature_map()
-        self.add_predicate_nodes = add_global_predicate_nodes
+        if not isinstance(feature_mode, FeatureMode):
+            raise ValueError(
+                f"`feature_mode` value {feature_mode} not element of the enum."
+            )
 
-    def _build_feature_map(self):
-        colormap: Dict[ColorKey | None, int] = {None: 0}
-        feature = 1
-        for i, typ in enumerate(self.domain.types):
-            colormap[ColorKey(typ.name, -1, False, False)] = feature
-            feature += 1
-        for pred in self.domain.predicates:
+        self.add_predicate_nodes = add_global_predicate_nodes
+        self._domain = domain
+        self._predicates = self.domain.predicates
+        self._feature_mode = feature_mode
+        self._feature_enc_len = feature_enc_len
+        self._feature_lookup = self._build_feature_map(feature_mode, feature_enc_len)
+
+    def _key_gen(self) -> Iterator[ColorKey]:
+        for i, typ in enumerate(self._domain.types):
+            yield ColorKey(typ.name, -1, False, False)
+        for pred in self._predicates:
             for pos in range(0, max(1, pred.arity)):
                 pos_or_none = pos if pred.arity > 0 else None
-                colormap[
-                    ColorKey(pred.name, pos_or_none, is_goal=False, is_negated=False)
-                ] = feature
-                colormap[
-                    ColorKey(pred.name, pos_or_none, is_goal=True, is_negated=False)
-                ] = (feature + 1)
-                colormap[
-                    ColorKey(pred.name, pos_or_none, is_goal=True, is_negated=True)
-                ] = (feature + 2)
-                feature += 3
+                for is_goal, is_negated in (
+                    (False, False),
+                    (True, False),
+                    (True, True),
+                ):
+                    yield ColorKey(pred.name, pos_or_none, is_goal, is_negated)
+
+    def _build_feature_map(self, mode: FeatureMode, encoding_len: Optional[int] = None):
+        key_iter = self._key_gen()
+        if mode == FeatureMode.categorical:
+            none_feature = 0
+            feature_iter = itertools.count(start=1)
+        elif mode == FeatureMode.one_hot:
+            encoding_len = 0
+            encoding_len = sum(3 * max(1, pred.arity) for pred in self._predicates)
+            none_feature = np.zeros(encoding_len, dtype=np.int8)
+            feature_iter = np.eye(encoding_len, dtype=np.int8)
+        else:
+            if encoding_len is None:
+                raise ValueError(
+                    "`encoding_len` cannot be None if combinatorial mode is enabled"
+                )
+            # each position is a 0 or 1, encoding_len many positions -> 2^enc_len many different states possible,
+            # only (0,0,...,0,0) is reserved as the null encoding (hence, -1)
+            max_encoded_values = 2**encoding_len - 1
+            required_nr_states = sum(
+                3 * max(1, pred.arity) for pred in self._predicates
+            )
+            if max_encoded_values < required_nr_states:
+                raise ValueError(
+                    f"{encoding_len=} cannot represent all the necessary encoding states ({required_nr_states})"
+                )
+            elif encoding_len >= required_nr_states:
+                warnings.warn(
+                    f"{encoding_len=} is no less than {required_nr_states=}. Will revert to one-hot encoding."
+                )
+                return self._build_feature_map(FeatureMode.one_hot)
+            else:
+                unit_matrix = np.eye(encoding_len, dtype=np.int8)
+
+                def feature_vector_gen():
+                    for idx_comb in itertools.chain(
+                        itertools.combinations(range(encoding_len), n_combs)
+                        for n_combs in range(1, encoding_len + 1)
+                    ):
+                        # sum up the unit vectors of the given indices to create another feature vector
+                        yield sum(unit_matrix[i] for i in idx_comb)
+
+                none_feature = np.zeros(encoding_len, dtype=np.int8)
+                feature_iter = feature_vector_gen()
+
+        colormap: Dict[Optional[ColorKey], np.ndarray] = dict(
+            zip(key_iter, feature_iter)
+        )
+        colormap[None] = none_feature
+
         return colormap
 
     @property
@@ -63,8 +133,16 @@ class ColorGraphEncoder(StateEncoderBase):
         return self._domain
 
     @property
-    def feature_mapping(self):
-        return self._feature_map
+    def feature_mode(self):
+        return self._feature_mode
+
+    @property
+    def feature_encoding_len(self):
+        return self._feature_enc_len
+
+    @property
+    def feature_lookup(self):
+        return copy(self._feature_lookup)
 
     def encode(self, state: State):
         problem = state.get_problem()
@@ -136,7 +214,7 @@ class ColorGraphEncoder(StateEncoderBase):
 
     @singledispatchmethod
     def feature(self, _: Any):
-        return self._feature_map[None]
+        return self._feature_lookup[None]
 
     @feature.register
     def _(self, atom: Atom, pos: int | None = None):
@@ -144,7 +222,7 @@ class ColorGraphEncoder(StateEncoderBase):
             raise ValueError(
                 f"atom {atom.get_name()} has arity {atom.predicate.arity} > 0, but given pos is None"
             )
-        return self._feature_map[ColorKey(atom.predicate.name, pos, False, False)]
+        return self._feature_lookup[ColorKey(atom.predicate.name, pos, False, False)]
 
     @feature.register
     def _(self, literal: Literal, pos: int | None = None):
@@ -153,10 +231,10 @@ class ColorGraphEncoder(StateEncoderBase):
             raise ValueError(
                 f"atom {atom.get_name()} has arity {atom.predicate.arity} > 0, but given pos is None"
             )
-        return self._feature_map[
+        return self._feature_lookup[
             ColorKey(atom.predicate.name, pos, True, literal.negated)
         ]
 
     @feature.register
     def _(self, type_: Type, _: Any = None):
-        return self._feature_map[ColorKey(type_.name, -1, False, False)]
+        return self._feature_lookup[ColorKey(type_.name, -1, False, False)]

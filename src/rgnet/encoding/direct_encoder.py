@@ -35,30 +35,30 @@ class DirectStateEncoder(StateEncoderBase):
         domain: pymimir.Domain, the domain over which instance-states will be encoded
         """
         self._domain = domain
-        self._feature_map, self._predicate_list = self._build_feature_map()
+        self._predicates = self.domain.predicates
+        self._feature_map = self._build_feature_map()
 
     def _build_feature_map(self):
         # times 3 because of augmentation for pred_name * (is normal atom / is goal atom / is negated goal atom)
-        predicate_list = self.domain.predicates
-        feature_dim = len(predicate_list) * 3
+        feature_dim = len(self._predicates) * 3
         # one-hot encoding of the (possibly (negated) goal) predicates
-        edge_feature_map: np.ndarray = np.eye(feature_dim).reshape(
-            len(predicate_list), 3, -1
+        edge_feature_vectors: np.ndarray = np.eye(feature_dim, dtype=np.int8).reshape(
+            len(self._predicates), 3, -1
         )
-        return edge_feature_map, predicate_list
+        return edge_feature_vectors
 
     @singledispatchmethod
-    def feature_vector(self, item) -> np.ndarray:
+    def feature(self, item) -> np.ndarray:
         raise NotImplementedError("Type passed not supported: {type(item)}")
 
-    @feature_vector.register
+    @feature.register
     def atom_feature_vector(self, atom: Atom) -> np.ndarray:
-        return self._feature_map[self._predicate_list.index(atom.predicate), 0]
+        return self._feature_map[self._predicates.index(atom.predicate), 0]
 
-    @feature_vector.register
+    @feature.register
     def literal_feature_vector(self, literal: Literal) -> np.ndarray:
         return self._feature_map[
-            self._predicate_list.index(literal.atom.predicate), 1 + literal.negated
+            self._predicates.index(literal.atom.predicate), 1 + literal.negated
         ]
 
     @property
@@ -66,11 +66,15 @@ class DirectStateEncoder(StateEncoderBase):
         return self._domain
 
     @staticmethod
-    def _add_feature_vector(graph: nx.DiGraph, from_: str, to: str, vector: np.ndarray):
-        if graph.has_edge(from_, to):
-            graph.edges[from_, to]["feature"] += vector
+    def _emplace_feature(
+        graph: nx.DiGraph, source_obj: str, target_obj: str, feature: np.ndarray
+    ):
+        if graph.has_edge(source_obj, target_obj):
+            # in-place add to combine 1s of  the predicate positions that
+            # are enabling communication between the objects
+            graph.edges[source_obj, target_obj]["feature"] += feature
         else:
-            graph.add_edge(from_, to, feature=vector)
+            graph.add_edge(source_obj, target_obj, feature=feature)
 
     def encode(self, state: State):
         problem = state.get_problem()
@@ -86,16 +90,18 @@ class DirectStateEncoder(StateEncoderBase):
             # only a literal has a member `atom`
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
             if atom.predicate.arity == 0:
-                # TODO: what to do with arity-0 atoms? do these become extra nodes?
-                ...
+                # stand-alone predicates are their own nodes, since no edge can
+                # represent the information of an argument-free predicate being active
+                graph.add_node(node_of(atom), feature=self.feature(None))
             else:
                 objs = atom.terms
                 for i, obj in enumerate(objs):
                     next_obj = objs[i + 1] if len(objs) > 1 else obj
-                    graph.add_edge(
+                    self._emplace_feature(
+                        graph,
                         node_of(obj),
                         node_of(next_obj),
-                        feature=self.feature_vector(atom_or_literal),
+                        self.feature(atom_or_literal),
                     )
             return graph
 
