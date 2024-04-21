@@ -6,14 +6,17 @@ import pytest
 from rgnet.encoding import ColorGraphEncoder
 
 
-def _draw_networkx_graph(graph: nx.Graph):
+def _draw_networkx_graph(graph: nx.Graph, **kwargs):
     nx.draw_networkx(
         graph,
-        with_labels=True,
-        labels={n: str(n) for n in graph.nodes},
-        nodelist=[n for n in graph.nodes],
-        node_color=[attr["color"] for _, attr in graph.nodes.data()],
-        cmap="tab10",
+        with_labels=kwargs.get("with_labels", True),
+        labels=kwargs.get("labels", {n: str(n) for n in graph.nodes}),
+        nodelist=kwargs.get("nodelist", [n for n in graph.nodes]),
+        node_color=kwargs.get(
+            "node_color", [attr["feature"] for _, attr in graph.nodes.data()]
+        ),
+        cmap=kwargs.get("cmap", "tab10"),
+        **kwargs,
     )
     plt.show()
 

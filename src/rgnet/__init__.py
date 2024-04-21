@@ -1,3 +1,3 @@
-from .encoding import ColorGraphEncoder
-from .model import PureGNN
+from .encoding import *
+from .model import *
 from .supervised import *

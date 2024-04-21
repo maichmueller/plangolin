@@ -83,43 +83,43 @@ class ColorGraphEncoder(StateEncoderBase):
             none_feature = 0
             feature_iter = itertools.count(start=1)
         elif mode == FeatureMode.one_hot:
-            encoding_len = 0
             encoding_len = sum(3 * max(1, pred.arity) for pred in self._predicates)
             none_feature = np.zeros(encoding_len, dtype=np.int8)
             feature_iter = np.eye(encoding_len, dtype=np.int8)
         else:
-            if encoding_len is None:
-                raise ValueError(
-                    "`encoding_len` cannot be None if combinatorial mode is enabled"
-                )
-            # each position is a 0 or 1, encoding_len many positions -> 2^enc_len many different states possible,
-            # only (0,0,...,0,0) is reserved as the null encoding (hence, -1)
-            max_encoded_values = 2**encoding_len - 1
             required_nr_states = sum(
                 3 * max(1, pred.arity) for pred in self._predicates
             )
-            if max_encoded_values < required_nr_states:
-                raise ValueError(
-                    f"{encoding_len=} cannot represent all the necessary encoding states ({required_nr_states})"
-                )
-            elif encoding_len >= required_nr_states:
-                warnings.warn(
-                    f"{encoding_len=} is no less than {required_nr_states=}. Will revert to one-hot encoding."
-                )
-                return self._build_feature_map(FeatureMode.one_hot)
+            if encoding_len is None:
+                encoding_len, remainder = divmod(required_nr_states, 2)
+                # we need one more bit if there is a remainder to accommodate all states
+                encoding_len = encoding_len + (remainder > 0)
             else:
+                # each position is a 0 or 1, encoding_len many positions -> 2^enc_len many different states possible,
+                # only (0,0,...,0,0) is reserved as the null encoding (hence, -1)
+                max_encoded_values = 2**encoding_len - 1
+                if max_encoded_values < required_nr_states:
+                    raise ValueError(
+                        f"Given {encoding_len=} cannot represent all the necessary "
+                        f"encoding states ({required_nr_states})"
+                    )
+                if encoding_len >= required_nr_states:
+                    warnings.warn(
+                        f"{encoding_len=} is no less than {required_nr_states=}. Will revert to one-hot encoding."
+                    )
+                    return self._build_feature_map(FeatureMode.one_hot)
+
+            def feature_vector_gen():
                 unit_matrix = np.eye(encoding_len, dtype=np.int8)
+                for idx_comb in itertools.chain(
+                    itertools.combinations(range(encoding_len), n_combs)
+                    for n_combs in range(1, encoding_len + 1)
+                ):
+                    # sum up the unit vectors of the given indices to create another feature vector
+                    yield sum(unit_matrix[i] for i in idx_comb)
 
-                def feature_vector_gen():
-                    for idx_comb in itertools.chain(
-                        itertools.combinations(range(encoding_len), n_combs)
-                        for n_combs in range(1, encoding_len + 1)
-                    ):
-                        # sum up the unit vectors of the given indices to create another feature vector
-                        yield sum(unit_matrix[i] for i in idx_comb)
-
-                none_feature = np.zeros(encoding_len, dtype=np.int8)
-                feature_iter = feature_vector_gen()
+            none_feature = np.zeros(encoding_len, dtype=np.int8)
+            feature_iter = feature_vector_gen()
 
         colormap: Dict[Optional[ColorKey], np.ndarray] = dict(
             zip(key_iter, feature_iter)
