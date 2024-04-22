@@ -78,7 +78,6 @@ class ColorGraphEncoder(StateEncoderBase):
                     yield ColorKey(pred.name, pos_or_none, is_goal, is_negated)
 
     def _build_feature_map(self, mode: FeatureMode, encoding_len: Optional[int] = None):
-        key_iter = self._key_gen()
         if mode == FeatureMode.categorical:
             none_feature = 0
             feature_iter = itertools.count(start=1)
@@ -91,9 +90,7 @@ class ColorGraphEncoder(StateEncoderBase):
                 3 * max(1, pred.arity) for pred in self._predicates
             )
             if encoding_len is None:
-                encoding_len, remainder = divmod(required_nr_states, 2)
-                # we need one more bit if there is a remainder to accommodate all states
-                encoding_len = encoding_len + (remainder > 0)
+                encoding_len, _ = divmod(required_nr_states, 2)
             else:
                 # each position is a 0 or 1, encoding_len many positions -> 2^enc_len many different states possible,
                 # only (0,0,...,0,0) is reserved as the null encoding (hence, -1)
@@ -121,6 +118,7 @@ class ColorGraphEncoder(StateEncoderBase):
             none_feature = np.zeros(encoding_len, dtype=np.int8)
             feature_iter = feature_vector_gen()
 
+        key_iter = self._key_gen()
         colormap: Dict[Optional[ColorKey], np.ndarray] = dict(
             zip(key_iter, feature_iter)
         )
