@@ -3,7 +3,7 @@ import networkx as nx
 import pymimir as mi
 import pytest
 
-from rgnet.encoding import ColorGraphEncoder
+from rgnet.encoding import ColorGraphEncoder, DirectStateEncoder
 
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
@@ -56,6 +56,20 @@ def color_encoded_goal_state(minimal_blocks_setup, request):
     )
 
 
+@pytest.fixture
+def direct_encoded_initial_state(minimal_blocks_setup):
+    space, domain, _ = minimal_blocks_setup
+    state = space.get_initial_state()
+    return DirectStateEncoder(domain).encode(state)
+
+
+@pytest.fixture
+def direct_encoded_goal_state(minimal_blocks_setup):
+    space, domain, _ = minimal_blocks_setup
+    state = space.get_goal_states()[0]
+    return DirectStateEncoder(domain).encode(state)
+
+
 @pytest.mark.parametrize("color_encoded_initial_state", [True, False], indirect=True)
 def test_color_encoding_initial(color_encoded_initial_state):
     graph, with_global_preds = color_encoded_initial_state
@@ -76,7 +90,7 @@ def test_color_encoding_initial(color_encoded_initial_state):
 
 
 @pytest.mark.parametrize("color_encoded_goal_state", [False], indirect=True)
-def test_color_encoding_goal_state(color_encoded_goal_state):
+def test_color_encoding_goal(color_encoded_goal_state):
     graph, _ = color_encoded_goal_state
     # 2 objects,
     # 1 * clear, 1 * ontable, 2 * on(a,b)_g, 2* on(a,b), 1 * handempty
@@ -86,3 +100,27 @@ def test_color_encoding_goal_state(color_encoded_goal_state):
     # the predicate holding is neither in the state nor in the goal
     assert all("holding" not in node_name for node_name in graph.nodes)
     assert all("feature" in attr for _, attr in graph.nodes.data())
+
+
+def test_direct_encoding_initial(direct_encoded_initial_state):
+    graph = direct_encoded_initial_state
+    # 2 objects, 1 auxiliary obj
+    assert 2 + 1 == len(graph.nodes)
+    assert (
+        str(DirectStateEncoder._auxiliary_node) in graph.nodes
+        and "a" in graph.nodes
+        and "b" in graph.nodes
+    )
+    assert all("feature" in attr for *rest, attr in graph.edges.data())
+
+
+def test_direct_encoding_goal(direct_encoded_goal_state):
+    graph = direct_encoded_goal_state
+    # 2 objects, 1 auxiliary obj
+    assert 2 + 1 == len(graph.nodes)
+    assert (
+        str(DirectStateEncoder._auxiliary_node) in graph.nodes
+        and "a" in graph.nodes
+        and "b" in graph.nodes
+    )
+    assert all("feature" in attr for *rest, attr in graph.edges.data())

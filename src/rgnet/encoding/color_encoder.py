@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import itertools
 import warnings
 from collections import namedtuple
@@ -63,6 +65,14 @@ class ColorGraphEncoder(StateEncoderBase):
         self._feature_mode = feature_mode
         self._feature_enc_len = feature_enc_len
         self._feature_lookup = self._build_feature_map(feature_mode, feature_enc_len)
+
+    def __eq__(self, other: ColorGraphEncoder):
+        return (
+            self.add_predicate_nodes == other.add_predicate_nodes
+            and self._domain == other.domain
+            and self._feature_mode == other.feature_mode
+            and self._feature_enc_len == other.feature_encoding_len
+        )
 
     def _key_gen(self) -> Iterator[ColorKey]:
         for i, typ in enumerate(self._domain.types):
