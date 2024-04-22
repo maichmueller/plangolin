@@ -26,6 +26,8 @@ class DirectStateEncoder(StateEncoderBase):
     predicates p1(..., i, j, ...) and p1_GOAL(..., p, j, ...) in the state `s`.
     """
 
+    aux_node = "__aux__"
+
     def __init__(self, domain: Domain):
         """
         Initialize the direct graph encoder
@@ -80,29 +82,39 @@ class DirectStateEncoder(StateEncoderBase):
         problem = state.get_problem()
         graph = nx.DiGraph(encoding=self, state=state)
 
-        for obj in problem.objects:
+        all_objects = problem.objects
+        for obj in all_objects:
             graph.add_node(
                 node_of(obj),
+                feature=self.feature(None),
                 info=obj.type.name,
             )
+        graph.add_node(DirectStateEncoder.aux_node, feature=self.feature(None))
 
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
             # only a literal has a member `atom`
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
-            if atom.predicate.arity == 0:
-                # stand-alone predicates are their own nodes, since no edge can
-                # represent the information of an argument-free predicate being active
-                graph.add_node(node_of(atom), feature=self.feature(None))
+            arity = atom.predicate.arity
+            if arity == 0:
+                # for 0 arity atoms, the aux nodes sends its regards to all objects
+                source_objs = (DirectStateEncoder.aux_node,)
+                target_objs = all_objects
+            elif arity == 1:
+                # a 1 arity atom creates only self-edges
+                source_objs = atom.terms
+                target_objs = source_objs
             else:
-                objs = atom.terms
-                for i, obj in enumerate(objs):
-                    next_obj = objs[i + 1] if len(objs) > 1 else obj
-                    self._emplace_feature(
-                        graph,
-                        node_of(obj),
-                        node_of(next_obj),
-                        self.feature(atom_or_literal),
-                    )
+                # a 2+ arity atom creates edge chains between successor objects as ordered by the terms list
+                source_objs = atom.terms
+                target_objs = source_objs[1:]
+
+            for src_obj, tgt_obj in zip(source_objs, target_objs):
+                self._emplace_feature(
+                    graph,
+                    node_of(src_obj),
+                    node_of(tgt_obj),
+                    self.feature(atom_or_literal),
+                )
             return graph
 
     def to_pyg_data(self, direct_encoded_graph: nx.DiGraph) -> Data:
