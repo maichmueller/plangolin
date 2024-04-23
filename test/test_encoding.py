@@ -4,6 +4,7 @@ import pymimir as mi
 import pytest
 
 from rgnet.encoding import ColorGraphEncoder, DirectStateEncoder
+from rgnet.encoding.node_names import node_of
 
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
@@ -21,10 +22,11 @@ def _draw_networkx_graph(graph: nx.Graph, **kwargs):
     plt.show()
 
 
-@pytest.fixture
-def minimal_blocks_setup():
-    domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
+def problem_setup(domain_name, problem):
+    domain = mi.DomainParser(f"test/pddl_instances/{domain_name}/domain.pddl").parse()
+    problem = mi.ProblemParser(
+        f"test/pddl_instances/{domain_name}/{problem}.pddl"
+    ).parse(domain)
     return (
         mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem)),
         domain,
@@ -33,46 +35,40 @@ def minimal_blocks_setup():
 
 
 @pytest.fixture
-def color_encoded_initial_state(minimal_blocks_setup, request):
-    space, domain, _ = minimal_blocks_setup
-    initial_state = space.get_initial_state()
+def color_encoded_state(request):
+    domain_param, prob_param, which_state_param, add_param = request.param
+    space, domain, _ = problem_setup(domain_param, prob_param)
+    if which_state_param == "initial":
+        state = space.get_initial_state()
+    elif which_state_param == "goal":
+        state = space.get_goal_states()[0]
     return (
-        ColorGraphEncoder(domain, add_global_predicate_nodes=request.param).encode(
-            initial_state
-        ),
-        request.param,
+        ColorGraphEncoder(domain, add_global_predicate_nodes=add_param).encode(state),
+        add_param,
     )
 
 
 @pytest.fixture
-def color_encoded_goal_state(minimal_blocks_setup, request):
-    space, domain, _ = minimal_blocks_setup
-    initial_state = space.get_goal_states()[0]
+def direct_encoded_initial_state(request):
+    domain_param, prob_param, which_state_param, add_param = request.param
+    space, domain, _ = problem_setup(domain_param, prob_param)
+    if which_state_param == "initial":
+        state = space.get_initial_state()
+    else:
+        state = space.get_goal_states()[0]
     return (
-        ColorGraphEncoder(domain, add_global_predicate_nodes=request.param).encode(
-            initial_state
-        ),
+        DirectStateEncoder(domain).encode(state),
         request.param,
     )
 
 
-@pytest.fixture
-def direct_encoded_initial_state(minimal_blocks_setup):
-    space, domain, _ = minimal_blocks_setup
-    state = space.get_initial_state()
-    return DirectStateEncoder(domain).encode(state)
-
-
-@pytest.fixture
-def direct_encoded_goal_state(minimal_blocks_setup):
-    space, domain, _ = minimal_blocks_setup
-    state = space.get_goal_states()[0]
-    return DirectStateEncoder(domain).encode(state)
-
-
-@pytest.mark.parametrize("color_encoded_initial_state", [True, False], indirect=True)
-def test_color_encoding_initial(color_encoded_initial_state):
-    graph, with_global_preds = color_encoded_initial_state
+@pytest.mark.parametrize(
+    "color_encoded_state",
+    [["blocks", "small", "initial", False], ["blocks", "small", "initial", True]],
+    indirect=True,
+)
+def test_color_encoding_initial(color_encoded_state):
+    graph, with_global_preds = color_encoded_state
     if with_global_preds:
         # 2 objects,
         # 2 * clear, 2 * ontable, 2 * on(a,b)_g (pos 0/1), 1 * handempty,
@@ -89,12 +85,16 @@ def test_color_encoding_initial(color_encoded_initial_state):
         assert all("feature" in attr for _, attr in graph.nodes.data())
 
 
-@pytest.mark.parametrize("color_encoded_goal_state", [False], indirect=True)
-def test_color_encoding_goal(color_encoded_goal_state):
-    graph, _ = color_encoded_goal_state
+@pytest.mark.parametrize(
+    "color_encoded_state",
+    [["blocks", "small", "goal", False]],
+    indirect=True,
+)
+def test_color_encoding_goal(color_encoded_state):
+    graph, _ = color_encoded_state
     # 2 objects,
     # 1 * clear, 1 * ontable, 2 * on(a,b)_g, 2* on(a,b), 1 * handempty
-    assert 2 + (1 + 1 + 2 + 2 + 1) == len(graph.nodes)
+    assert len(graph.nodes) == 2 + (1 + 1 + 2 + 2 + 1)
     # on is a goal atom and true in the current state
     assert "on(a, b)_g:0" in graph.nodes and "on(a, b):0" in graph.nodes
     # the predicate holding is neither in the state nor in the goal
@@ -102,8 +102,31 @@ def test_color_encoding_goal(color_encoded_goal_state):
     assert all("feature" in attr for _, attr in graph.nodes.data())
 
 
+@pytest.mark.parametrize(
+    "direct_encoded_initial_state",
+    [["blocks", "small", "initial", False]],
+    indirect=True,
+)
 def test_direct_encoding_initial(direct_encoded_initial_state):
-    graph = direct_encoded_initial_state
+    graph, _ = direct_encoded_initial_state
+    # 2 objects, 1 auxiliary obj
+    assert len(graph.nodes) == 2 + 1
+    assert (
+        str(DirectStateEncoder._auxiliary_node) in graph.nodes
+        and "a" in graph.nodes
+        and "b" in graph.nodes
+    )
+    assert all("feature" in attr for *rest, attr in graph.edges.data())
+    assert graph.in_degree(node_of(DirectStateEncoder._auxiliary_node)) == 0
+
+
+@pytest.mark.parametrize(
+    "direct_encoded_initial_state",
+    [["blocks", "small", "goal", False]],
+    indirect=True,
+)
+def test_direct_encoding_goal(direct_encoded_initial_state):
+    graph, _ = direct_encoded_initial_state
     # 2 objects, 1 auxiliary obj
     assert 2 + 1 == len(graph.nodes)
     assert (
@@ -112,15 +135,20 @@ def test_direct_encoding_initial(direct_encoded_initial_state):
         and "b" in graph.nodes
     )
     assert all("feature" in attr for *rest, attr in graph.edges.data())
+    assert graph.in_degree(node_of(DirectStateEncoder._auxiliary_node)) == 0
 
 
-def test_direct_encoding_goal(direct_encoded_goal_state):
-    graph = direct_encoded_goal_state
-    # 2 objects, 1 auxiliary obj
-    assert 2 + 1 == len(graph.nodes)
-    assert (
-        str(DirectStateEncoder._auxiliary_node) in graph.nodes
-        and "a" in graph.nodes
-        and "b" in graph.nodes
+@pytest.mark.parametrize(
+    "direct_encoded_initial_state",
+    [["blocks", "large", "goal", False]],
+    indirect=True,
+)
+def test_direct_encoding_large_goal(direct_encoded_initial_state):
+    graph, _ = direct_encoded_initial_state
+    # 7 objects, 1 auxiliary obj
+    assert 7 + 1 == len(graph.nodes)
+    assert str(DirectStateEncoder._auxiliary_node) in graph.nodes and all(
+        node in graph.nodes for node in "abcdefg"
     )
     assert all("feature" in attr for *rest, attr in graph.edges.data())
+    assert graph.in_degree(node_of(DirectStateEncoder._auxiliary_node)) == 0
