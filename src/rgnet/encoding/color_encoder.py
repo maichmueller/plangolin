@@ -95,6 +95,9 @@ class ColorGraphEncoder(StateEncoderBase):
             encoding_len = sum(3 * max(1, pred.arity) for pred in self._predicates)
             none_feature = np.zeros(encoding_len, dtype=np.int8)
             feature_iter = np.eye(encoding_len, dtype=np.int8)
+            # make read-only views
+            none_feature.flags.writeable = False
+            feature_iter.flags.writeable = False
         else:
             required_nr_states = sum(
                 3 * max(1, pred.arity) for pred in self._predicates
@@ -118,6 +121,8 @@ class ColorGraphEncoder(StateEncoderBase):
 
             def feature_vector_gen():
                 unit_matrix = np.eye(encoding_len, dtype=np.int8)
+                # make read-only views
+                unit_matrix.flags.writeable = False
                 for idx_comb in itertools.chain(
                     itertools.combinations(range(encoding_len), n_combs)
                     for n_combs in range(1, encoding_len + 1)
@@ -126,6 +131,8 @@ class ColorGraphEncoder(StateEncoderBase):
                     yield sum(unit_matrix[i] for i in idx_comb)
 
             none_feature = np.zeros(encoding_len, dtype=np.int8)
+            # make read-only views
+            none_feature.flags.writeable = False
             feature_iter = feature_vector_gen()
 
         key_iter = self._key_gen()
