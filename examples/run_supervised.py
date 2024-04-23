@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import pathlib
@@ -53,10 +54,11 @@ def _setup_datasets(problem_path: str, dataset_path: str, batch_size: int):
 
 
 def run(
-    epochs=1000,
-    embedding_size=32,
-    num_layer=24,
-    batch_size=64,
+    epochs,
+    embedding_size,
+    num_layer,
+    batch_size,
+    device,
 ):
     curr_dir = os.getcwd()
     logging.getLogger().setLevel(logging.INFO)
@@ -94,7 +96,9 @@ def run(
 
     start_time_training = time.time()
 
-    model = PureGNN(in_channel=1, embedding_size=embedding_size, num_layer=num_layer)
+    model = PureGNN(
+        size_out=1, size_in=1, size_embedding=embedding_size, num_layer=num_layer
+    )
     wlogger.watch(model)
     wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
 
@@ -121,4 +125,62 @@ def run(
 
 
 if __name__ == "__main__":
-    run()
+    # Define capitalized default variables
+    DEFAULT_ENCODING = "color"
+    DEFAULT_EMBEDDING_SIZE = 32
+    DEFAULT_NUM_LAYER = 24
+    DEFAULT_BATCH_SIZE = 64
+    DEFAULT_DATA_PATH = "./data"
+    DEFAULT_DEVICES = "auto"
+    DEFAULT_EPOCHS = 10
+
+    # Create ArgumentParser object
+    parser = argparse.ArgumentParser(description="Process some modules.")
+
+    # Add arguments
+    parser.add_argument(
+        "--encoding",
+        default=DEFAULT_ENCODING,
+        choices=["color", "direct"],
+        help=f"Encoding type (default: {DEFAULT_ENCODING})",
+    )
+    parser.add_argument(
+        "--embedding_size",
+        type=int,
+        default=DEFAULT_EMBEDDING_SIZE,
+        help=f"Embedding size (default: {DEFAULT_EMBEDDING_SIZE})",
+    )
+    parser.add_argument(
+        "--num_layer",
+        type=int,
+        default=DEFAULT_NUM_LAYER,
+        help=f"Number of layers (default: {DEFAULT_NUM_LAYER})",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Batch size (default: {DEFAULT_BATCH_SIZE})",
+    )
+    parser.add_argument(
+        "--data_path",
+        default=DEFAULT_DATA_PATH,
+        help=f"Path to data directory (default: {DEFAULT_DATA_PATH})",
+    )
+    parser.add_argument(
+        "--device",
+        default=DEFAULT_DEVICES,
+        help=f"Device to use (default: {DEFAULT_DEVICES})",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=DEFAULT_EPOCHS,
+        help=f"Number of epochs (default: {DEFAULT_EPOCHS})",
+    )
+
+    # add an arg for `accelerator`:
+
+    # Parse the arguments
+    args = parser.parse_args()
+    run(**vars(args))
