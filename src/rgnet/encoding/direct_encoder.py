@@ -58,6 +58,8 @@ class DirectStateEncoder(StateEncoderBase):
         edge_feature_vectors: np.ndarray = np.eye(feature_dim, dtype=np.int8).reshape(
             len(self._predicates), 3, feature_dim
         )
+        # make all views read only
+        edge_feature_vectors.flags.writeable = False
         return edge_feature_vectors
 
     @singledispatchmethod
@@ -89,7 +91,8 @@ class DirectStateEncoder(StateEncoderBase):
         if graph.has_edge(source_obj, target_obj):
             # in-place add to combine 1s of  the predicate positions that
             # are enabling communication between the objects
-            graph.edges[source_obj, target_obj]["feature"] += feature
+            curr_feature = graph.edges[source_obj, target_obj]["feature"]
+            graph.edges[source_obj, target_obj]["feature"] = curr_feature + feature
         else:
             graph.add_edge(source_obj, target_obj, feature=feature)
 
