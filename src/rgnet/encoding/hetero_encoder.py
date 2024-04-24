@@ -8,10 +8,10 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType
 
-from rgnet.encoding.encoder_base import StateGraphEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase
 
 
-class HeteroGraphEncoder(StateGraphEncoderBase):
+class HeteroGraphEncoder(StateEncoderBase):
     def __init__(
         self,
         domain: mi.Domain,

@@ -1,4 +1,8 @@
-from rgnet.utils import ftime
+import pathlib
+
+from pymimir import Domain, Problem
+
+from rgnet.utils import ftime, import_all_from
 
 
 def test_ftime():
@@ -10,13 +14,6 @@ def test_ftime():
     assert "1:00:00h" == ftime(3600)
     assert "1:00:01h" == ftime(3601)
     assert "01:00m" == ftime(60.1)
-
-
-import pathlib
-
-from pymimir import Domain, Problem
-
-from rgnet.utils import import_all_from
 
 
 def test_import_all_from():

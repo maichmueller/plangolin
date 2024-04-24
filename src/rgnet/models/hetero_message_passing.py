@@ -1,5 +1,5 @@
 import abc
-from typing import List, Dict, Optional, Any, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch_geometric as pyg
@@ -7,7 +7,7 @@ from torch import Tensor
 from torch_geometric.nn import SimpleConv
 from torch_geometric.nn.conv.hetero_conv import group
 from torch_geometric.nn.module_dict import ModuleDict
-from torch_geometric.typing import OptPairTensor, Adj, EdgeType
+from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
 
 class HeteroRouting(torch.nn.Module):

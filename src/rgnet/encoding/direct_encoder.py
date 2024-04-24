@@ -1,16 +1,14 @@
 import itertools
-from collections import namedtuple
 from functools import singledispatchmethod
 from types import NoneType
-from typing import Dict, Optional, Tuple
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
-from pymimir import Atom, Domain, Literal, Problem, State
+from pymimir import Atom, Domain, Literal, State
 from torch_geometric.data import Data
 
-from rgnet.encoding.encoder_base import StateGraphEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase
 from rgnet.encoding.node_names import node_of
 
 
@@ -24,7 +22,7 @@ def _(aux: aux_node, *args, **kwargs):
     return str(aux)
 
 
-class DirectGraphEncoder(StateGraphEncoderBase):
+class DirectGraphEncoder(StateEncoderBase):
     """
     An encoder to represent states as directed graphs with objects as vertices
     and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.

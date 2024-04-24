@@ -41,13 +41,13 @@ repos:
     rev: "5.13.2"
     hooks:
       - id: isort
-        args: ["--profile", "black"]
+        args: [ "--profile", "black" ]
 
 
   # Format Python code
-  -   repo: https://github.com/psf/black
-      rev: 24.4.0
-      hooks:
-        - id: black
-          language_version: python3
-          types: [python]
+  - repo: https://github.com/psf/black
+    rev: 24.4.0
+    hooks:
+      - id: black
+        language_version: python3
+        types: [ python ]

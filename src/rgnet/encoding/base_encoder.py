@@ -1,13 +1,13 @@
-import itertools
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
 
 import networkx as nx
 import torch_geometric as pyg
-from pymimir import Domain, Problem, State
+from pymimir import State
 
 
-class StateGraphEncoderBase(ABC):
+class StateEncoderBase(ABC):
     """
     The state-graph encoder base class into an associated state-graph.
     """

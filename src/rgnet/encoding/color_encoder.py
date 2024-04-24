@@ -6,16 +6,15 @@ from collections import namedtuple
 from copy import copy
 from enum import Enum
 from functools import singledispatchmethod
-from types import NoneType
-from typing import Any, Dict, Iterator, Optional, Tuple, TypeVar
+from typing import Any, Dict, Iterator, Optional
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
-from pymimir import Atom, Domain, Literal, Object, Predicate, Problem, State, Type
+from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
-from rgnet.encoding.encoder_base import StateGraphEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase
 from rgnet.encoding.node_names import node_of
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
@@ -30,7 +29,7 @@ class FeatureMode(Enum):
     combinatorial = 2
 
 
-class ColorGraphEncoder(StateGraphEncoderBase):
+class ColorGraphEncoder(StateEncoderBase):
     """
     A state encoder into an associated colored state-graph for a specified domain.
 
