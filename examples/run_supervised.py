@@ -5,13 +5,14 @@ import pathlib
 import time
 from datetime import datetime
 
+import lightning
 import torch
 import torch_geometric as pyg
 import wandb
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 
-from rgnet.encoding import ColorGraphEncoder
+from rgnet.encoding import ColorGraphEncoder, DirectStateEncoder, StateEncoderBase
 from rgnet.model import PureGNN
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 from rgnet.utils import (
@@ -22,25 +23,31 @@ from rgnet.utils import (
 )
 
 
-def _dataset_of(problems, domain, root):
-    return MultiInstanceSupervisedSet(
-        problems, ColorGraphEncoder(domain), root=root, log=True
-    )
+def _dataset_of(problems, root, encoder: StateEncoderBase):
+    return MultiInstanceSupervisedSet(problems, encoder, root=root, log=True)
 
 
-def _setup_datasets(problem_path: str, dataset_path: str, batch_size: int):
+def _setup_datasets(
+    encoding: str, problem_path: str, dataset_path: str, batch_size: int
+):
     domain, problems = import_all_from(problem_path)
-    training_set = _dataset_of(problems, domain, dataset_path + "/train")
+    if encoding == "color":
+        encoder = ColorGraphEncoder(domain)
+    elif encoding == "direct":
+        encoder = DirectStateEncoder(domain)
+    else:
+        raise ValueError(f"Encoding type {encoding} not recognized.")
+    training_set = _dataset_of(problems, dataset_path + "/train", encoder)
     train_loader = pyg.loader.DataLoader(
         training_set, batch_size, shuffle=True, num_workers=10
     )
 
     evaluation_set = _dataset_of(
-        import_problems(problem_path + "/eval", domain), domain, dataset_path + "/eval"
+        import_problems(problem_path + "/eval", domain), dataset_path + "/eval", encoder
     )
     # Test the model
     test_set = _dataset_of(
-        import_problems(problem_path + "/test", domain), domain, dataset_path + "/test"
+        import_problems(problem_path + "/test", domain), dataset_path + "/test", encoder
     )
     eval_loader, test_loader = [
         pyg.loader.DataLoader(dset, batch_size, shuffle=False, num_workers=10)
@@ -53,18 +60,12 @@ def _setup_datasets(problem_path: str, dataset_path: str, batch_size: int):
     return train_loader, eval_loader, test_loader
 
 
-def run(
-    epochs,
-    embedding_size,
-    num_layer,
-    batch_size,
-    device,
-):
+def run(data_path, epochs, embedding_size, num_layer, batch_size, device, encoding):
     curr_dir = os.getcwd()
     logging.getLogger().setLevel(logging.INFO)
-    device: torch.device = get_device_cuda_if_possible()
-    logging.info(f"Using {device.type} as device")
+    logging.info(f"Using {device} as device")
     logging.info("Working from " + curr_dir)
+
     start_time = time.time()
     time_stamp = datetime.now().strftime("%y%m%d_%H%M%S")
     wlogger = WandbLogger(project="rgnet", name="supervised_blocks" + time_stamp)
@@ -73,14 +74,13 @@ def run(
             "epoch": epochs,
             "embedding_size": embedding_size,
             "num_layer": num_layer,
-            "device": device.type,
+            "device": device,
         },
     )
 
     seed_everything(42, workers=True)
 
     # define paths
-    data_path = curr_dir + "/data"
     problem_path = data_path + "/pddl_domains/blocks"
     dataset_path = data_path + "/datasets/blocks"
     model_save_path = pathlib.Path(data_path + f"/models/run{time_stamp}.pt")
@@ -89,7 +89,7 @@ def run(
     import_time = time.time()
 
     train_loader, eval_loader, test_loader = _setup_datasets(
-        problem_path, dataset_path, batch_size
+        encoding, problem_path, dataset_path, batch_size
     )
 
     logging.info(f"Took {time_delta_now(import_time)} to construct the datasets.")
