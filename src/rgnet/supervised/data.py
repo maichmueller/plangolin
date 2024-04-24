@@ -5,15 +5,14 @@ import torch
 from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
 from torch_geometric.data import Data, InMemoryDataset
 
-from rgnet.encoding import ColorGraphEncoder
+from rgnet.encoding import StateEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
-
     def __init__(
         self,
         problems: List[Problem],
-        state_encoder: ColorGraphEncoder,
+        state_encoder: StateEncoderBase,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
