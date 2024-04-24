@@ -4,7 +4,7 @@ import pymimir as mi
 import torch
 from torch_geometric.data import Dataset
 
-from rgnet.encoding import ColorGraphEncoder
+from rgnet.encoding.color_graph import ColorGraphEncoder
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 
@@ -36,4 +36,7 @@ def test_init():
     dataset = MultiInstanceSupervisedSet([problem], encoder, force_reload=True)
     space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
     assert dataset.len() == space.num_states()
-    assert all(data.y.dtype == torch.float for data in dataset)
+    assert all(
+        data.y.dtype == torch.int64 and data.y.size() == torch.Size((1,))
+        for data in dataset
+    )

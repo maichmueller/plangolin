@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import pymimir as mi
 
-from rgnet.encoding import ColorGraphEncoder
+from rgnet.encoding.color_graph import ColorGraphEncoder
 
 
 def _draw_networkx_graph(graph: nx.Graph):

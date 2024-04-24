@@ -6,8 +6,10 @@ import torch_geometric as pyg
 from pymimir import State, Problem, Domain
 from torch_geometric.data import Data
 
+from rgnet.encoding.encoder import Encoder
 
-class ColorGraphEncoder:
+
+class ColorGraphEncoder(Encoder):
     def __init__(self, domain: Domain):
         feature_map: Dict[str | None, int] = {None: 0}
         i = None  # error trigger incase there are no types in the problem
