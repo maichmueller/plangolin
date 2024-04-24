@@ -1,18 +1,18 @@
 import logging
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
-from torch_geometric.data import Data, InMemoryDataset
+from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 
-from rgnet.encoding import StateEncoderBase
+from rgnet.encoding import StateGraphEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
     def __init__(
         self,
         problems: List[Problem],
-        state_encoder: StateEncoderBase,
+        state_encoder: StateGraphEncoderBase,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
@@ -47,7 +47,9 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
             space = StateSpace.new(problem, GroundedSuccessorGenerator(problem))
             for state in space.get_states():
                 data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
-                data.y = float(space.get_distance_to_goal_state(state))
+                data.y = torch.tensor(
+                    space.get_distance_to_goal_state(state), dtype=torch.int64
+                )
                 data_list.append(data)
             if self.log:
                 logging.info(f"Processed {i+1} / {len(self.problems)} problems")
@@ -67,3 +69,15 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         :return: torch.Tensor of frequencies of shape Size([max(self.y) + 1])
         """
         return torch.bincount(self.y.int())
+
+    def __getattr__(self, key: str) -> Any:
+        """InMemoryDataset forgot the poor HeteroData objects, logic is equivalent."""
+        data = self.__dict__.get("_data")
+        if isinstance(data, HeteroData) and key in data:
+            if self._indices is None and data.__inc__(key, data[key]) == 0:
+                return data[key]
+            else:
+                data_list = [self.get(i) for i in self.indices()]
+                return Batch.from_data_list(data_list)[key]
+        else:
+            return super().__getattr__(key)

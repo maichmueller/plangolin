@@ -1,3 +1,4 @@
+from test.fixtures import problem_setup
 from typing import Callable, Optional
 
 import pymimir as mi
@@ -9,7 +10,6 @@ from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 
 class EmptyDataset(Dataset):
-
     def __init__(
         self,
         root: Optional[str] = None,
@@ -19,7 +19,6 @@ class EmptyDataset(Dataset):
         log: bool = True,
         force_reload: bool = False,
     ) -> None:
-
         super().__init__(root, transform, pre_transform, pre_filter, log, force_reload)
 
     def __len__(self):
@@ -30,10 +29,11 @@ class EmptyDataset(Dataset):
 
 
 def test_init():
-    domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/problem.pddl").parse(domain)
+    space, domain, problem = problem_setup("blocks", "small")
     encoder = ColorGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet([problem], encoder, force_reload=True)
-    space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
     assert dataset.len() == space.num_states()
-    assert all(data.y.dtype == torch.float for data in dataset)
+    assert all(
+        data.y.dtype == torch.int64 and data.y.size() == torch.Size((1,))
+        for data in dataset
+    )

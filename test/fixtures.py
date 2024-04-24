@@ -1,0 +1,80 @@
+import networkx as nx
+import pymimir as mi
+import pytest
+from matplotlib import pyplot as plt
+
+from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+
+
+def _draw_networkx_graph(graph: nx.Graph, **kwargs):
+    nx.draw_networkx(
+        graph,
+        with_labels=kwargs.get("with_labels", True),
+        labels=kwargs.get("labels", {n: str(n) for n in graph.nodes}),
+        nodelist=kwargs.get("nodelist", [n for n in graph.nodes]),
+        node_color=kwargs.get(
+            "node_color", [attr["feature"] for _, attr in graph.nodes.data()]
+        ),
+        cmap=kwargs.get("cmap", "tab10"),
+        **kwargs,
+    )
+    plt.show()
+
+
+def problem_setup(domain_name, problem):
+    domain = mi.DomainParser(f"test/pddl_instances/{domain_name}/domain.pddl").parse()
+    problem = mi.ProblemParser(
+        f"test/pddl_instances/{domain_name}/{problem}.pddl"
+    ).parse(domain)
+    return (
+        mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem)),
+        domain,
+        problem,
+    )
+
+
+@pytest.fixture
+def color_encoded_state(request):
+    domain_param, prob_param, which_state_param, add_param = request.param
+    space, domain, _ = problem_setup(domain_param, prob_param)
+    if which_state_param == "initial":
+        state = space.get_initial_state()
+    elif which_state_param == "goal":
+        state = space.get_goal_states()[0]
+    else:
+        raise ValueError(
+            "Unknown state wanted. Choose initial or goal state. Given: "
+            + which_state_param
+        )
+    encoder = ColorGraphEncoder(domain, add_global_predicate_nodes=add_param)
+    return (
+        encoder.encode(state),
+        encoder,
+    )
+
+
+@pytest.fixture
+def direct_encoded_state(request):
+    domain_param, prob_param, which_state_param = request.param
+    space, domain, _ = problem_setup(domain_param, prob_param)
+    if which_state_param == "initial":
+        state = space.get_initial_state()
+    else:
+        state = space.get_goal_states()[0]
+    encoder = DirectGraphEncoder(domain)
+    return encoder.encode(state), encoder
+
+
+@pytest.fixture
+def hetero_encoded_state(request):
+    domain_param, prob_param, which_state_param, hidden_size = request.param
+    space, domain, _ = problem_setup(domain_param, prob_param)
+    if which_state_param == "initial":
+        state = space.get_initial_state()
+    else:
+        state = space.get_goal_states()[0]
+    encoder = HeteroGraphEncoder(domain, hidden_size=hidden_size)
+    return (
+        encoder.encode(state),
+        encoder,
+    )

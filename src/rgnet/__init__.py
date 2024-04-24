@@ -1,3 +1,3 @@
 from .encoding import *
-from .model import *
+from .models import *
 from .supervised import *

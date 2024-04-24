@@ -12,7 +12,7 @@ import wandb
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 
-from rgnet.encoding import ColorGraphEncoder, DirectStateEncoder, StateEncoderBase
+from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, StateGraphEncoderBase
 from rgnet.model import PureGNN
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 from rgnet.utils import (
@@ -23,7 +23,7 @@ from rgnet.utils import (
 )
 
 
-def _dataset_of(problems, root, encoder: StateEncoderBase):
+def _dataset_of(problems, root, encoder: StateGraphEncoderBase):
     return MultiInstanceSupervisedSet(problems, encoder, root=root, log=True)
 
 
@@ -34,7 +34,7 @@ def _setup_datasets(
     if encoding == "color":
         encoder = ColorGraphEncoder(domain)
     elif encoding == "direct":
-        encoder = DirectStateEncoder(domain)
+        encoder = DirectGraphEncoder(domain)
     else:
         raise ValueError(f"Encoding type {encoding} not recognized.")
     training_set = _dataset_of(problems, dataset_path + "/train", encoder)
