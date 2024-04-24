@@ -2,7 +2,7 @@ import pathlib
 
 from pymimir import Domain, Problem
 
-from rgnet.pddl_import import import_all_from
+from rgnet.utils import import_all_from
 
 
 def test_import_all_from():

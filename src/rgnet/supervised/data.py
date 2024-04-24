@@ -1,11 +1,11 @@
 import logging
-from typing import Union, List, Tuple, Optional, Callable, Any
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
-from pymimir import Problem, StateSpace, GroundedSuccessorGenerator
-from torch_geometric.data import InMemoryDataset, Data, HeteroData, Batch
+from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
+from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 
-from rgnet.encoding.color_graph import Encoder
+from rgnet.encoding import StateEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
@@ -13,7 +13,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     def __init__(
         self,
         problems: List[Problem],
-        state_encoder: Encoder,
+        state_encoder: StateEncoderBase,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
@@ -47,7 +47,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         for i, problem in enumerate(self.problems):
             space = StateSpace.new(problem, GroundedSuccessorGenerator(problem))
             for state in space.get_states():
-                data: Data = self.encoder.encoding_to_pyg_data(state)
+                data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
                 data.y = torch.tensor(
                     space.get_distance_to_goal_state(state), dtype=torch.int64
                 )

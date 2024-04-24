@@ -1,6 +1,6 @@
 import itertools
 from collections import defaultdict
-from typing import List, Dict
+from typing import Dict, List
 
 import networkx as nx
 import pymimir as mi
@@ -8,10 +8,10 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType
 
-from rgnet.encoding.encoder import Encoder
+from rgnet.encoding.encoder_base import StateEncoderBase
 
 
-class HeteroEncoding(Encoder):
+class HeteroEncoding(StateEncoderBase):
 
     def __init__(
         self,
@@ -33,12 +33,12 @@ class HeteroEncoding(Encoder):
     def goal_pred(self, pred_name: str) -> str:
         return f"{pred_name}{self.goal_suffix}"
 
-    def encode(self, state: mi.State, problem: mi.Problem = None) -> nx.Graph:
+    def encode(self, state: mi.State) -> nx.Graph:
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
-        problem = problem if problem is not None else state.get_problem()
+        problem = state.get_problem()
         graph = nx.Graph()
 
         for obj in problem.objects:
@@ -77,9 +77,7 @@ class HeteroEncoding(Encoder):
                 graph.add_edge(obj.name, atom_node, position=str(pos))
         return graph
 
-    def encoding_to_pyg_data(self, state: mi.State, **kwargs) -> HeteroData:
-        # Build pyg HeteroData from graph
-        graph = self.encode(state, **kwargs)
+    def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
 
         nodes_by_type: Dict[str, List[str]] = defaultdict(list)
         for key, value in nx.get_node_attributes(graph, "type").items():

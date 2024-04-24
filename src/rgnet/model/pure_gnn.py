@@ -1,38 +1,42 @@
-import lightning as L
 import torch
 import torch.nn.functional as F
 import torch_geometric as pyg
-from torch import nn, Tensor
+from lightning import LightningModule
+from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
+from rgnet import ColorGraphEncoder
 
-class PureGNN(L.LightningModule):
 
-    def __init__(self, in_channel: int, embedding_size: int, num_layer: int) -> None:
+class PureGNN(LightningModule):
+    def __init__(
+        self, size_out: int, size_in: int, size_embedding: int, num_layer: int
+    ) -> None:
         super().__init__()
-        self.linear = nn.Linear(in_channel, embedding_size)
+        self.l1_loss = nn.L1Loss(reduction="mean")
+        self.linear = nn.Linear(size_in, size_embedding)
         self.layer = nn.ModuleList()
         for i in range(num_layer):
             conv = GENConv(
-                embedding_size,
-                embedding_size,
+                size_embedding,
+                size_embedding,
                 aggr="softmax",
                 learn_t=False,
                 num_layers=2,
                 norm="layer",
                 node_dim=0,
             )
-            norm = LayerNorm(embedding_size, elementwise_affine=True)
+            norm = LayerNorm(size_embedding, elementwise_affine=True)
             act = ReLU(inplace=True)
 
             layer = DeepGCNLayer(conv, norm, act, block="res+", dropout=0.1)
             self.layer.append(layer)
 
         self.readout = nn.Sequential(
-            nn.Linear(embedding_size, embedding_size),
+            nn.Linear(size_embedding, size_embedding),
             nn.Tanh(),
-            nn.Linear(embedding_size, 1),
+            nn.Linear(size_embedding, size_out),
         )
 
     def forward(self, x, edge_index, batch):
@@ -57,7 +61,7 @@ class PureGNN(L.LightningModule):
     def training_step(self, batch, batch_index) -> torch.Tensor:
         x, edge_index = batch.x, batch.edge_index
         out = self(x, edge_index, batch.batch)
-        loss: Tensor = F.l1_loss(out, batch.y)
+        loss: Tensor = self.l1_loss(out, batch.y)
         self.log("train_loss", loss, batch_size=batch.batch_size)
         return loss
 
@@ -80,3 +84,19 @@ class PureGNN(L.LightningModule):
 
     def num_parameter(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
+if __name__ == "__main__":
+    import pymimir as mi
+
+    model = PureGNN(size_out=1, size_in=1, size_embedding=10, num_layer=4)
+    domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
+    problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
+
+    space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
+
+    state = space.get_initial_state()
+    encoder = ColorGraphEncoder(domain)
+    data = encoder.to_pyg_data(encoder.encode(state))
+    out = model(data.x, data.edge_index, data.batch)
+    print(out)

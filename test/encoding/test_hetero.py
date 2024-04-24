@@ -5,20 +5,19 @@ import pymimir as mi
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding.hetero import HeteroEncoding
-from rgnet.pddl_import import import_all_from
 
 
 def test_hetero_data():
-    domain, problems = import_all_from("test/pddl_instances/blocks")
+    domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
+    problem = mi.ProblemParser("test/pddl_instances/blocks/small.pddl").parse(domain)
     encoder = HeteroEncoding(domain, hidden_size=2)
     # problems = [problem, problem1, problem2]
-    for prob in problems:
-        logging.info("Testing problem: " + prob.name)
-        state_space = mi.StateSpace.new(prob, mi.GroundedSuccessorGenerator(prob))
-        for state in state_space.get_states():
-            data = encoder.encoding_to_pyg_data(state)
-            data.validate()
-            validate_hetero_data(data, encoder)
+    logging.info("Testing problem: " + problem.name)
+    state_space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
+    for state in state_space.get_states():
+        data = encoder.to_pyg_data(encoder.encode(state))
+        data.validate()
+        validate_hetero_data(data, encoder)
 
 
 def validate_hetero_data(data: HeteroData, encoder: HeteroEncoding):

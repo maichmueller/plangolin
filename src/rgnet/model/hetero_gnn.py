@@ -7,7 +7,7 @@ from lightning import LightningModule
 from torch import Tensor
 from torch_geometric.typing import Adj
 
-from rgnet.models.hetero_message_passing import FanOutMP, FanInMP
+from rgnet.model.hetero_message_passing import FanInMP, FanOutMP
 
 
 class HeteroGNN(torch.nn.Module):

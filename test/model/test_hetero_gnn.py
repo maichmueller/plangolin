@@ -4,17 +4,17 @@ import pymimir as mi
 from torch_geometric.loader import DataLoader
 
 from rgnet.encoding.hetero import HeteroEncoding
-from rgnet.models.hetero_gnn import HeteroGNN
+from rgnet.model.hetero_gnn import HeteroGNN
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 
 def test_hetero_gnn():
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/problem.pddl").parse(domain)
+    problem = mi.ProblemParser("test/pddl_instances/blocks/small.pddl").parse(domain)
     state_space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
     initial_state = state_space.get_initial_state()
     encoder = HeteroEncoding(domain, hidden_size=2)
-    data = encoder.encoding_to_pyg_data(initial_state)
+    data = encoder.to_pyg_data(encoder.encode(initial_state))
 
     model = HeteroGNN(
         hidden_size=2,
@@ -28,7 +28,7 @@ def test_hetero_gnn():
 
 def test_hetero_batched():
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/problem.pddl").parse(domain)
+    problem = mi.ProblemParser("test/pddl_instances/blocks/small.pddl").parse(domain)
     encoder = HeteroEncoding(domain, hidden_size=2)
     tmpdir: str = tempfile.mkdtemp()
     dataset = MultiInstanceSupervisedSet(
