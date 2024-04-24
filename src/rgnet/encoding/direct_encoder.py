@@ -74,8 +74,8 @@ class DirectStateEncoder(StateEncoderBase):
             self._predicates.index(literal.atom.predicate), 1 + literal.negated
         ]
 
-    @feature.register
-    def none_feature_vector(self, none: NoneType) -> np.ndarray:
+    @feature.register(NoneType)
+    def none_feature_vector(self, _) -> np.ndarray:
         return np.zeros(self._feature_map.shape[0], dtype=np.int8)
 
     @property

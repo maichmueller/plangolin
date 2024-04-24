@@ -11,7 +11,13 @@ from rgnet import ColorGraphEncoder
 
 class PureGNN(LightningModule):
     def __init__(
-        self, size_out: int, size_in: int, size_embedding: int, num_layer: int
+        self,
+        size_out: int,
+        size_in: int,
+        size_embedding: int,
+        num_layer: int,
+        *,
+        verbose: bool = False,
     ) -> None:
         super().__init__()
         self.l1_loss = nn.L1Loss(reduction="mean")
@@ -38,6 +44,7 @@ class PureGNN(LightningModule):
             nn.Tanh(),
             nn.Linear(size_embedding, size_out),
         )
+        self.verbose = verbose
 
     def forward(self, x, edge_index, batch):
         """
@@ -84,6 +91,19 @@ class PureGNN(LightningModule):
 
     def num_parameter(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def on_after_backward(self):
+        if self.verbose and self.trainer.global_step % 1 == 0:
+            grad_vec = None
+            for p in self.parameters():
+                if grad_vec is None:
+                    grad_vec = p.grad.data.view(-1)
+                else:
+                    grad_vec = torch.cat((grad_vec, p.grad.data.view(-1)))
+
+            self.log(
+                "Cum. abs. gradient", grad_vec.abs().sum(), on_step=True, on_epoch=False
+            )
 
 
 if __name__ == "__main__":

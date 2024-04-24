@@ -9,7 +9,6 @@ from rgnet.encoding import StateEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
-
     def __init__(
         self,
         problems: List[Problem],
