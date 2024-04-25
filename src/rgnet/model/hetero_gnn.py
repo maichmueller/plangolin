@@ -54,6 +54,10 @@ class HeteroGNN(torch.nn.Module):
         )
 
     def layer(self, x_dict, edge_index_dict):
+        # Filter out dummies
+        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
+        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+
         # Groups object embeddings that are part of an atom and
         # applies predicate-specific MLP based on the edge type.
         out = self.obj_to_atom(x_dict, edge_index_dict)

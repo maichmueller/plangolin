@@ -1,4 +1,5 @@
 import itertools
+import logging
 from collections import defaultdict
 from typing import Dict, List
 
@@ -29,6 +30,12 @@ class HeteroEncoding(StateEncoderBase):
             self.arity_by_pred[self.goal_pred(pred_name)] = self.arity_by_pred[
                 pred_name
             ]
+        # Generate all possible edge types
+        self.all_edge_types: List[EdgeType] = []
+        for pred_name, arity in self.arity_by_pred.items():
+            for pos in range(arity):
+                self.all_edge_types.append((self.obj_name, str(pos), pred_name))
+                self.all_edge_types.append((pred_name, str(pos), self.obj_name))
 
     def goal_pred(self, pred_name: str) -> str:
         return f"{pred_name}{self.goal_suffix}"
@@ -99,6 +106,13 @@ class HeteroEncoding(StateEncoderBase):
             data[node_type].x = torch.zeros(
                 (len(nodes_of_type), hidden), dtype=torch.float32
             )
+        # Add dummy entry for node-types that don't appear in this state
+        # https://github.com/pyg-team/pytorch_geometric/issues/9233
+        for unused_node_type in self.arity_by_pred.keys() - nodes_by_type.keys():
+            data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
+        if self.obj_name not in nodes_by_type:
+            logging.warning(f"No object in graph ({graph})")
+            data[self.obj_name].x = torch.empty(0, dtype=torch.float32)
 
         # Group edges by src, position, dst
         edge_dict: Dict[EdgeType, List[torch.Tensor]] = {}
@@ -122,5 +136,9 @@ class HeteroEncoding(StateEncoderBase):
         for (src, rel, dst), value in edge_dict.items():
             # HeteroData want str,str,str as edge keys
             data[src, rel, dst].edge_index = torch.stack(value, dim=1)
+
+        # Add dummy entry for edge-types that don't appear in this state
+        for unused_edge_type in self.all_edge_types - edge_dict.keys():
+            data[unused_edge_type].edge_index = torch.empty(2, 0, dtype=torch.long)
 
         return data
