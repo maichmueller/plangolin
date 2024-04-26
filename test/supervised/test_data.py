@@ -5,8 +5,7 @@ import pymimir as mi
 import torch
 from torch_geometric.data import Dataset, HeteroData
 
-from rgnet.encoding import ColorGraphEncoder
-from rgnet.encoding.hetero import HeteroEncoding
+from rgnet.encoding import ColorGraphEncoder, HeteroEncoding
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 

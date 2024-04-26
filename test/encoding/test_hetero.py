@@ -4,7 +4,7 @@ from collections import defaultdict
 import pymimir as mi
 from torch_geometric.data import HeteroData
 
-from rgnet.encoding.hetero import HeteroEncoding
+from rgnet.encoding import HeteroEncoding
 
 
 def test_hetero_data():

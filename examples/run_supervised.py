@@ -12,10 +12,15 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from torch_geometric.loader import ImbalancedSampler
 
-from rgnet import ColorGraphEncoder, DirectStateEncoder, PureGNN, StateEncoderBase
-from rgnet.encoding.hetero import HeteroEncoding
-from rgnet.model.hetero_gnn import LightningHetero
-from rgnet.supervised.data import MultiInstanceSupervisedSet
+from rgnet import (
+    ColorGraphEncoder,
+    DirectStateEncoder,
+    HeteroEncoding,
+    LightningHetero,
+    MultiInstanceSupervisedSet,
+    PureGNN,
+    StateEncoderBase,
+)
 from rgnet.utils import import_all_from, import_problems, time_delta_now
 
 

@@ -5,7 +5,7 @@ import torch_geometric as pyg
 from mockito import arg_that, mock, when
 from torch_geometric.data import Batch
 
-from rgnet.encoding.hetero import HeteroEncoding
+from rgnet.encoding import HeteroEncoding
 from rgnet.model.hetero_message_passing import FanInMP, FanOutMP, SelectMP
 
 

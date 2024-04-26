@@ -6,8 +6,8 @@ import torch
 import torch_geometric as pyg
 from torch_geometric.data import Batch
 
-from rgnet.encoding.hetero import HeteroEncoding
-from rgnet.model.hetero_gnn import HeteroGNN
+from rgnet.encoding import HeteroEncoding
+from rgnet.model import HeteroGNN
 
 
 def test_hetero_gnn():
