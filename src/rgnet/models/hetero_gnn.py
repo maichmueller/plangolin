@@ -15,13 +15,13 @@ class HeteroGNN(torch.nn.Module):
         self,
         hidden_size,
         num_layer: int,
-        obj_name: str,
+        obj_id: str,
         arity_by_pred: Dict[str, int],
     ):
         """
         :param hidden_size: The size of object embeddings.
-        :param num_layer: The iterations of message exchanges.
-        :param obj_name: The type name of objects in the x_dict.
+        :param num_layer: Total number of message exchange iterations.
+        :param obj_id: The type identifier of objects in the x_dict.
         :param arity_by_pred: A dictionary mapping predicate names to their arity.
         Creates one MLP for each predicate.
         Note that predicates as well as goal-predicates are meant.
@@ -29,7 +29,7 @@ class HeteroGNN(torch.nn.Module):
         super().__init__()
 
         self.num_layer: int = num_layer
-        self.obj_name: str = obj_name
+        self.obj_id: str = obj_id
         mlp_by_pred = {
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
@@ -45,15 +45,19 @@ class HeteroGNN(torch.nn.Module):
             for pred in arity_by_pred.keys()
         }
 
-        self.obj_to_atom = FanOutMP(mlp_by_pred, src_name=obj_name)
+        self.obj_to_atom = FanOutMP(mlp_by_pred, src_name=obj_id)
 
         self.obj_update = pyg.nn.MLP([hidden_size * 2, hidden_size * 2, hidden_size])
-        self.atom_to_obj = FanInMP(hidden_size=hidden_size, dst_name=obj_name)
+        self.atom_to_obj = FanInMP(hidden_size=hidden_size, dst_name=obj_id)
         self.readout = pyg.nn.MLP(
             [hidden_size, 2 * hidden_size, 1], act="Mish", norm="layer_norm"
         )
 
     def layer(self, x_dict, edge_index_dict):
+        # Filter out dummies
+        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
+        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+
         # Groups object embeddings that are part of an atom and
         # applies predicate-specific MLP based on the edge type.
         out = self.obj_to_atom(x_dict, edge_index_dict)
@@ -61,9 +65,9 @@ class HeteroGNN(torch.nn.Module):
         # Distribute the atom embeddings back to the corresponding objects.
         out = self.atom_to_obj(x_dict, edge_index_dict)
         # Update the object embeddings using a shared update-MLP.
-        obj_emb = torch.cat([x_dict[self.obj_name], out[self.obj_name]], dim=1)
+        obj_emb = torch.cat([x_dict[self.obj_id], out[self.obj_id]], dim=1)
         obj_emb = self.obj_update(obj_emb)
-        x_dict.update({self.obj_name: obj_emb})
+        x_dict.update({self.obj_id: obj_emb})
 
     def forward(
         self,
@@ -74,9 +78,9 @@ class HeteroGNN(torch.nn.Module):
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)
 
-        obj_emb = x_dict[self.obj_name]
+        obj_emb = x_dict[self.obj_id]
         batch = (
-            batch_dict[self.obj_name]
+            batch_dict[self.obj_id]
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )

@@ -1,123 +1,158 @@
+from __future__ import annotations
+
 import itertools
-from collections import defaultdict
+import logging
+from collections import defaultdict, namedtuple
 from typing import Dict, List
 
 import networkx as nx
-import pymimir as mi
 import torch
+from pymimir import Atom, Domain, Literal, Predicate, State
 from torch_geometric.data import HeteroData
-from torch_geometric.typing import EdgeType
+from torch_geometric.typing import EdgeType, NodeType
 
 from rgnet.encoding.base_encoder import StateEncoderBase
+from rgnet.encoding.node_factory import Node, node_of
+
+PredicateEdgeType = namedtuple("PredicateEdgeType", ["src_type", "pos", "dst_type"])
 
 
 class HeteroGraphEncoder(StateEncoderBase):
     def __init__(
         self,
-        domain: mi.Domain,
+        domain: Domain,
         hidden_size: int,  # TODO Decouple hidden_size from encoding
-        obj_name: str = "obj",
-        goal_suffix: str = "_g",
+        obj_type_id: str = "obj",
     ) -> None:
         super().__init__()
         self.hidden_size: int = hidden_size
-        self.obj_name: str = obj_name
-        self.arity_by_pred = {pred.name: pred.arity for pred in domain.predicates}
-        self.goal_suffix = goal_suffix
-        for pred_name in list(self.arity_by_pred.keys()):
-            self.arity_by_pred[self.goal_pred(pred_name)] = self.arity_by_pred[
-                pred_name
-            ]
+        self.obj_type: str = obj_type_id
+        self.predicates: List[Predicate] = domain.predicates
+        self.arity_dict: Dict[Node, int] = dict(
+            sorted(
+                itertools.chain(
+                    map(
+                        lambda p: (
+                            node_of(p, is_goal=False, is_negated=False),
+                            p.arity,
+                        ),
+                        self.predicates,
+                    ),
+                    map(
+                        lambda p: (node_of(p, is_goal=True, is_negated=False), p.arity),
+                        self.predicates,
+                    ),
+                    map(
+                        lambda p: (node_of(p, is_goal=True, is_negated=True), p.arity),
+                        self.predicates,
+                    ),
+                ),
+                key=lambda x: x[0],
+            )
+        )
+        # Generate all possible edge types
+        self.all_edge_types: List[EdgeType] = []
+        for predicate, arity in self.arity_dict.items():
+            for pos in range(arity):
+                self.all_edge_types.append((self.obj_type, str(pos), predicate))
+                self.all_edge_types.append((predicate, str(pos), self.obj_type))
 
-    def goal_pred(self, pred_name: str) -> str:
-        return f"{pred_name}{self.goal_suffix}"
+    def __eq__(self, other: HeteroGraphEncoder) -> bool:
+        return (
+            self.hidden_size == other.hidden_size
+            and self.obj_type == other.obj_type
+            and self.predicates == other.predicates
+        )
 
-    def encode(self, state: mi.State) -> nx.Graph:
+    def encode(self, state: State) -> nx.Graph:
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
         problem = state.get_problem()
-        graph = nx.Graph(state=state)
+        graph = nx.Graph(encoding=self, state=state)
 
         for obj in problem.objects:
-            graph.add_node(obj.name, type=self.obj_name)
+            graph.add_node(node_of(obj), type=self.obj_type)
 
-        state_atoms = zip(
-            filter(lambda a: a.predicate.name != "=", state.get_atoms()),
-            itertools.repeat(""),
-            itertools.repeat(False),
-        )
-        goal_atoms = (
-            (literal.atom, "~" if literal.negated else "", True)
-            for literal in problem.goal
-        )
-
-        for atom, prefix, is_goal in itertools.chain(state_atoms, goal_atoms):
+        atom_or_literal: Atom | Literal
+        for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
+            atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
             if atom.predicate.arity == 0:
                 continue
 
-            predicate: mi.Predicate = atom.predicate
-            pred_name: str = predicate.name
-
-            node_type = self.goal_pred(pred_name) if is_goal else pred_name
-
-            obj_names = ",".join(obj.name for obj in atom.terms)
-
-            atom_node = f"{prefix}{node_type}({obj_names})"
-            graph.add_node(
-                atom_node,
-                type=node_type,
-            )
+            atom_node = node_of(atom_or_literal)
+            graph.add_node(atom_node, type=node_of(atom_or_literal, as_predicate=True))
 
             for pos, obj in enumerate(atom.terms):
                 # Connect predicate node to object node
-                graph.add_edge(obj.name, atom_node, position=str(pos))
+                graph.add_edge(node_of(obj), atom_node, position=pos)
         return graph
 
-    def to_pyg_data(self, hetero_graph: nx.Graph) -> HeteroData:
-        nodes_by_type: Dict[str, List[str]] = defaultdict(list)
-        for key, value in nx.get_node_attributes(hetero_graph, "type").items():
-            nodes_by_type[value].append(key)
+    def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
+        if not self._encoded_by_this(graph):
+            raise ValueError("Graph must have been encoded by this encoder")
+        del graph.graph["encoding"]
+        del graph.graph["state"]
+        nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)
+        for node, node_type in nx.get_node_attributes(graph, "type").items():
+            nodes_dict[node_type].append(node)
 
-        nidx_by_type = {
+        node_idx_dict: Dict[NodeType, Dict[Node, int]] = {
             ntype: {node: i for i, node in enumerate(nodes)}
-            for ntype, nodes in nodes_by_type.items()
+            for ntype, nodes in nodes_dict.items()
         }
 
         data = HeteroData()
-        # Create x_dict the feature matrix for each node type
-        for node_type, nodes_of_type in nodes_by_type.items():
+        # Create x_dict, the feature matrix for each node type
+        for node_type, nodes_of_type in nodes_dict.items():
             hidden = (
                 self.hidden_size
-                if node_type == self.obj_name
-                else self.hidden_size * self.arity_by_pred[node_type]
+                if node_type == self.obj_type
+                else self.hidden_size * self.arity_dict[node_type]
             )
             data[node_type].x = torch.zeros(
                 (len(nodes_of_type), hidden), dtype=torch.float32
             )
 
-        # Group edges by src, position, dst
-        edge_dict: Dict[EdgeType, List[torch.Tensor]] = {}
-        for src, dst, attr in hetero_graph.edges.data():
-            src_type: str = hetero_graph.nodes[src]["type"]
-            dst_type: str = hetero_graph.nodes[dst]["type"]
-            pos: str = attr["position"]
-            edge_type = (src_type, pos, dst_type)
-            reverse_edge = (dst_type, pos, src_type)
-            if edge_type not in edge_dict:
-                edge_dict[edge_type] = []
-                edge_dict[reverse_edge] = []  # reverse edge
+        # Add dummy entry for node-types that don't appear in this state
+        # https://github.com/pyg-team/pytorch_geometric/issues/9233
+        for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
+            data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
+        if self.obj_type not in nodes_dict:
+            logging.warning(f"No object in graph ({graph})")
+            data[self.obj_type].x = torch.empty(0, dtype=torch.float32)
 
-            edge_dict[edge_type].append(
-                torch.tensor([nidx_by_type[src_type][src], nidx_by_type[dst_type][dst]])
-            )
-            edge_dict[reverse_edge].append(
-                torch.tensor([nidx_by_type[dst_type][dst], nidx_by_type[src_type][src]])
-            )
+        # Group edges by src, position, dst
+        edge_dict: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
+        for src, dst, attr in graph.edges.data():
+            src_type: str = graph.nodes[src]["type"]
+            dst_type: str = graph.nodes[dst]["type"]
+            pos = str(attr["position"])
+
+            forward_edge_type = PredicateEdgeType(src_type, pos, dst_type)
+            reverse_edge_type = PredicateEdgeType(dst_type, pos, src_type)
+
+            for edge_type, (src_node_idx, dst_node_idx) in (
+                (forward_edge_type, (src, dst)),
+                (reverse_edge_type, (dst, src)),
+            ):
+                edge_dict[edge_type].append(
+                    torch.tensor(
+                        (
+                            node_idx_dict[edge_type.src_type][src_node_idx],
+                            node_idx_dict[edge_type.dst_type][dst_node_idx],
+                        )
+                    )
+                )
+
         # Stack grouped edge_indices and add to data
-        for (src, rel, dst), value in edge_dict.items():
-            # HeteroData want str,str,str as edge keys
-            data[src, rel, dst].edge_index = torch.stack(value, dim=1)
+        for edge_type, node_type in edge_dict.items():
+            # HeteroData want Tuple[str,str,str] as edge keys
+            data[edge_type].edge_index = torch.stack(node_type, dim=1)
+
+        # Add dummy entry for edge-types that don't appear in this state
+        for unused_edge_type in self.all_edge_types - edge_dict.keys():
+            data[unused_edge_type].edge_index = torch.empty(2, 0, dtype=torch.long)
 
         return data

@@ -15,7 +15,7 @@ from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import StateEncoderBase
-from rgnet.encoding.node_names import node_of
+from rgnet.encoding.node_factory import node_of
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
 
@@ -210,16 +210,18 @@ class ColorGraphEncoder(StateEncoderBase):
                 prev_predicate_node = atom_or_literal_node
         return graph
 
-    def to_pyg_data(self, color_encoded_graph: nx.Graph) -> Data:
+    def to_pyg_data(self, graph: nx.Graph) -> Data:
+        if not self._encoded_by_this(graph):
+            raise ValueError("Graph must have been encoded by this encoder")
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir objects
-        del color_encoded_graph.graph["state"]
-        del color_encoded_graph.graph["encoding"]
+        del graph.graph["state"]
+        del graph.graph["encoding"]
         # Every node has to have the same features
-        for node, attr in color_encoded_graph.nodes.data():
+        for node, attr in graph.nodes.data():
             if "info" in attr:
                 del attr["info"]
-        data: Data = pyg.utils.from_networkx(color_encoded_graph)
+        data: Data = pyg.utils.from_networkx(graph)
         # We want floating point features
         data.x = data["feature"].float()
         # Ensure that every node has a vector of features even though its size is one

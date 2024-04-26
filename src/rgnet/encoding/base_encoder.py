@@ -13,6 +13,9 @@ class StateEncoderBase(ABC):
     """
 
     @abstractmethod
+    def __eq__(self, other): ...
+
+    @abstractmethod
     def encode(self, state: State) -> nx.Graph | nx.DiGraph:
         """
         Encodes the state into a networkx-graph representation.
@@ -40,3 +43,10 @@ class StateEncoderBase(ABC):
         pyg.data.Data
         """
         ...
+
+    def _encoded_by_this(self, graph: nx.Graph | nx.DiGraph) -> bool:
+        return (
+            hasattr(graph, "graph")
+            and "encoding" in graph.graph
+            and graph.graph["encoding"] == self
+        )

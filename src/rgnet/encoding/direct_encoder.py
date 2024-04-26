@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import itertools
 from functools import singledispatchmethod
 from types import NoneType
@@ -9,7 +11,7 @@ from pymimir import Atom, Domain, Literal, State
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import StateEncoderBase
-from rgnet.encoding.node_names import node_of
+from rgnet.encoding.node_factory import Node, node_of
 
 
 class aux_node:
@@ -60,6 +62,9 @@ class DirectGraphEncoder(StateEncoderBase):
         edge_feature_vectors.flags.writeable = False
         return edge_feature_vectors
 
+    def __eq__(self, other: DirectGraphEncoder):
+        return self._domain == other.domain
+
     @singledispatchmethod
     def feature(self, item) -> np.ndarray:
         raise NotImplementedError(f"Type passed not supported: {type(item)}")
@@ -84,7 +89,7 @@ class DirectGraphEncoder(StateEncoderBase):
 
     @staticmethod
     def _emplace_feature(
-        graph: nx.DiGraph, source_obj: str, target_obj: str, feature: np.ndarray
+        graph: nx.DiGraph, source_obj: Node, target_obj: Node, feature: np.ndarray
     ):
         if graph.has_edge(source_obj, target_obj):
             # in-place add to combine 1s of  the predicate positions that
@@ -133,16 +138,18 @@ class DirectGraphEncoder(StateEncoderBase):
                 )
         return graph
 
-    def to_pyg_data(self, direct_encoded_graph: nx.DiGraph) -> Data:
+    def to_pyg_data(self, graph: nx.DiGraph) -> Data:
+        if not self._encoded_by_this(graph):
+            raise ValueError("Graph must have been encoded by this encoder")
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir.State
-        del direct_encoded_graph.graph["state"]
-        del direct_encoded_graph.graph["encoding"]
+        del graph.graph["state"]
+        del graph.graph["encoding"]
         # Every node has to have the same features
-        for node, attr in direct_encoded_graph.nodes.data():
+        for node, attr in graph.nodes.data():
             if "info" in attr:
                 del attr["info"]
-        data: Data = pyg.utils.from_networkx(direct_encoded_graph)
+        data: Data = pyg.utils.from_networkx(graph)
         # We want floating point features
         data.x = data["feature"].float()
         data.edge_attr = data.edge_attr.float()
