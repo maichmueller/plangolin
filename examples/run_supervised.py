@@ -47,16 +47,24 @@ def _setup_datasets(
     evaluation_set = _dataset_of(
         import_problems(problem_path + "/eval", domain), dataset_path + "/eval", encoder
     )
-    # Test the model
+    # Evaluate the model
     eval_sampler = ImbalancedSampler(evaluation_set)
     eval_loader = pyg.loader.DataLoader(
         evaluation_set, batch_size, shuffle=False, sampler=eval_sampler
     )
 
+    test_set = _dataset_of(
+        import_problems(problem_path + "/test", domain), dataset_path + "/test", encoder
+    )
+    test_loader = pyg.loader.DataLoader(
+        test_set, batch_size, shuffle=False, sampler=ImbalancedSampler(test_set)
+    )
+
     logging.info(f"Training dataset contains {len(training_set)} graphs/states")
     logging.info(f"Evaluation dataset contains {len(evaluation_set)} graphs/states")
+    logging.info(f"Testing dataset contains {len(test_set)} graphs/states")
 
-    return train_loader, eval_loader, encoder
+    return train_loader, eval_loader, test_loader, encoder
 
 
 def _create_encoding(
@@ -88,8 +96,8 @@ def run(
     logging.info(f"Using {device} as device")
     logging.info("Working from " + curr_dir)
     start_time = time.time()
-    time_stamp = datetime.now().strftime("%y:%m:%d_%H:%M:%S")
-    wlogger = WandbLogger(project="rgnet", name="heter_ImbalancedSampler" + time_stamp)
+    time_stamp = datetime.now().strftime("%y-%m-d_%H-%M-%S")
+    wlogger = WandbLogger(project="rgnet", name=encoder_type + time_stamp)
     wlogger.experiment.config.update(
         {
             "epoch": epochs,
@@ -97,6 +105,7 @@ def run(
             "num_layer": num_layer,
             "learning_rate": learning_rate,
             "device": device,
+            "encoding": encoder_type,
         },
     )
 
@@ -104,13 +113,13 @@ def run(
 
     # define paths
     problem_path = data_path + "/pddl_domains/blocks"
-    dataset_path = data_path + "/datasets/blocks"
+    dataset_path = data_path + "/" + encoder_type + "/datasets/blocks"
     model_save_path = pathlib.Path(data_path + f"/models/run{time_stamp}.pt")
     model_save_path.parent.mkdir(exist_ok=True)
 
     import_time = time.time()
 
-    train_loader, eval_loader, encoder = _setup_datasets(
+    train_loader, eval_loader, test_loader, encoder = _setup_datasets(
         encoder_type, problem_path, dataset_path, batch_size, hidden=embedding_size
     )
 
@@ -126,13 +135,14 @@ def run(
             arity_by_pred=arity_by_pred,
             lr=learning_rate,
         )
+        wlogger.watch(model.model)
     else:
         model = PureGNN(
             size_out=1, size_in=1, size_embedding=embedding_size, num_layer=num_layer
         )
+        wlogger.watch(model)
 
-    # wlogger.watch(model.model)
-    # wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
+    wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
 
     trainer = Trainer(accelerator=device, devices=1, max_epochs=epochs, logger=wlogger)
 
@@ -142,7 +152,7 @@ def run(
 
     logging.info(f"Saved model can be found at {model_save_path}")
 
-    # trainer.test(model, dataloaders=test_loader)
+    trainer.test(model, dataloaders=test_loader)
 
     logging.info(f"Completed run after {time_delta_now(start_time)}.")
 

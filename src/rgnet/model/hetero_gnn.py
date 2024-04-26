@@ -36,13 +36,14 @@ class HeteroGNN(torch.nn.Module):
             # embeddings as input and generates k outputs, one for each object..
             pred: pyg.nn.MLP(
                 [
-                    arity_by_pred[pred] * hidden_size,
+                    arity * hidden_size,
                     hidden_size,
-                    arity_by_pred[pred] * hidden_size,
+                    arity * hidden_size,
                 ],
                 norm="layer_norm",  # necessary for batches of size 1
             )
-            for pred in arity_by_pred.keys()
+            for pred, arity in arity_by_pred.items()
+            if arity > 0
         }
 
         self.obj_to_atom = FanOutMP(mlp_by_pred, src_name=obj_name)
