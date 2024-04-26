@@ -41,7 +41,8 @@ where = ["src"]
 dev = [
     'pytest',
     'pytest-cov',
-    'pre-commit'
+    'pre-commit',
+    'mockito'
 ]
 
 [project.urls]
