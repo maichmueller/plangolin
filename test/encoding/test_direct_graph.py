@@ -3,7 +3,7 @@ from test.fixtures import direct_encoded_state
 import pytest
 
 from rgnet.encoding import DirectGraphEncoder
-from rgnet.encoding.node_factory import node_of
+from rgnet.encoding.node_factory import NodeFactory
 
 
 @pytest.mark.parametrize(
@@ -12,7 +12,7 @@ from rgnet.encoding.node_factory import node_of
     indirect=True,
 )
 def test_direct_encoding_initial(direct_encoded_state):
-    graph, _ = direct_encoded_state
+    graph, encoder = direct_encoded_state
     # 2 objects, 1 auxiliary obj
     assert len(graph.nodes) == 2 + 1
     assert (
@@ -21,7 +21,9 @@ def test_direct_encoding_initial(direct_encoded_state):
         and "b" in graph.nodes
     )
     assert all("feature" in attr for *rest, attr in graph.edges.data())
-    assert graph.in_degree(node_of(DirectGraphEncoder._auxiliary_node)) == 0
+    assert (
+        graph.in_degree(encoder.node_factory(DirectGraphEncoder._auxiliary_node)) == 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -30,7 +32,7 @@ def test_direct_encoding_initial(direct_encoded_state):
     indirect=True,
 )
 def test_direct_encoding_goal(direct_encoded_state):
-    graph, _ = direct_encoded_state
+    graph, encoder = direct_encoded_state
     # 2 objects, 1 auxiliary obj
     assert 2 + 1 == len(graph.nodes)
     assert (
@@ -39,7 +41,9 @@ def test_direct_encoding_goal(direct_encoded_state):
         and "b" in graph.nodes
     )
     assert all("feature" in attr for *rest, attr in graph.edges.data())
-    assert graph.in_degree(node_of(DirectGraphEncoder._auxiliary_node)) == 0
+    assert (
+        graph.in_degree(encoder.node_factory(DirectGraphEncoder._auxiliary_node)) == 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -48,11 +52,13 @@ def test_direct_encoding_goal(direct_encoded_state):
     indirect=True,
 )
 def test_direct_encoding_large_goal(direct_encoded_state):
-    graph, _ = direct_encoded_state
+    graph, encoder = direct_encoded_state
     # 7 objects, 1 auxiliary obj
     assert 7 + 1 == len(graph.nodes)
     assert str(DirectGraphEncoder._auxiliary_node) in graph.nodes and all(
         node in graph.nodes for node in "abcdefg"
     )
     assert all("feature" in attr for *rest, attr in graph.edges.data())
-    assert graph.in_degree(node_of(DirectGraphEncoder._auxiliary_node)) == 0
+    assert (
+        graph.in_degree(encoder.node_factory(DirectGraphEncoder._auxiliary_node)) == 0
+    )

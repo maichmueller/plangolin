@@ -15,40 +15,41 @@ class HeteroGNN(torch.nn.Module):
         self,
         hidden_size,
         num_layer: int,
-        obj_id: str,
-        arity_by_pred: Dict[str, int],
+        obj_type_id: str,
+        arity_dict: Dict[str, int],
     ):
         """
         :param hidden_size: The size of object embeddings.
         :param num_layer: Total number of message exchange iterations.
-        :param obj_id: The type identifier of objects in the x_dict.
-        :param arity_by_pred: A dictionary mapping predicate names to their arity.
+        :param obj_type_id: The type identifier of objects in the x_dict.
+        :param arity_dict: A dictionary mapping predicate names to their arity.
         Creates one MLP for each predicate.
         Note that predicates as well as goal-predicates are meant.
         """
         super().__init__()
 
         self.num_layer: int = num_layer
-        self.obj_id: str = obj_id
-        mlp_by_pred = {
+        self.obj_type_id: str = obj_type_id
+        mlp_dict = {
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object..
             pred: pyg.nn.MLP(
                 [
-                    arity_by_pred[pred] * hidden_size,
+                    arity * hidden_size,
                     hidden_size,
-                    arity_by_pred[pred] * hidden_size,
+                    arity * hidden_size,
                 ],
                 norm="layer_norm",  # necessary for batches of size 1
             )
-            for pred in arity_by_pred.keys()
+            for pred, arity in arity_dict.items()
+            if arity > 0
         }
 
-        self.obj_to_atom = FanOutMP(mlp_by_pred, src_name=obj_id)
+        self.obj_to_atom = FanOutMP(mlp_dict, src_name=obj_type_id)
 
         self.obj_update = pyg.nn.MLP([hidden_size * 2, hidden_size * 2, hidden_size])
-        self.atom_to_obj = FanInMP(hidden_size=hidden_size, dst_name=obj_id)
+        self.atom_to_obj = FanInMP(hidden_size=hidden_size, dst_name=obj_type_id)
         self.readout = pyg.nn.MLP(
             [hidden_size, 2 * hidden_size, 1], act="Mish", norm="layer_norm"
         )
@@ -65,9 +66,9 @@ class HeteroGNN(torch.nn.Module):
         # Distribute the atom embeddings back to the corresponding objects.
         out = self.atom_to_obj(x_dict, edge_index_dict)
         # Update the object embeddings using a shared update-MLP.
-        obj_emb = torch.cat([x_dict[self.obj_id], out[self.obj_id]], dim=1)
+        obj_emb = torch.cat([x_dict[self.obj_type_id], out[self.obj_type_id]], dim=1)
         obj_emb = self.obj_update(obj_emb)
-        x_dict.update({self.obj_id: obj_emb})
+        x_dict[self.obj_type_id] = obj_emb
 
     def forward(
         self,
@@ -75,12 +76,16 @@ class HeteroGNN(torch.nn.Module):
         edge_index_dict: Dict[str, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
     ):
+        # Filter out dummies
+        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
+        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)
 
-        obj_emb = x_dict[self.obj_id]
+        obj_emb = x_dict[self.obj_type_id]
         batch = (
-            batch_dict[self.obj_id]
+            batch_dict[self.obj_type_id]
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
@@ -96,14 +101,14 @@ class LightningHetero(LightningModule):
         hidden_size,
         num_layer: int,
         obj_name: str,
-        arity_by_pred: Dict[str, int],
+        arity_dict: Dict[str, int],
         lr: float = 0.001,
         weight_decay: float = 5e-4,
     ) -> None:
         super().__init__()
         self.lr = lr
         self.weight_decay = weight_decay
-        self.model = HeteroGNN(hidden_size, num_layer, obj_name, arity_by_pred)
+        self.model = HeteroGNN(hidden_size, num_layer, obj_name, arity_dict)
 
     def forward(self, x_dic, edge_index_dict, batch_dict):
         return self.model(x_dic, edge_index_dict, batch_dict)

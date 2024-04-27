@@ -15,7 +15,7 @@ from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import StateEncoderBase
-from rgnet.encoding.node_factory import node_of
+from rgnet.encoding.node_factory import NodeFactory
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
 
@@ -40,6 +40,7 @@ class ColorGraphEncoder(StateEncoderBase):
     def __init__(
         self,
         domain: Domain,
+        node_factory: NodeFactory = NodeFactory(),
         feature_mode: FeatureMode = FeatureMode.categorical,
         add_global_predicate_nodes: bool = False,
         feature_enc_len: Optional[int] = None,
@@ -57,7 +58,7 @@ class ColorGraphEncoder(StateEncoderBase):
             raise ValueError(
                 f"`feature_mode` value {feature_mode} not element of the enum."
             )
-
+        self.node_factory = node_factory
         self.add_predicate_nodes = add_global_predicate_nodes
         self._domain = domain
         self._predicates = self.domain.predicates
@@ -164,7 +165,7 @@ class ColorGraphEncoder(StateEncoderBase):
 
         for obj in problem.objects:
             graph.add_node(
-                node_of(obj),
+                self.node_factory(obj),
                 feature=self.feature(obj.type),
                 info=obj.type.name,
             )
@@ -172,7 +173,7 @@ class ColorGraphEncoder(StateEncoderBase):
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
             if self.add_predicate_nodes:
                 graph.add_node(
-                    node_of(atom_or_literal, as_predicate=True),
+                    self.node_factory(atom_or_literal, as_predicate=True),
                     feature=self.feature(None),
                 )
 
@@ -181,12 +182,12 @@ class ColorGraphEncoder(StateEncoderBase):
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
             if atom.predicate.arity == 0:
                 graph.add_node(
-                    node_of(atom_or_literal),
+                    self.node_factory(atom_or_literal),
                     feature=self.feature(atom_or_literal),
                 )
             for pos, obj in enumerate(atom.terms):
-                object_node = node_of(obj, pos)
-                atom_or_literal_node = node_of(atom_or_literal, pos)
+                object_node = self.node_factory(obj, pos)
+                atom_or_literal_node = self.node_factory(atom_or_literal, pos)
 
                 graph.add_node(
                     atom_or_literal_node,
@@ -200,7 +201,7 @@ class ColorGraphEncoder(StateEncoderBase):
                 elif self.add_predicate_nodes:
                     # pos 0-node gets the connection to the predicate summarising node
                     graph.add_edge(
-                        node_of(
+                        self.node_factory(
                             atom_or_literal,
                             as_predicate=True,
                         ),

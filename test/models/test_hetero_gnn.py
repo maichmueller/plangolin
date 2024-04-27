@@ -21,8 +21,8 @@ def test_hetero_gnn(hetero_encoded_state):
     model = HeteroGNN(
         hidden_size=encoder.hidden_size,
         num_layer=1,
-        obj_id=encoder.obj_type,
-        arity_by_pred=encoder.arity_dict,
+        obj_type_id=encoder.obj_type_id,
+        arity_dict=encoder.arity_dict,
     )
     out = model(data.x_dict, data.edge_index_dict)
     assert out.size() == (1,)
@@ -40,8 +40,8 @@ def test_hetero_batched():
         model = HeteroGNN(
             hidden_size=2,
             num_layer=1,
-            obj_id=encoder.obj_type,
-            arity_by_pred=encoder.arity_dict,
+            obj_type_id=encoder.obj_type_id,
+            arity_dict=encoder.arity_dict,
         )
 
         out = model(batch.x_dict, batch.edge_index_dict, batch.batch_dict)

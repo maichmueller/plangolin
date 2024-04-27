@@ -25,13 +25,13 @@ def test_hetero_data():
 
 def validate_hetero_data(data: HeteroData, encoder: HeteroGraphEncoder):
     # for ["obj", *, pred], and ["obj", *, pred] there are exactly arity(pred) many edges
-    assert encoder.obj_type in data.node_types
+    assert encoder.obj_type_id in data.node_types
     x_dict = data.x_dict
 
     edge_index_dict = data.edge_index_dict
 
     for node_type in data.node_types:
-        if node_type == encoder.obj_type:
+        if node_type == encoder.obj_type_id:
             continue
 
         arity = encoder.arity_dict[node_type]
@@ -41,13 +41,17 @@ def validate_hetero_data(data: HeteroData, encoder: HeteroGraphEncoder):
         outgoing_edges_by_atom = defaultdict(int)
         for pos in range(arity):
             # Check that every atom has exactly arity many outgoing edges
-            dest_indices = edge_index_dict[(encoder.obj_type, str(pos), node_type)][1]
+            dest_indices = edge_index_dict[(encoder.obj_type_id, str(pos), node_type)][
+                1
+            ]
             for dst_index in dest_indices:
                 incoming_edges_by_atom[dst_index.item()] += 1
                 assert dst_index.item() in allowed_atom_indices
 
             # Check that every atom has exactly arity many outgoing edges
-            source_indices = edge_index_dict[(node_type, str(pos), encoder.obj_type)][0]
+            source_indices = edge_index_dict[
+                (node_type, str(pos), encoder.obj_type_id)
+            ][0]
             for src_index in source_indices:
                 outgoing_edges_by_atom[src_index.item()] += 1
                 assert src_index.item() in allowed_atom_indices

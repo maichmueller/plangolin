@@ -12,7 +12,7 @@ from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from rgnet.encoding.base_encoder import StateEncoderBase
-from rgnet.encoding.node_factory import Node, node_of
+from rgnet.encoding.node_factory import Node, NodeFactory
 
 PredicateEdgeType = namedtuple("PredicateEdgeType", ["src_type", "pos", "dst_type"])
 
@@ -22,28 +22,36 @@ class HeteroGraphEncoder(StateEncoderBase):
         self,
         domain: Domain,
         hidden_size: int,  # TODO Decouple hidden_size from encoding
+        node_factory: NodeFactory = NodeFactory(),
         obj_type_id: str = "obj",
     ) -> None:
         super().__init__()
         self.hidden_size: int = hidden_size
-        self.obj_type: str = obj_type_id
+        self.obj_type_id: str = obj_type_id
+        self.node_factory: NodeFactory = node_factory
         self.predicates: List[Predicate] = domain.predicates
         self.arity_dict: Dict[Node, int] = dict(
             sorted(
                 itertools.chain(
                     map(
                         lambda p: (
-                            node_of(p, is_goal=False, is_negated=False),
+                            self.node_factory(p, is_goal=False, is_negated=False),
                             p.arity,
                         ),
                         self.predicates,
                     ),
                     map(
-                        lambda p: (node_of(p, is_goal=True, is_negated=False), p.arity),
+                        lambda p: (
+                            self.node_factory(p, is_goal=True, is_negated=False),
+                            p.arity,
+                        ),
                         self.predicates,
                     ),
                     map(
-                        lambda p: (node_of(p, is_goal=True, is_negated=True), p.arity),
+                        lambda p: (
+                            self.node_factory(p, is_goal=True, is_negated=True),
+                            p.arity,
+                        ),
                         self.predicates,
                     ),
                 ),
@@ -54,13 +62,13 @@ class HeteroGraphEncoder(StateEncoderBase):
         self.all_edge_types: List[EdgeType] = []
         for predicate, arity in self.arity_dict.items():
             for pos in range(arity):
-                self.all_edge_types.append((self.obj_type, str(pos), predicate))
-                self.all_edge_types.append((predicate, str(pos), self.obj_type))
+                self.all_edge_types.append((self.obj_type_id, str(pos), predicate))
+                self.all_edge_types.append((predicate, str(pos), self.obj_type_id))
 
     def __eq__(self, other: HeteroGraphEncoder) -> bool:
         return (
             self.hidden_size == other.hidden_size
-            and self.obj_type == other.obj_type
+            and self.obj_type_id == other.obj_type_id
             and self.predicates == other.predicates
         )
 
@@ -73,7 +81,7 @@ class HeteroGraphEncoder(StateEncoderBase):
         graph = nx.Graph(encoding=self, state=state)
 
         for obj in problem.objects:
-            graph.add_node(node_of(obj), type=self.obj_type)
+            graph.add_node(self.node_factory(obj), type=self.obj_type_id)
 
         atom_or_literal: Atom | Literal
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
@@ -81,12 +89,14 @@ class HeteroGraphEncoder(StateEncoderBase):
             if atom.predicate.arity == 0:
                 continue
 
-            atom_node = node_of(atom_or_literal)
-            graph.add_node(atom_node, type=node_of(atom_or_literal, as_predicate=True))
+            atom_node = self.node_factory(atom_or_literal)
+            graph.add_node(
+                atom_node, type=self.node_factory(atom_or_literal, as_predicate=True)
+            )
 
             for pos, obj in enumerate(atom.terms):
                 # Connect predicate node to object node
-                graph.add_edge(node_of(obj), atom_node, position=pos)
+                graph.add_edge(self.node_factory(obj), atom_node, position=pos)
         return graph
 
     def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
@@ -108,7 +118,7 @@ class HeteroGraphEncoder(StateEncoderBase):
         for node_type, nodes_of_type in nodes_dict.items():
             hidden = (
                 self.hidden_size
-                if node_type == self.obj_type
+                if node_type == self.obj_type_id
                 else self.hidden_size * self.arity_dict[node_type]
             )
             data[node_type].x = torch.zeros(
@@ -119,9 +129,9 @@ class HeteroGraphEncoder(StateEncoderBase):
         # https://github.com/pyg-team/pytorch_geometric/issues/9233
         for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
             data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
-        if self.obj_type not in nodes_dict:
+        if self.obj_type_id not in nodes_dict:
             logging.warning(f"No object in graph ({graph})")
-            data[self.obj_type].x = torch.empty(0, dtype=torch.float32)
+            data[self.obj_type_id].x = torch.empty(0, dtype=torch.float32)
 
         # Group edges by src, position, dst
         edge_dict: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)

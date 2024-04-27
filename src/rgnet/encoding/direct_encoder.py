@@ -11,17 +11,7 @@ from pymimir import Atom, Domain, Literal, State
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import StateEncoderBase
-from rgnet.encoding.node_factory import Node, node_of
-
-
-class aux_node:
-    def __repr__(self):
-        return "__aux__"
-
-
-@node_of.register
-def _(aux: aux_node, *args, **kwargs):
-    return str(aux)
+from rgnet.encoding.node_factory import Node, NodeFactory
 
 
 class DirectGraphEncoder(StateEncoderBase):
@@ -37,9 +27,17 @@ class DirectGraphEncoder(StateEncoderBase):
     predicates p1(..., i, j, ...) and p1_GOAL(..., p, j, ...) in the state `s`.
     """
 
+    class aux_node:
+        def __repr__(self):
+            return "__aux__"
+
     _auxiliary_node = aux_node()
 
-    def __init__(self, domain: Domain):
+    def __init__(
+        self,
+        domain: Domain,
+        node_factory: NodeFactory = NodeFactory(),
+    ):
         """
         Initialize the direct graph encoder
 
@@ -47,6 +45,13 @@ class DirectGraphEncoder(StateEncoderBase):
         ----------
         domain: pymimir.Domain, the domain over which instance-states will be encoded
         """
+
+        # register our aux node to the node factory's dispatch
+        @node_factory.__call__.register
+        def _(self2, aux: DirectGraphEncoder.aux_node, *args, **kwargs):
+            return str(aux)
+
+        self.node_factory = node_factory
         self._domain = domain
         self._predicates = self.domain.predicates
         self._feature_map = self._build_feature_map()
@@ -106,11 +111,13 @@ class DirectGraphEncoder(StateEncoderBase):
         objects = problem.objects
         for obj in objects:
             graph.add_node(
-                node_of(obj),
+                self.node_factory(obj),
                 feature=self.feature(None),
                 info=obj.type.name,
             )
-        graph.add_node(node_of(self._auxiliary_node), feature=self.feature(None))
+        graph.add_node(
+            self.node_factory(self._auxiliary_node), feature=self.feature(None)
+        )
 
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
             # only a literal has a member `atom`
@@ -132,8 +139,8 @@ class DirectGraphEncoder(StateEncoderBase):
             for src_obj, tgt_obj in zip(source_objs, target_objs):
                 self._emplace_feature(
                     graph,
-                    node_of(src_obj),
-                    node_of(tgt_obj),
+                    self.node_factory(src_obj),
+                    self.node_factory(tgt_obj),
                     self.feature(atom_or_literal),
                 )
         return graph
