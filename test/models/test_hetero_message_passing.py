@@ -1,6 +1,5 @@
 from test.fixtures import problem_setup
 
-import pytest
 import torch
 import torch_geometric as pyg
 from mockito import arg_that, mock, when

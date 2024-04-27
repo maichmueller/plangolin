@@ -127,12 +127,11 @@ def run(
 
     start_time_training = time.time()
     if isinstance(encoder, HeteroGraphEncoder):
-        arity_by_pred = encoder.arity_dict
         model = LightningHetero(
             hidden_size=embedding_size,
             num_layer=num_layer,
-            obj_name=encoder.obj_type_id,
-            arity_dict=arity_by_pred,
+            obj_type_id=encoder.obj_type_id,
+            arity_dict=encoder.arity_dict,
             lr=learning_rate,
         )
         wlogger.watch(model.model)

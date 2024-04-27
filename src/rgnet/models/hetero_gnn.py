@@ -96,22 +96,14 @@ class HeteroGNN(torch.nn.Module):
 
 
 class LightningHetero(LightningModule):
-    def __init__(
-        self,
-        hidden_size,
-        num_layer: int,
-        obj_name: str,
-        arity_dict: Dict[str, int],
-        lr: float = 0.001,
-        weight_decay: float = 5e-4,
-    ) -> None:
+    def __init__(self, lr: float = 0.001, weight_decay: float = 5e-4, **kwargs) -> None:
         super().__init__()
         self.lr = lr
         self.weight_decay = weight_decay
-        self.model = HeteroGNN(hidden_size, num_layer, obj_name, arity_dict)
+        self.model = HeteroGNN(**kwargs)
 
-    def forward(self, x_dic, edge_index_dict, batch_dict):
-        return self.model(x_dic, edge_index_dict, batch_dict)
+    def forward(self, x_dict, edge_index_dict, batch_dict):
+        return self.model(x_dict, edge_index_dict, batch_dict)
 
     def training_step(self, data, batch_index) -> torch.Tensor:
         return self._common_test_step(data, "train")
