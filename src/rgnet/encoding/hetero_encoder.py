@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import itertools
 import logging
-from collections import defaultdict, namedtuple
-from typing import Dict, List
+from collections import defaultdict
+from typing import Dict, List, NamedTuple
 
 import networkx as nx
 import torch
@@ -14,7 +14,11 @@ from torch_geometric.typing import EdgeType, NodeType
 from rgnet.encoding.base_encoder import StateEncoderBase
 from rgnet.encoding.node_factory import Node, NodeFactory
 
-PredicateEdgeType = namedtuple("PredicateEdgeType", ["src_type", "pos", "dst_type"])
+
+class PredicateEdgeType(NamedTuple):
+    src_type: str
+    pos: str
+    dst_type: str
 
 
 class HeteroGraphEncoder(StateEncoderBase):
@@ -30,30 +34,17 @@ class HeteroGraphEncoder(StateEncoderBase):
         self.obj_type_id: str = obj_type_id
         self.node_factory: NodeFactory = node_factory
         self.predicates: List[Predicate] = domain.predicates
+
         self.arity_dict: Dict[Node, int] = dict(
             sorted(
-                itertools.chain(
-                    map(
-                        lambda p: (
-                            self.node_factory(p, is_goal=False, is_negated=False),
-                            p.arity,
-                        ),
-                        self.predicates,
-                    ),
-                    map(
-                        lambda p: (
-                            self.node_factory(p, is_goal=True, is_negated=False),
-                            p.arity,
-                        ),
-                        self.predicates,
-                    ),
-                    map(
-                        lambda p: (
-                            self.node_factory(p, is_goal=True, is_negated=True),
-                            p.arity,
-                        ),
-                        self.predicates,
-                    ),
+                (
+                    (self.node_factory(predicate, **kwargs_dict), predicate.arity)
+                    for predicate in self.predicates
+                    for kwargs_dict in (
+                        {"is_goal": True, "is_negated": False},
+                        {"is_goal": False, "is_negated": False},
+                        {"is_goal": True, "is_negated": True},
+                    )
                 ),
                 key=lambda x: x[0],
             )
