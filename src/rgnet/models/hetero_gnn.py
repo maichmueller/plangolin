@@ -13,7 +13,7 @@ from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 class HeteroGNN(torch.nn.Module):
     def __init__(
         self,
-        hidden_size,
+        hidden_size: int,
         num_layer: int,
         obj_type_id: str,
         arity_dict: Dict[str, int],
@@ -28,12 +28,13 @@ class HeteroGNN(torch.nn.Module):
         """
         super().__init__()
 
+        self.hidden_size: int = hidden_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
         mlp_dict = {
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
-            # embeddings as input and generates k outputs, one for each object..
+            # embeddings as input and generates k outputs, one for each object.
             pred: pyg.nn.MLP(
                 [
                     arity * hidden_size,
@@ -54,11 +55,18 @@ class HeteroGNN(torch.nn.Module):
             [hidden_size, 2 * hidden_size, 1], act="Mish", norm="layer_norm"
         )
 
-    def layer(self, x_dict, edge_index_dict):
-        # Filter out dummies
-        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
-        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+    def encoding_layer(self, x_dict: Dict[str, Tensor]):
+        # Resize everything by the hidden_size
+        # embedding of objects = hidden_size
+        # embedding of atoms = arity of predicate * hidden_size
+        for k, v in x_dict.items():
+            assert v.dim() == 2
+            x_dict[k] = torch.zeros(
+                v.shape[0], v.shape[1] * self.hidden_size, device=v.device
+            )
+        return x_dict
 
+    def layer(self, x_dict, edge_index_dict):
         # Groups object embeddings that are part of an atom and
         # applies predicate-specific MLP based on the edge type.
         out = self.obj_to_atom(x_dict, edge_index_dict)
@@ -79,6 +87,8 @@ class HeteroGNN(torch.nn.Module):
         # Filter out dummies
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+
+        x_dict = self.encoding_layer(x_dict)  # Resize everything by the hidden_size
 
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)

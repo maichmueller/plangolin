@@ -33,11 +33,10 @@ def _setup_datasets(
     problem_path: str,
     dataset_path: str,
     batch_size: int,
-    hidden: int,
 ):
     domain, problems = import_all_from(problem_path)
     problems = sorted(problems, key=lambda p: p.name)
-    encoder = _create_encoder(domain, encoder_type, hidden)
+    encoder = _create_encoder(domain, encoder_type)
     training_set = _dataset_of(problems, dataset_path + "/train", encoder)
     sampler = ImbalancedSampler(training_set)
     train_loader = pyg.loader.DataLoader(
@@ -67,15 +66,13 @@ def _setup_datasets(
     return train_loader, eval_loader, test_loader, encoder
 
 
-def _create_encoder(
-    domain: mi.Domain, encoder_type: str, hidden: int
-) -> StateEncoderBase:
+def _create_encoder(domain: mi.Domain, encoder_type: str) -> StateEncoderBase:
     if encoder_type == "color":
         encoder = ColorGraphEncoder(domain)
     elif encoder_type == "direct":
         encoder = DirectGraphEncoder(domain)
     elif encoder_type == "hetero":
-        encoder = HeteroGraphEncoder(domain, hidden)
+        encoder = HeteroGraphEncoder(domain)
     else:
         raise ValueError(f"Encoding type {encoder_type} not recognized.")
     return encoder
@@ -120,7 +117,7 @@ def run(
     import_time = time.time()
 
     train_loader, eval_loader, test_loader, encoder = _setup_datasets(
-        encoder_type, problem_path, dataset_path, batch_size, hidden=embedding_size
+        encoder_type, problem_path, dataset_path, batch_size
     )
 
     logging.info(f"Took {time_delta_now(import_time)} to construct the datasets.")

@@ -1,7 +1,6 @@
 from test.fixtures import problem_setup
 from typing import Callable, List, Optional
 
-import pymimir as mi
 import torch
 from torch_geometric.data import Dataset, HeteroData
 
@@ -46,7 +45,7 @@ def test_collate():
     # Assumes that problem.get_states() returns the states in the same order
     small_space, domain, small_problem = problem_setup("blocks", "small")
     medium_space, _, medium_problem = problem_setup("blocks", "medium")
-    encoder = HeteroGraphEncoder(domain, 2)
+    encoder = HeteroGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet(
         [small_problem, medium_problem], encoder, force_reload=True
     )

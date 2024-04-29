@@ -25,12 +25,10 @@ class HeteroGraphEncoder(StateEncoderBase):
     def __init__(
         self,
         domain: Domain,
-        hidden_size: int,  # TODO Decouple hidden_size from encoding
         node_factory: NodeFactory = NodeFactory(),
         obj_type_id: str = "obj",
     ) -> None:
         super().__init__()
-        self.hidden_size: int = hidden_size
         self.obj_type_id: str = obj_type_id
         self.node_factory: NodeFactory = node_factory
         self.predicates: List[Predicate] = domain.predicates
@@ -58,8 +56,7 @@ class HeteroGraphEncoder(StateEncoderBase):
 
     def __eq__(self, other: HeteroGraphEncoder) -> bool:
         return (
-            self.hidden_size == other.hidden_size
-            and self.obj_type_id == other.obj_type_id
+            self.obj_type_id == other.obj_type_id
             and self.predicates == other.predicates
         )
 
@@ -105,15 +102,14 @@ class HeteroGraphEncoder(StateEncoderBase):
         }
 
         data = HeteroData()
-        # Create x_dict, the feature matrix for each node type
+        # Create x_dict, the feature matrix for each node type We don't have any
+        # features for nodes, so we just create a zero tensor In order to be
+        # independent of the model, we create a tensor of size 1 for object nodes and
+        # a tensor of size arity for predicate nodes
         for node_type, nodes_of_type in nodes_dict.items():
-            hidden = (
-                self.hidden_size
-                if node_type == self.obj_type_id
-                else self.hidden_size * self.arity_dict[node_type]
-            )
+            size = 1 if node_type == self.obj_type_id else self.arity_dict[node_type]
             data[node_type].x = torch.zeros(
-                (len(nodes_of_type), hidden), dtype=torch.float32
+                (len(nodes_of_type), size), dtype=torch.float32
             )
 
         # Add dummy entry for node-types that don't appear in this state

@@ -10,7 +10,7 @@ from rgnet.utils import import_all_from
 
 def test_hetero_data():
     domain, problems = import_all_from("test/pddl_instances/blocks")
-    encoder = HeteroGraphEncoder(domain, hidden_size=2)
+    encoder = HeteroGraphEncoder(domain)
     # problems = [problem, problem1, problem2]
     for prob in problems:
         if "large" in prob.name:

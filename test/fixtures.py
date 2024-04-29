@@ -67,13 +67,13 @@ def direct_encoded_state(request):
 
 @pytest.fixture
 def hetero_encoded_state(request):
-    domain_param, prob_param, which_state_param, hidden_size = request.param
+    domain_param, prob_param, which_state_param = request.param
     space, domain, _ = problem_setup(domain_param, prob_param)
     if which_state_param == "initial":
         state = space.get_initial_state()
     else:
         state = space.get_goal_states()[0]
-    encoder = HeteroGraphEncoder(domain, hidden_size=hidden_size)
+    encoder = HeteroGraphEncoder(domain)
     return (
         encoder.encode(state),
         encoder,

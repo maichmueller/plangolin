@@ -9,9 +9,9 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP, SelectMP
 
 
-def get_enc_initial_and_goal(hidden_size=1, problem: str = "small"):
+def get_enc_initial_and_goal(problem: str = "small"):
     space, domain, problem = problem_setup("blocks", problem)
-    encoder = HeteroGraphEncoder(domain, hidden_size)
+    encoder = HeteroGraphEncoder(domain)
     initial = space.get_initial_state()
     goal = space.get_goal_states()[0]
 
@@ -22,27 +22,35 @@ def get_enc_initial_and_goal(hidden_size=1, problem: str = "small"):
 
 def test_fan_out():
     hidden = 1
-    encoder, d1, d2 = get_enc_initial_and_goal(hidden_size=hidden)
+    encoder, d1, d2 = get_enc_initial_and_goal()
     # Make objs clearly distinguishable
     d1[encoder.obj_type_id].x = torch.tensor([[1.0], [2.0]])
     d2[encoder.obj_type_id].x = torch.tensor([[3.0], [4.0]])
     batch: Batch = Batch.from_data_list([d1, d2])
     mlp_mock = mock(spec=pyg.nn.MLP)
-    when(mlp_mock).__call__(arg_that(lambda x: x.shape == (2, 2 * hidden))).thenReturn(
-        torch.tensor([[-1.0, -2.0], [-3.0, -4.0]])
+    (
+        when(mlp_mock)
+        .__call__(arg_that(lambda x: x.shape == (2, 2 * hidden)))
+        .thenReturn(torch.tensor([[-1.0, -2.0], [-3.0, -4.0]]))
     )
-    when(mlp_mock).__call__(arg_that(lambda x: x.shape == (1, 2 * hidden))).thenReturn(
-        torch.tensor([[-3.0, -4.0]])
+    (
+        when(mlp_mock)
+        .__call__(arg_that(lambda x: x.shape == (1, 2 * hidden)))
+        .thenReturn(torch.tensor([[-3.0, -4.0]]))
     )
     # clear(a),clear(b) in d1 and clear(a) in d2
-    when(mlp_mock).__call__(
-        arg_that(lambda x: x.shape == (3, hidden) and x[-1][-1] == 3.0)
-    ).thenReturn(torch.tensor([[-1.0], [-1.0], [3.0]]))
+    (
+        when(mlp_mock)
+        .__call__(arg_that(lambda x: x.shape == (3, hidden) and x[-1][-1] == 3.0))
+        .thenReturn(torch.tensor([[-1.0], [-1.0], [3.0]]))
+    )
 
     # ontable(a),ontable(b) in d1 and ontable(b) in d2
-    when(mlp_mock).__call__(
-        arg_that(lambda x: x.shape == (3, hidden) and x[-1][-1] == 4.0)
-    ).thenReturn(torch.tensor([[-1.0], [-1.0], [4.0]]))
+    (
+        when(mlp_mock)
+        .__call__(arg_that(lambda x: x.shape == (3, hidden) and x[-1][-1] == 4.0))
+        .thenReturn(torch.tensor([[-1.0], [-1.0], [4.0]]))
+    )
 
     mlps = dict()
     for pred, arity in encoder.arity_dict.items():
@@ -64,7 +72,7 @@ def test_fan_out():
 
 def test_fan_in():
     hidden = 1
-    encoder, d1, d2 = get_enc_initial_and_goal(hidden_size=hidden)
+    encoder, d1, d2 = get_enc_initial_and_goal()
     # Make objs clearly distinguishable
     batch = Batch.from_data_list([d1, d2])
     batch["on" + encoder.node_factory.goal_suffix].x = torch.tensor(
@@ -96,7 +104,7 @@ def test_fan_in():
 
 def test_select_mp_hidden1():
     hidden = 1
-    encoder, d1, d2 = get_enc_initial_and_goal(hidden_size=hidden)
+    encoder, d1, d2 = get_enc_initial_and_goal()
     # Make objs clearly distinguishable
     batch = Batch.from_data_list([d1, d2])
     on_g = "on" + encoder.node_factory.goal_suffix
@@ -127,7 +135,7 @@ def test_select_mp_hidden1():
 
 def test_select_mp_hidden2():
     hidden = 2
-    encoder, d1, d2 = get_enc_initial_and_goal(hidden_size=hidden)
+    encoder, d1, d2 = get_enc_initial_and_goal()
     # Make objs clearly distinguishable
     batch = Batch.from_data_list([d1, d2])
     on_g = "on" + encoder.node_factory.goal_suffix

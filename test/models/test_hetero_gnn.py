@@ -11,7 +11,7 @@ from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 @pytest.mark.parametrize(
     "hetero_encoded_state",
-    [["blocks", "small", "initial", 2], ["blocks", "small", "initial", 2]],
+    [["blocks", "small", "initial"], ["blocks", "small", "initial"]],
     indirect=True,
 )
 def test_hetero_gnn(hetero_encoded_state):
@@ -19,7 +19,7 @@ def test_hetero_gnn(hetero_encoded_state):
     data = encoder.to_pyg_data(graph)
 
     model = HeteroGNN(
-        hidden_size=encoder.hidden_size,
+        hidden_size=2,
         num_layer=1,
         obj_type_id=encoder.obj_type_id,
         arity_dict=encoder.arity_dict,
@@ -30,7 +30,7 @@ def test_hetero_gnn(hetero_encoded_state):
 
 def test_hetero_batched():
     _, domain, problem = problem_setup("blocks", "small")
-    encoder = HeteroGraphEncoder(domain, hidden_size=2)
+    encoder = HeteroGraphEncoder(domain)
     tmpdir: str = tempfile.mkdtemp()
     dataset = MultiInstanceSupervisedSet(
         [problem], encoder, force_reload=True, root=tmpdir
