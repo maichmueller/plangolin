@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 
 import pymimir as mi
+import torch
 import torch_geometric as pyg
 import wandb
 from lightning import Trainer, seed_everything
@@ -40,7 +41,7 @@ def _setup_datasets(
     training_set = _dataset_of(problems, dataset_path + "/train", encoder)
     sampler = ImbalancedSampler(training_set)
     train_loader = pyg.loader.DataLoader(
-        training_set, batch_size, shuffle=False, sampler=sampler
+        training_set, batch_size, shuffle=False, sampler=sampler, num_workers=2
     )
 
     evaluation_set = _dataset_of(
@@ -49,14 +50,18 @@ def _setup_datasets(
     # Evaluate the model
     eval_sampler = ImbalancedSampler(evaluation_set)
     eval_loader = pyg.loader.DataLoader(
-        evaluation_set, batch_size, shuffle=False, sampler=eval_sampler
+        evaluation_set, batch_size, shuffle=False, sampler=eval_sampler, num_workers=2
     )
 
     test_set = _dataset_of(
         import_problems(problem_path + "/test", domain), dataset_path + "/test", encoder
     )
     test_loader = pyg.loader.DataLoader(
-        test_set, batch_size, shuffle=False, sampler=ImbalancedSampler(test_set)
+        test_set,
+        batch_size,
+        shuffle=False,
+        sampler=ImbalancedSampler(test_set),
+        num_workers=2,
     )
 
     logging.info(f"Training dataset contains {len(training_set)} graphs/states")
@@ -93,7 +98,8 @@ def run(
     logging.info(f"Using {device} as device")
     logging.info("Working from " + curr_dir)
     start_time = time.time()
-    time_stamp = datetime.now().strftime("%y-%m-d_%H-%M-%S")
+    # day-month-year_hour-minute-second
+    time_stamp = datetime.now().strftime("$d-%m-%y_%H-%M-%S")
     wlogger = WandbLogger(project="rgnet", name=encoder_type + time_stamp)
     wlogger.experiment.config.update(
         {
@@ -107,6 +113,7 @@ def run(
     )
 
     seed_everything(42, workers=True)
+    torch.set_float32_matmul_precision("medium")
 
     # define paths
     problem_path = data_path + "/pddl_domains/blocks"
