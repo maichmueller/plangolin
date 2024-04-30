@@ -22,7 +22,7 @@ from rgnet import (
     PureGNN,
     StateEncoderBase,
 )
-from rgnet.utils import import_all_from, import_problems, time_delta_now
+from rgnet.utils import import_problems, time_delta_now
 
 
 def _dataset_of(problems, root, encoder: StateEncoderBase):
@@ -35,38 +35,23 @@ def _setup_datasets(
     dataset_path: str,
     batch_size: int,
 ):
-    domain, problems = import_all_from(problem_path)
-    problems = sorted(problems, key=lambda p: p.name)
+    domain = mi.DomainParser(problem_path + "/domain.pddl").parse()
+
     encoder = _create_encoder(domain, encoder_type)
-    training_set = _dataset_of(problems, dataset_path + "/train", encoder)
-    sampler = ImbalancedSampler(training_set)
-    train_loader = pyg.loader.DataLoader(
-        training_set, batch_size, shuffle=False, sampler=sampler, num_workers=2
-    )
+    loaders = []
+    logging.info(f"Loading/Building dataset at {dataset_path}")
+    for mode in ["train", "eval", "test"]:
 
-    evaluation_set = _dataset_of(
-        import_problems(problem_path + "/eval", domain), dataset_path + "/eval", encoder
-    )
-    # Evaluate the model
-    eval_sampler = ImbalancedSampler(evaluation_set)
-    eval_loader = pyg.loader.DataLoader(
-        evaluation_set, batch_size, shuffle=False, sampler=eval_sampler, num_workers=2
-    )
+        problems = import_problems(f"{problem_path}/{mode}", domain)
+        dataset = _dataset_of(problems, f"{dataset_path}/{mode}", encoder)
+        sampler = ImbalancedSampler(dataset)
+        loader = pyg.loader.DataLoader(
+            dataset, batch_size, shuffle=False, sampler=sampler, num_workers=2
+        )
+        logging.info(f"Dataset for {mode} contains {len(dataset)} graphs/states")
+        loaders.append(loader)
 
-    test_set = _dataset_of(
-        import_problems(problem_path + "/test", domain), dataset_path + "/test", encoder
-    )
-    test_loader = pyg.loader.DataLoader(
-        test_set,
-        batch_size,
-        shuffle=False,
-        sampler=ImbalancedSampler(test_set),
-        num_workers=2,
-    )
-
-    logging.info(f"Training dataset contains {len(training_set)} graphs/states")
-    logging.info(f"Evaluation dataset contains {len(evaluation_set)} graphs/states")
-    logging.info(f"Testing dataset contains {len(test_set)} graphs/states")
+    train_loader, eval_loader, test_loader = loaders
 
     return train_loader, eval_loader, test_loader, encoder
 
@@ -85,6 +70,7 @@ def _create_encoder(domain: mi.Domain, encoder_type: str) -> StateEncoderBase:
 
 def run(
     data_path,
+    domain_name,
     epochs,
     embedding_size,
     num_layer,
@@ -99,8 +85,10 @@ def run(
     logging.info("Working from " + curr_dir)
     start_time = time.time()
     # day-month-year_hour-minute-second
-    time_stamp = datetime.now().strftime("$d-%m-%y_%H-%M-%S")
-    wlogger = WandbLogger(project="rgnet", name=encoder_type + time_stamp)
+    time_stamp = datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+    wlogger = WandbLogger(
+        project="rgnet", name=f"{encoder_type}/{domain_name}:{time_stamp}"
+    )
     wlogger.experiment.config.update(
         {
             "epoch": epochs,
@@ -109,17 +97,56 @@ def run(
             "learning_rate": learning_rate,
             "device": device,
             "encoding": encoder_type,
+            "domain": domain_name,
+            "batch_size": batch_size,
         },
     )
 
     seed_everything(42, workers=True)
     torch.set_float32_matmul_precision("medium")
 
+    """
+    Folder structure:
+
+    data_path
+        - pddl_domains
+            - <domain-name>
+                - domain.pddl
+                - train
+                    - problem1.pddl
+                    - ...
+                - eval
+                - test
+        - datasets
+            - <encoding_type>
+                - <domain-name>
+                    - train #  root dir of dataset
+                        - processed
+                        - raw
+                    - eval
+                    - test
+        - models
+            - <encoding_type>
+                - <domain-name>
+                    - checkpoint.ckpt
+    """
+    if data_path[-1] == "/":  # remove training slash
+        data_path = data_path[:-1]
+
     # define paths
-    problem_path = data_path + "/pddl_domains/blocks"
-    dataset_path = data_path + "/" + encoder_type + "/datasets/blocks"
-    model_save_path = pathlib.Path(data_path + f"/models/run{time_stamp}.pt")
-    model_save_path.parent.mkdir(exist_ok=True)
+    if not pathlib.Path(data_path).is_dir():
+        logging.error(f"Data path {data_path} does not exist or is not a directory.")
+        exit()
+    problem_path = f"{data_path}/pddl_domains/{domain_name}"
+    dataset_path = f"{data_path}/datasets/{encoder_type}/{domain_name}"
+    # Create folder structure for datasets if absent
+    pathlib.Path(dataset_path).mkdir(parents=True, exist_ok=True)
+
+    model_save_path = pathlib.Path(
+        f"{data_path}/models/{encoder_type}/{domain_name}/run{time_stamp}/"
+    )
+    model_save_path.mkdir(parents=True, exist_ok=True)
+    logging.info(f"Using model-save-path: {model_save_path.absolute()}")
 
     import_time = time.time()
 
@@ -147,13 +174,17 @@ def run(
 
     wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
 
-    trainer = Trainer(accelerator=device, devices=1, max_epochs=epochs, logger=wlogger)
+    trainer = Trainer(
+        accelerator=device,
+        devices=1,
+        max_epochs=epochs,
+        logger=wlogger,
+        default_root_dir=model_save_path,
+    )
 
     logging.info("Starting training")
     trainer.fit(model=model, train_dataloaders=eval_loader, val_dataloaders=eval_loader)
     logging.info(f"Took {time_delta_now(start_time_training)} to train the model")
-
-    logging.info(f"Saved model can be found at {model_save_path}")
 
     trainer.test(model, dataloaders=test_loader)
 
@@ -165,6 +196,7 @@ def run(
 if __name__ == "__main__":
     # Define default args
     DEFAULT_ENCODING = "color"
+    DEFAULT_DOMAIN = "blocks"
     DEFAULT_EMBEDDING_SIZE = 32
     DEFAULT_NUM_LAYER = 24
     DEFAULT_BATCH_SIZE = 64
@@ -183,6 +215,12 @@ if __name__ == "__main__":
         default=DEFAULT_ENCODING,
         choices=["color", "direct", "hetero"],
         help=f"Encoding type (default: {DEFAULT_ENCODING})",
+    )
+    parser.add_argument(
+        "--domain",
+        dest="domain_name",
+        default=DEFAULT_DOMAIN,
+        help=f"Encoding type (default: {DEFAULT_DOMAIN})",
     )
     parser.add_argument(
         "--embedding_size",
