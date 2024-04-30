@@ -13,6 +13,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         self,
         problems: List[Problem],
         state_encoder: StateEncoderBase,
+        max_expanded: Optional[int] = None,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
@@ -22,6 +23,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     ) -> None:
         self.problems = problems
         self.encoder = state_encoder
+        self.max_expanded = max_expanded
         super().__init__(root, transform, pre_transform, pre_filter, log, force_reload)
         self.load(self.processed_paths[0])
 
@@ -44,15 +46,32 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         """
         data_list = []
         for i, problem in enumerate(self.problems):
-            space = StateSpace.new(problem, GroundedSuccessorGenerator(problem))
+            space = StateSpace.new(
+                problem,
+                GroundedSuccessorGenerator(problem),
+                max_expanded=self.max_expanded or 1_000_000,
+            )
+            if space is None:  # None if more states than max_expanded
+                logging.warning(f"Could not create state space for {problem}")
+                continue
             for state in space.get_states():
                 data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
                 data.y = torch.tensor(
                     space.get_distance_to_goal_state(state), dtype=torch.int64
                 )
                 data_list.append(data)
+
             if self.log:
                 logging.info(f"Processed {i+1} / {len(self.problems)} problems")
+
+        # Compute the avg value of data.y over all problems (excluding negative values).
+        # torch.mean() wants to output floats, but we have to store ints.
+        ys = torch.tensor([d.y for d in data_list])
+        avg = ys[ys >= 0].mean(dtype=torch.float).long()
+        # Replace dead-ends (value < 0) with the negative average.
+        for data in data_list:
+            if data.y < 0:
+                data.y = -avg
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
