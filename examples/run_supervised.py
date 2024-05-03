@@ -1,12 +1,9 @@
 import argparse
-import logging
 import os
 import pathlib
 import time
 from datetime import datetime
 
-import pymimir as mi
-import torch
 import torch_geometric as pyg
 import wandb
 from lightning import Trainer, seed_everything
@@ -18,11 +15,36 @@ from rgnet import (
     DirectGraphEncoder,
     HeteroGraphEncoder,
     LightningHetero,
-    MultiInstanceSupervisedSet,
     PureGNN,
     StateEncoderBase,
 )
+from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.utils import import_problems, time_delta_now
+
+
+def load_serialized(
+    domain: mi.Domain,
+    encoder: StateEncoderBase,
+    problem_path: str,
+    dataset_path: str,
+    serialized_path: str,
+):
+    lookup = match_problems(problem_path, serialized_path)
+    lookup = {
+        mi.ProblemParser(str(problem_path)).parse(domain): serialized
+        for problem_path, serialized in lookup.items()
+    }
+    logging.info("Creating serialized dataset: " + dataset_path)
+    dataset = SerializedDataset(
+        domain,
+        lookup,
+        problems=lookup.keys(),
+        state_encoder=encoder,
+        root=dataset_path,
+        log=True,
+        force_reload=True,
+    )
+    return dataset
 
 
 def _dataset_of(problems, root, encoder: StateEncoderBase):
@@ -34,6 +56,7 @@ def _setup_datasets(
     problem_path: str,
     dataset_path: str,
     batch_size: int,
+    serialized_path: str | None = None,
 ):
     domain = mi.DomainParser(problem_path + "/domain.pddl").parse()
 
@@ -41,9 +64,17 @@ def _setup_datasets(
     loaders = []
     logging.info(f"Loading/Building dataset at {dataset_path}")
     for mode in ["train", "eval", "test"]:
-
-        problems = import_problems(f"{problem_path}/{mode}", domain)
-        dataset = _dataset_of(problems, f"{dataset_path}/{mode}", encoder)
+        if serialized_path:
+            dataset = load_serialized(
+                domain,
+                encoder,
+                f"{problem_path}/{mode}",
+                f"{dataset_path}/{mode}",
+                f"{serialized_path}/{mode}",
+            )
+        else:
+            problems = import_problems(f"{problem_path}/{mode}", domain)
+            dataset = _dataset_of(problems, f"{dataset_path}/{mode}", encoder)
         sampler = ImbalancedSampler(dataset)
         loader = pyg.loader.DataLoader(
             dataset, batch_size, shuffle=False, sampler=sampler, num_workers=2
@@ -117,6 +148,13 @@ def run(
                     - ...
                 - eval
                 - test
+        - serialized
+            - <domain-name>
+                - train
+                    - problem1_states.txt
+                    - ...
+                - eval
+                - test
         - datasets
             - <encoding_type>
                 - <domain-name>
@@ -136,9 +174,10 @@ def run(
     # define paths
     if not pathlib.Path(data_path).is_dir():
         logging.error(f"Data path {data_path} does not exist or is not a directory.")
-        exit()
+        exit("Data path does not exist or is not a directory.")
     problem_path = f"{data_path}/pddl_domains/{domain_name}"
     dataset_path = f"{data_path}/datasets/{encoder_type}/{domain_name}"
+    serialized_path = f"{data_path}/serialized/{domain_name}"
     # Create folder structure for datasets if absent
     pathlib.Path(dataset_path).mkdir(parents=True, exist_ok=True)
 
@@ -151,7 +190,11 @@ def run(
     import_time = time.time()
 
     train_loader, eval_loader, test_loader, encoder = _setup_datasets(
-        encoder_type, problem_path, dataset_path, batch_size
+        encoder_type,
+        problem_path,
+        dataset_path,
+        batch_size,
+        serialized_path=serialized_path,
     )
 
     logging.info(f"Took {time_delta_now(import_time)} to construct the datasets.")
@@ -189,6 +232,7 @@ def run(
     trainer.test(model, dataloaders=test_loader)
 
     logging.info(f"Completed run after {time_delta_now(start_time)}.")
+    torch.save(model.state_dict(), model_save_path / "model.pt")
 
     wandb.finish(quiet=True)
 

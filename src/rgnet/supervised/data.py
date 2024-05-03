@@ -38,6 +38,24 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     def download(self) -> None:
         pass
 
+    def parse_problem(self, problem: Problem) -> List[Data]:
+        data_list = []
+        space = StateSpace.new(
+            problem,
+            GroundedSuccessorGenerator(problem),
+            max_expanded=self.max_expanded or 1_000_000,
+        )
+        if space is None:  # None if more states than max_expanded
+            logging.warning(f"Could not create state space for {problem}")
+            return []
+        for state in space.get_states():
+            data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
+            data.y = torch.tensor(
+                space.get_distance_to_goal_state(state), dtype=torch.int64
+            )
+            data_list.append(data)
+        return data_list
+
     def process(self) -> None:
         """
         Create a dataset containing a graph for each state of each problem.
@@ -46,21 +64,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         """
         data_list = []
         for i, problem in enumerate(self.problems):
-            space = StateSpace.new(
-                problem,
-                GroundedSuccessorGenerator(problem),
-                max_expanded=self.max_expanded or 1_000_000,
-            )
-            if space is None:  # None if more states than max_expanded
-                logging.warning(f"Could not create state space for {problem}")
-                continue
-            for state in space.get_states():
-                data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
-                data.y = torch.tensor(
-                    space.get_distance_to_goal_state(state), dtype=torch.int64
-                )
-                data_list.append(data)
-
+            data_list.extend(self.parse_problem(problem))
             if self.log:
                 logging.info(f"Processed {i+1} / {len(self.problems)} problems")
 
