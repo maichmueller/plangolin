@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 import torch
 import torch_geometric as pyg
 from torch import Tensor
-from torch_geometric.nn import SimpleConv
+from torch_geometric.nn import Aggregation, SimpleConv
 from torch_geometric.nn.conv.hetero_conv import group
 from torch_geometric.nn.module_dict import ModuleDict
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
@@ -16,7 +16,7 @@ class HeteroRouting(torch.nn.Module):
     Instead of specifying a convolution for each EdgeType more generic rules can be used.
     """
 
-    def __init__(self, aggr: Optional[str] = None) -> None:
+    def __init__(self, aggr: Optional[str | Aggregation] = None) -> None:
         super().__init__()
         self.aggr = aggr
 
@@ -31,7 +31,15 @@ class HeteroRouting(torch.nn.Module):
     def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
         for key, value in out_dict.items():
-            aggregated[key] = group(value, self.aggr)
+            # hetero_conv.group does not yet support Aggregation modules
+            if isinstance(self.aggr, Aggregation):
+                out = torch.stack(value, dim=0)
+                out = self.aggr(out, dim=0)
+                if out.dim() == 3 and out.shape[0] == 1:
+                    out = out[0]  # TODO Why does Softmax return one dim to much
+            else:
+                out = group(value, self.aggr)
+            aggregated[key] = out
         return aggregated
 
     def forward(self, x_dict, edge_index_dict):
@@ -78,6 +86,8 @@ class FanOutMP(HeteroRouting):
     1. For each destination concatenate all embeddings of the source.
     2. Run the destination specific MLP on the concatenated embeddings.
     3. Save the new embedding under the destination key.
+    FanOut should be aggregation free in theory.
+    Every atom gets only as many messages as the arity of its predicate.
     :param update_mlp_by_dst: An MLP for each possible destination.
         Needs the degree of incoming edges as input and output dimension
     :param src_name: The node-type for which outgoing edges should be accepted.
@@ -117,7 +127,7 @@ class FanInMP(HeteroRouting):
         self,
         hidden_size: int,
         dst_name: str,
-        aggr: Optional[str] = "sum",
+        aggr: Optional[Union[str, Aggregation]] = "sum",
     ) -> None:
         super().__init__(aggr)
         self.select = SelectMP(hidden_size)

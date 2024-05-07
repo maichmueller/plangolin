@@ -19,6 +19,7 @@ class HeteroGNN(torch.nn.Module):
         num_layer: int,
         obj_type_id: str,
         arity_dict: Dict[str, int],
+        aggr: Optional[str | pyg.nn.aggr.Aggregation] = "sum",
     ):
         """
         :param hidden_size: The size of object embeddings.
@@ -49,8 +50,12 @@ class HeteroGNN(torch.nn.Module):
         self.obj_update = HeteroGNN.mlp(
             in_size=2 * hidden_size, hidden_size=2 * hidden_size, out_size=hidden_size
         )
-
-        self.atom_to_obj = FanInMP(hidden_size=hidden_size, dst_name=obj_type_id)
+        # Messages from atoms flow to objects
+        self.atom_to_obj = FanInMP(
+            hidden_size=hidden_size,
+            dst_name=obj_type_id,
+            aggr=aggr,
+        )
         self.readout = HeteroGNN.mlp(hidden_size, 2 * hidden_size, 1)
 
     def encoding_layer(self, x_dict: Dict[str, Tensor]):
@@ -134,7 +139,7 @@ class LightningHetero(LightningModule):
         )
         return self.loss_function(out, exp_label)
 
-    def forward(self, x_dict, edge_index_dict, batch_dict):
+    def forward(self, x_dict, edge_index_dict, batch_dict=None):
         return self.model(x_dict, edge_index_dict, batch_dict)
 
     def training_step(self, data, batch_index) -> torch.Tensor:
