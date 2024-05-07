@@ -1,12 +1,10 @@
-import tempfile
-from test.fixtures import hetero_encoded_state, problem_setup
+from test.fixtures import hetero_encoded_state
+from test.supervised.test_data import create_dataset
 
 import pytest
 from torch_geometric.loader import DataLoader
 
-from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
 from rgnet.models.hetero_gnn import HeteroGNN
-from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 
 @pytest.mark.parametrize(
@@ -28,13 +26,9 @@ def test_hetero_gnn(hetero_encoded_state):
     assert out.size() == (1,)
 
 
-def test_hetero_batched():
-    _, domain, problem = problem_setup("blocks", "small")
-    encoder = HeteroGraphEncoder(domain)
-    tmpdir: str = tempfile.mkdtemp()
-    dataset = MultiInstanceSupervisedSet(
-        [problem], encoder, force_reload=True, root=tmpdir
-    )
+def test_hetero_batched(tmp_path):
+    dataset = create_dataset("small", tmp_path)
+    encoder = dataset.encoder
     loader = DataLoader(dataset, batch_size=3)
     for batch in loader:
         model = HeteroGNN(
