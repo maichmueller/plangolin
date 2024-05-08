@@ -153,3 +153,35 @@ class HeteroGraphEncoder(StateEncoderBase):
             data[unused_edge_type].edge_index = torch.empty(2, 0, dtype=torch.long)
 
         return data
+
+    def from_pyg_data(self, data: HeteroData) -> nx.Graph:
+        """
+        Reconstruct a graph from a HeteroData object.
+        Every node has a type attribute, either self.obj_type_id or a predicate name.
+        Node names are the concatenation of the type and the index in the feature matrix.
+        Edge labels are the position in the atom.
+        The returned graph is not the exact same as one returned by encode, but isomorphic.
+        :param data: HetereData object encoded with this encoder.
+        :return: The networkx graph as described above.
+        """
+        graph = nx.Graph(encoding=self)
+        assert all(pred in data.node_types for pred in self.arity_dict.keys())
+        obj_type: str = self.obj_type_id
+        # Every node needs a unique name, but obj-names are lost, therefore we use the
+        # index in the feature matrix together with the type.
+        for obj_idx in range(data.x_dict[obj_type].shape[0]):
+            graph.add_node(obj_type + str(obj_idx), type=obj_type)
+
+        for predicate in self.arity_dict.keys():
+            for pred_idx in range(data.x_dict[predicate].shape[0]):
+                graph.add_node(predicate + str(pred_idx), type=predicate)
+
+        for src, rel, dst in data.edge_types:
+            src_tensor, dst_tensor = data.edge_index_dict[src, rel, dst]
+            for src_idx, dst_idx in zip(src_tensor, dst_tensor):
+                graph.add_edge(
+                    src + str(src_idx.item()),
+                    dst + str(dst_idx.item()),
+                    position=int(rel),
+                )
+        return graph

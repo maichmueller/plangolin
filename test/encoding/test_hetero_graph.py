@@ -1,7 +1,11 @@
 import logging
 from collections import defaultdict
+from test.fixtures import hetero_encoded_state
 
+import networkx as nx
+import networkx.algorithms.isomorphism as iso
 import pymimir as mi
+import pytest
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
@@ -21,6 +25,22 @@ def test_hetero_data():
             data = encoder.to_pyg_data(encoder.encode(state))
             data.validate()
             validate_hetero_data(data, encoder)
+
+
+@pytest.mark.parametrize(
+    "hetero_encoded_state",
+    [["blocks", "small", "initial"], ["blocks", "small", "goal"]],
+    indirect=True,
+)
+def test_decode(hetero_encoded_state):
+    graph, encoder = hetero_encoded_state
+    data = encoder.to_pyg_data(graph)
+    decoded = encoder.from_pyg_data(data)
+    node_match = iso.categorical_node_match("type", None)
+    edge_match = iso.numerical_edge_match("position", None)
+    assert nx.is_isomorphic(
+        graph, decoded, node_match=node_match, edge_match=edge_match
+    )
 
 
 def validate_hetero_data(data: HeteroData, encoder: HeteroGraphEncoder):
