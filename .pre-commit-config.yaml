@@ -33,7 +33,8 @@ repos:
       - id: python-check-blanket-noqa
       - id: python-check-blanket-type-ignore
       - id: python-no-log-warn
-      - id: python-no-eval
+      # check-eval gives false positives for model.eval()
+      # https://github.com/pre-commit/pygrep-hooks/issues/135
       - id: python-use-type-annotations
 
   # Sort includes
