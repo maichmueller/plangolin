@@ -1,18 +1,25 @@
 import logging
-from typing import Any, Callable, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Callable, List, Optional, Tuple, Type, Union
 
 import torch
 from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
+from torch_geometric.data.data import BaseData
 
 from rgnet.encoding import StateEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
+
+    @staticmethod
+    def load_from(path: str):
+        return MultiInstanceSupervisedSet(problems=None, state_encoder=None, root=path)
+
     def __init__(
         self,
-        problems: List[Problem],
-        state_encoder: StateEncoderBase,
+        problems: List[Problem] | None,
+        state_encoder: StateEncoderBase | None,
         max_expanded: Optional[int] = None,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
@@ -21,15 +28,22 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         log: bool = True,
         force_reload: bool = False,
     ) -> None:
-        self.problems = problems
+        if (problems is None or state_encoder is None) and root is None:
+            raise ValueError(
+                "Neither list of problems nor path to stored dataset was " "provided"
+            )
+        self.problems: List[Problem] = problems
         self.encoder = state_encoder
         self.max_expanded = max_expanded
+        if problems is None and force_reload:
+            raise ValueError("Tried to force reload problems but none where given.")
+        # Will call self.process(...) if processed files do not exist or force_reload
         super().__init__(root, transform, pre_transform, pre_filter, log, force_reload)
         self.load(self.processed_paths[0])
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
-        return [p.name for p in self.problems]
+        return []
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
@@ -63,6 +77,9 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         For large state spaces this will probably take very long.
         """
         data_list = []
+        if self.problems is None:
+            raise ValueError("Tried to load existing dataset but could not find files.")
+
         for i, problem in enumerate(self.problems):
             data_list.extend(self.parse_problem(problem))
             if self.log:

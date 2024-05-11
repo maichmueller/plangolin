@@ -85,7 +85,11 @@ class DatasetParser:
         state = self.problem.create_state(atoms)
         return label, state
 
-    def parse(self, txt_file: Path):
+    def parse(self, txt_file: Path) -> Tuple[List[mi.Atom], List[Tuple[int, mi.State]]]:
+        """Parse all goals and labeled states from a serialized file.
+        :param txt_file: A serialized file containing the following sections:
+            OBJECTS, PREDICATES, GOAL, STATE, LABELED_STATE,
+        """
         lines = txt_file.read_text().splitlines()
         object_lines = _lines_by_key(lines, "OBJECTS")
         self.validate_objects(object_lines)
@@ -142,33 +146,3 @@ class SerializedDataset(MultiInstanceSupervisedSet):
             data.y = torch.tensor(label, dtype=torch.int64)
             data_list.append(data)
         return data_list
-
-
-def match_problems(problems_dir: str, serialized_files_dir: str) -> dict[Path, Path]:
-    """
-    Assumes that every serializes path has the form {problem_name}_states.txt
-    The problem_name is the exact file.stem of the problem pddl file.
-    Serialized files without a corresponding problem are ignored.
-    :param problems_dir: Directory containing pddl problems
-    :param serialized_files_dir: Directory containing serialized files (*_states.txt)
-    :return:  A mapping from problem-file to corresponding serialized-file
-    """
-    problem_files = Path(problems_dir).glob("*.pddl")
-    problem_name_to_file: dict[str, Path] = {p.stem: p for p in problem_files}
-    serialized_files = Path(serialized_files_dir).glob("*_states.txt")
-    problem_to_serialized_file: dict[Path, Path] = {}
-    for file in serialized_files:
-        problem_name = file.stem[: -len("_states")]
-        if problem_name not in problem_name_to_file:
-            logging.warning(
-                f"Serialized file {problem_name} not found in {problems_dir}"
-            )
-        problem_to_serialized_file[problem_name_to_file[problem_name]] = file
-    if len(problem_to_serialized_file.keys()) != len(problem_name_to_file.keys()):
-        mismatches = set(
-            (p.stem for p in problem_to_serialized_file.keys())
-        ).symmetric_difference(problem_name_to_file.keys())
-        logging.warning(
-            f"Mismatch between problems and serialized files: {mismatches} "
-        )
-    return problem_to_serialized_file

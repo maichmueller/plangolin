@@ -1,15 +1,16 @@
 import argparse
 import os
-import pathlib
 import time
 from datetime import datetime
 
+import lightning.pytorch.callbacks
 import torch_geometric as pyg
 import wandb
 from lightning import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from torch_geometric.loader import ImbalancedSampler
 
+from experiments.data_layout import DataLayout, DatasetType
 from rgnet import (
     ColorGraphEncoder,
     DirectGraphEncoder,
@@ -25,24 +26,34 @@ from rgnet.utils import import_problems, time_delta_now
 def load_serialized(
     domain: mi.Domain,
     encoder: StateEncoderBase,
-    problem_path: str,
-    dataset_path: str,
-    serialized_path: str,
+    dataset_type: DatasetType,
+    data_layout: DataLayout,
 ):
-    lookup = match_problems(problem_path, serialized_path)
-    lookup = {
+    problems = list(data_layout.problems_paths_for(dataset_type))
+    serialized_paths: List[Path] = list(data_layout.serialized_paths_for(dataset_type))
+    prob_to_serialized: Dict[Path, Path] = dict()
+    for s_path in serialized_paths:
+        try:
+            prob_file = data_layout.problem_for_serialized(s_path, dataset_type)
+            prob_to_serialized[prob_file] = s_path
+        except ValueError as e:  # There was no problem file for this serialized file.
+            logging.warning(repr(e))
+    if len(problems) != len(prob_to_serialized):
+        logging.warning(f"Mismatch between problems and serialized files.")
+
+    prob_to_serialized: Dict[mi.Problem, Path] = {
         mi.ProblemParser(str(problem_path)).parse(domain): serialized
-        for problem_path, serialized in lookup.items()
+        for problem_path, serialized in prob_to_serialized.items()
     }
-    logging.info("Creating serialized dataset: " + dataset_path)
+    dataset_path = data_layout.dataset_path_for(dataset_type)
+    logging.info("Creating serialized dataset: " + str(dataset_path.absolute()))
     dataset = SerializedDataset(
         domain,
-        lookup,
-        problems=lookup.keys(),
+        prob_to_serialized,
+        problems=prob_to_serialized.keys(),
         state_encoder=encoder,
         root=dataset_path,
         log=True,
-        force_reload=True,
     )
     return dataset
 
@@ -52,34 +63,31 @@ def _dataset_of(problems, root, encoder: StateEncoderBase):
 
 
 def _setup_datasets(
-    encoder_type: str,
-    problem_path: str,
-    dataset_path: str,
+    data_layout: DataLayout,
     batch_size: int,
-    serialized_path: str | None = None,
 ):
-    domain = mi.DomainParser(problem_path + "/domain.pddl").parse()
+    domain = mi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
 
-    encoder = _create_encoder(domain, encoder_type)
+    encoder = _create_encoder(domain, data_layout.encoder_type)
     loaders = []
-    logging.info(f"Loading/Building dataset at {dataset_path}")
-    for mode in ["train", "eval", "test"]:
-        if serialized_path:
-            dataset = load_serialized(
-                domain,
-                encoder,
-                f"{problem_path}/{mode}",
-                f"{dataset_path}/{mode}",
-                f"{serialized_path}/{mode}",
-            )
+    logging.info(f"Loading/Building dataset at {data_layout.dataset_path}")
+    dataset_type: DatasetType
+    for dataset_type in DatasetType:
+        serialized_paths = list(data_layout.serialized_paths_for(dataset_type))
+        if len(serialized_paths) > 0:
+            dataset = load_serialized(domain, encoder, dataset_type, data_layout)
         else:
-            problems = import_problems(f"{problem_path}/{mode}", domain)
-            dataset = _dataset_of(problems, f"{dataset_path}/{mode}", encoder)
+            problem_path = data_layout.problems_path_for(dataset_type)
+            problems = import_problems(problem_path, domain)
+            dataset_path = data_layout.dataset_path_for(dataset_type)
+            dataset = _dataset_of(problems, dataset_path, encoder)
         sampler = ImbalancedSampler(dataset)
         loader = pyg.loader.DataLoader(
             dataset, batch_size, shuffle=False, sampler=sampler, num_workers=2
         )
-        logging.info(f"Dataset for {mode} contains {len(dataset)} graphs/states")
+        logging.info(
+            f"Dataset for {dataset_type} contains {len(dataset)} graphs/states"
+        )
         loaders.append(loader)
 
     train_loader, eval_loader, test_loader = loaders
@@ -120,6 +128,7 @@ def run(
     wlogger = WandbLogger(
         project="rgnet", name=f"{encoder_type}/{domain_name}:{time_stamp}"
     )
+    run_id = wlogger.experiment.id
     wlogger.experiment.config.update(
         {
             "epoch": epochs,
@@ -136,65 +145,12 @@ def run(
     seed_everything(42, workers=True)
     torch.set_float32_matmul_precision("medium")
 
-    """
-    Folder structure:
-
-    data_path
-        - pddl_domains
-            - <domain-name>
-                - domain.pddl
-                - train
-                    - problem1.pddl
-                    - ...
-                - eval
-                - test
-        - serialized
-            - <domain-name>
-                - train
-                    - problem1_states.txt
-                    - ...
-                - eval
-                - test
-        - datasets
-            - <encoding_type>
-                - <domain-name>
-                    - train #  root dir of dataset
-                        - processed
-                        - raw
-                    - eval
-                    - test
-        - models
-            - <encoding_type>
-                - <domain-name>
-                    - checkpoint.ckpt
-    """
-    if data_path[-1] == "/":  # remove training slash
-        data_path = data_path[:-1]
-
-    # define paths
-    if not pathlib.Path(data_path).is_dir():
-        logging.error(f"Data path {data_path} does not exist or is not a directory.")
-        exit("Data path does not exist or is not a directory.")
-    problem_path = f"{data_path}/pddl_domains/{domain_name}"
-    dataset_path = f"{data_path}/datasets/{encoder_type}/{domain_name}"
-    serialized_path = f"{data_path}/serialized/{domain_name}"
-    # Create folder structure for datasets if absent
-    pathlib.Path(dataset_path).mkdir(parents=True, exist_ok=True)
-
-    model_save_path = pathlib.Path(
-        f"{data_path}/models/{encoder_type}/{domain_name}/run{time_stamp}/"
-    )
-    model_save_path.mkdir(parents=True, exist_ok=True)
-    logging.info(f"Using model-save-path: {model_save_path.absolute()}")
-
+    data_layout = DataLayout(data_path, domain_name, encoder_type)
     import_time = time.time()
 
     train_loader, eval_loader, test_loader, encoder = _setup_datasets(
-        encoder_type,
-        problem_path,
-        dataset_path,
+        data_layout,
         batch_size,
-        serialized_path=serialized_path,
     )
 
     logging.info(f"Took {time_delta_now(import_time)} to construct the datasets.")
@@ -215,38 +171,53 @@ def run(
         )
         wlogger.watch(model)
 
-    wlogger.experiment.config.update({"num_parameter": model.num_parameter()})
+    wlogger.experiment.config.update(
+        {
+            "num_parameter": model.num_parameter(),
+            "loss_function": model.loss_function,
+        }
+    )
 
+    checkpoint_path = data_layout.model_save_path / run_id
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+
+    # Lightning prioritizes the logger-save dir over its own default_dir for
+    # checkpoints. Therefore, we have to use this callback (which has top priority).
+    checkpoint_callback = lightning.pytorch.callbacks.ModelCheckpoint(
+        dirpath=checkpoint_path
+    )
     trainer = Trainer(
         accelerator=device,
         devices=1,
         max_epochs=epochs,
         logger=wlogger,
-        default_root_dir=model_save_path,
+        callbacks=[checkpoint_callback],
     )
 
     logging.info("Starting training")
-    trainer.fit(model=model, train_dataloaders=eval_loader, val_dataloaders=eval_loader)
+    trainer.fit(
+        model=model, train_dataloaders=eval_loader
+    )  # , val_dataloaders=eval_loader)
     logging.info(f"Took {time_delta_now(start_time_training)} to train the model")
 
-    trainer.test(model, dataloaders=test_loader)
+    # trainer.test(model, dataloaders=test_loader)
 
     logging.info(f"Completed run after {time_delta_now(start_time)}.")
-    torch.save(model.state_dict(), model_save_path / "model.pt")
-
-    wandb.finish(quiet=True)
+    torch.save(model.state_dict(), checkpoint_path / "model.pt")
+    logging.info("Saved model to " + str(checkpoint_path))
+    wandb.finish()
 
 
 if __name__ == "__main__":
     # Define default args
-    DEFAULT_ENCODING = "color"
-    DEFAULT_DOMAIN = "blocks"
-    DEFAULT_EMBEDDING_SIZE = 32
-    DEFAULT_NUM_LAYER = 24
+    DEFAULT_ENCODING = "hetero"
+    DEFAULT_DOMAIN = "blocks-on"
+    DEFAULT_EMBEDDING_SIZE = 1
+    DEFAULT_NUM_LAYER = 1
     DEFAULT_BATCH_SIZE = 64
-    DEFAULT_DATA_PATH = "./data"
+    DEFAULT_DATA_PATH = "../data"
     DEFAULT_DEVICES = "auto"
-    DEFAULT_EPOCHS = 10
+    DEFAULT_EPOCHS = 1
     DEFAULT_LEARNING_RATE = 0.001
 
     # Create ArgumentParser object
