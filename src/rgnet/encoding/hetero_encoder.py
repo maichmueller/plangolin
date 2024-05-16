@@ -11,7 +11,7 @@ from pymimir import Atom, Domain, Literal, Predicate, State
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from rgnet.encoding.base_encoder import StateEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import Node, NodeFactory
 
 
@@ -87,9 +87,8 @@ class HeteroGraphEncoder(StateEncoderBase):
                 graph.add_edge(self.node_factory(obj), atom_node, position=pos)
         return graph
 
+    @check_encoded_by_this
     def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
-        if not self._encoded_by_this(graph):
-            raise ValueError("Graph must have been encoded by this encoder")
         del graph.graph["encoding"]
         del graph.graph["state"]
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)

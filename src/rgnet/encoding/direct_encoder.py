@@ -10,7 +10,7 @@ import torch_geometric as pyg
 from pymimir import Atom, Domain, Literal, State
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import StateEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import Node, NodeFactory
 
 
@@ -145,9 +145,8 @@ class DirectGraphEncoder(StateEncoderBase):
                 )
         return graph
 
+    @check_encoded_by_this
     def to_pyg_data(self, graph: nx.DiGraph) -> Data:
-        if not self._encoded_by_this(graph):
-            raise ValueError("Graph must have been encoded by this encoder")
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir.State
         del graph.graph["state"]

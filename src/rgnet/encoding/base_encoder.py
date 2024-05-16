@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from abc import ABC, abstractmethod
 
 import networkx as nx
@@ -50,3 +51,13 @@ class StateEncoderBase(ABC):
             and "encoding" in graph.graph
             and graph.graph["encoding"] == self
         )
+
+
+def check_encoded_by_this(func):
+    @functools.wraps(func)
+    def wrapper(self, graph, *args, **kwargs):
+        if not self._encoded_by_this(graph):
+            raise ValueError("Graph must have been encoded by this encoder")
+        return func(self, graph, *args, **kwargs)
+
+    return wrapper

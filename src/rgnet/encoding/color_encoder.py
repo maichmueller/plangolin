@@ -14,7 +14,7 @@ import torch_geometric as pyg
 from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import StateEncoderBase
+from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import NodeFactory
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
@@ -211,9 +211,8 @@ class ColorGraphEncoder(StateEncoderBase):
                 prev_predicate_node = atom_or_literal_node
         return graph
 
+    @check_encoded_by_this
     def to_pyg_data(self, graph: nx.Graph) -> Data:
-        if not self._encoded_by_this(graph):
-            raise ValueError("Graph must have been encoded by this encoder")
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir objects
         del graph.graph["state"]
