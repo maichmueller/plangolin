@@ -196,11 +196,11 @@ def run(
 
     logging.info("Starting training")
     trainer.fit(
-        model=model, train_dataloaders=eval_loader
-    )  # , val_dataloaders=eval_loader)
+        model=model, train_dataloaders=train_loader, val_dataloaders=eval_loader
+    )
     logging.info(f"Took {time_delta_now(start_time_training)} to train the model")
 
-    # trainer.test(model, dataloaders=test_loader)
+    trainer.test(model, dataloaders=test_loader)
 
     logging.info(f"Completed run after {time_delta_now(start_time)}.")
     torch.save(model.state_dict(), checkpoint_path / "model.pt")
