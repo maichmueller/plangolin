@@ -20,6 +20,7 @@ from rgnet import (
     StateEncoderBase,
 )
 from rgnet.supervised.parse_serialized_dataset import *
+from rgnet.supervised.over_sampler import OverSampler
 from rgnet.utils import import_problems, time_delta_now
 
 
@@ -65,6 +66,8 @@ def _dataset_of(problems, root, encoder: StateEncoderBase):
 def _setup_datasets(
     data_layout: DataLayout,
     batch_size: int,
+    num_samples: int,
+    oversampling_factor: float | None,
 ):
     domain = mi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
 
@@ -81,10 +84,22 @@ def _setup_datasets(
             problems = import_problems(problem_path, domain)
             dataset_path = data_layout.dataset_path_for(dataset_type)
             dataset = _dataset_of(problems, dataset_path, encoder)
-        sampler = ImbalancedSampler(dataset)
+        if dataset_type == DatasetType.TRAIN and oversampling_factor is not None:
+            sampler = OverSampler(
+                dataset,
+                oversampled_class=0,
+                oversampling_factor=oversampling_factor,
+                num_samples=num_samples,
+            )
+        else:
+            sampler = ImbalancedSampler(dataset.y, num_samples=num_samples)
+        logging.info(
+            f"Using {type(sampler)} sampler with {num_samples} samples for {dataset_type}"
+        )
         loader = pyg.loader.DataLoader(
             dataset, batch_size, shuffle=False, sampler=sampler, num_workers=2
         )
+        loader = pyg.loader.PrefetchLoader(loader)
         logging.info(
             f"Dataset for {dataset_type} contains {len(dataset)} graphs/states"
         )
@@ -117,6 +132,8 @@ def run(
     device,
     encoder_type,
     learning_rate,
+    num_samples,
+    oversampling_factor,
 ):
     curr_dir = os.getcwd()
     logging.getLogger().setLevel(logging.INFO)
@@ -126,19 +143,20 @@ def run(
     # day-month-year_hour-minute-second
     time_stamp = datetime.now().strftime("%d-%m-%y_%H-%M-%S")
     wlogger = WandbLogger(
-        project="rgnet", name=f"{encoder_type}/{domain_name}:{time_stamp}"
+        project="rgnet",
+        name=f"{domain_name}:{time_stamp}",
+        # group="reproducibility",
     )
     run_id = wlogger.experiment.id
     wlogger.experiment.config.update(
         {
             "epoch": epochs,
-            "embedding_size": embedding_size,
-            "num_layer": num_layer,
-            "learning_rate": learning_rate,
             "device": device,
             "encoding": encoder_type,
             "domain": domain_name,
             "batch_size": batch_size,
+            "num_samples": num_samples,
+            "oversampling_factor": oversampling_factor,
         },
     )
 
@@ -149,8 +167,7 @@ def run(
     import_time = time.time()
 
     train_loader, eval_loader, test_loader, encoder = _setup_datasets(
-        data_layout,
-        batch_size,
+        data_layout, batch_size, num_samples, oversampling_factor
     )
 
     logging.info(f"Took {time_delta_now(import_time)} to construct the datasets.")
@@ -277,6 +294,18 @@ if __name__ == "__main__":
         type=float,
         default=DEFAULT_LEARNING_RATE,
         help=f"Learning rate used by Adam (default: {DEFAULT_LEARNING_RATE})",
+    )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=None,
+        help=f"Maximum number of samples used per epoch (default: {None})",
+    )
+    parser.add_argument(
+        "--oversampling_factor",
+        type=float,
+        default=None,
+        help=f"Oversample goals by this factor (default: {None})",
     )
 
     # Parse the arguments
