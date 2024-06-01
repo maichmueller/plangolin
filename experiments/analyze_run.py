@@ -1,7 +1,8 @@
+import dataclasses
 import logging
 import pathlib
 import re
-from typing import Callable, Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -9,13 +10,14 @@ import numpy as np
 import pymimir as mi
 import torch
 import torch_geometric as pyg
-from pymimir import Action, State
 from torch import Tensor
 
 from experiments.data_layout import DataLayout, DatasetType
+from experiments.policy import Policy, ValuePolicy
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import LightningHetero
 from rgnet.supervised import MultiInstanceSupervisedSet
+from rgnet.utils import get_device_cuda_if_possible
 
 
 def plot_prediction_for_label(pred_for_label: Dict[int, List[Tensor]], label):
@@ -75,13 +77,27 @@ def parse_plan(path: pathlib.Path, problem: mi.Problem) -> Tuple[List[mi.Action]
     return action_list, cost
 
 
+@dataclasses.dataclass
+class PlanResult:
+    plan: Optional[List[mi.Action]]
+    cost: Optional[int]
+    optimal_plan: List[mi.Action]
+    opt_cost: int
+    problem: str
+
+
 class CompletedExperiment:
 
-    def __init__(self, data_layout: DataLayout, run_id: str, device: str = "cpu"):
+    def __init__(
+        self,
+        data_layout: DataLayout,
+        run_id: str,
+        device: torch.device = get_device_cuda_if_possible(),
+    ):
         self.data_layout = data_layout
 
         assert data_layout.encoder_type == "hetero"  # TODO allow other encoder
-
+        self.device: torch.device = device
         self.domain = mi.DomainParser(
             str(data_layout.domain_file_path.absolute())
         ).parse()
@@ -93,7 +109,7 @@ class CompletedExperiment:
         assert len(checkpoints) > 0, f"No checkpoint found for run {run_id}"
         if len(checkpoints) > 1:
             logging.warning("More than one checkpoint found, using the first one.")
-
+        logging.info(f"Using {device} for model inference.")
         self.model: LightningHetero = LightningHetero.load_from_checkpoint(
             checkpoints[0], map_location=device
         )
@@ -139,7 +155,7 @@ class CompletedExperiment:
             shuffle=False,
             num_workers=4,
         )
-        L.Trainer().validate(self.model, loader)
+        L.Trainer(accelerator=self.device).validate(self.model, loader)
         loss_distribution = {
             label: torch.tensor(losses).mean()
             for label, losses in self.model.val_loss_by_label.items()
@@ -158,81 +174,40 @@ class CompletedExperiment:
     def wrap_model_as_value_function(self):
         def value_function(state: mi.State):
             data = self.encoder.to_pyg_data(self.encoder.encode(state))
+            data.to(self.model.device)
             return self.model(data.x_dict, data.edge_index_dict)
 
         return value_function
 
-    def run_policy(self, dataset_type: DatasetType, max_steps=100):
+    def run_vpolicy(self, dataset_type: DatasetType, max_steps=100) -> List[PlanResult]:
         """
         1. Parse optimal plans.
         2. Run ValuePolicy using the trained model on each problem of dataset_type.
         :param dataset_type: Which problems to use.
         :return: A List of found plans (list of actions) or None if no plan was found.
         """
-        plans = self.data_layout.plans_paths_for(dataset_type)
         policy = ValuePolicy(self.wrap_model_as_value_function())
-        found_plans = []
         with torch.no_grad():
             self.model.eval()
-            for plan_file in plans:
-                problem_path = self.data_layout.problem_for_plan(
-                    plan_file, dataset_type
+            return self.run_policy(dataset_type, policy, max_steps)
+
+    def run_policy(
+        self, dataset_type: DatasetType, policy: Policy, max_steps
+    ) -> List[PlanResult]:
+        plans = self.data_layout.plans_paths_for(dataset_type)
+        found_plans: List[PlanResult] = []
+        for plan_file in plans:
+            problem_path = self.data_layout.problem_for_plan(plan_file, dataset_type)
+            problem = mi.ProblemParser(str(problem_path.absolute())).parse(self.domain)
+            opt_plan, opt_cost = parse_plan(plan_file, problem)
+            result = policy.run(problem, max_steps)
+            if result is None:
+                found_plans.append(
+                    PlanResult(None, None, opt_plan, opt_cost, problem.name)
                 )
-                problem = mi.ProblemParser(str(problem_path.absolute())).parse(
-                    self.domain
-                )
-                opt_plan, opt_cost = parse_plan(plan_file, problem)
-                result = policy.run(problem, max_steps)
-                if result is None:
-                    found_plans.append(None)
-                    logging.info(f"Could not find a plan after {max_steps} steps.")
-                    continue
-                plan, cost = result
-                logging.info(f"Found plan with cost {cost}, optimal cost is {opt_cost}")
-                found_plans.append(plan)
+                logging.info(f"Could not find a plan after {max_steps} steps.")
+                continue
+            plan, cost = result
+            logging.info(f"Found plan with cost {cost}, optimal cost is {opt_cost}")
+            found_plans.append(PlanResult(plan, cost, opt_plan, opt_cost, problem.name))
         return found_plans
-
-
-class ValuePolicy:
-
-    def __init__(self, value_function: Callable[[mi.State], float]):
-        self.value_function = value_function
-
-    def __call__(
-        self, state: mi.State, succ: mi.GroundedSuccessorGenerator
-    ) -> Tuple[mi.Action, mi.State]:
-        actions = succ.get_applicable_actions(state)
-        action_targets = [(a, a.apply(state)) for a in actions]
-        return min(action_targets, key=lambda a_t: self.value_function(a_t[1]))
-
-    def evaluate_actions(self, state: mi.State, succ: mi.SuccessorGenerator):
-        """Return a list containing (Action, next-state, value(next-state) tuples.
-        Sorted by the value (smallest to highest)
-        """
-        actions = succ.get_applicable_actions(state)
-        action_targets: List[Tuple[Action, State]] = [
-            (a, a.apply(state)) for a in actions
-        ]
-        a_t_v = [
-            (action, next_state, self.value_function(next_state))
-            for action, next_state in action_targets
-        ]
-        return sorted(a_t_v, key=lambda atv: atv[2])
-
-    def run(self, problem: mi.Problem, max_steps: int):
-
-        plan = []
-        steps = 0
-        succ = mi.GroundedSuccessorGenerator(problem)
-        state = problem.create_state(problem.initial)
-        while not state.literals_hold(problem.goal) and steps <= max_steps:
-            action, next_state = self(state, succ)
-            logging.debug(f"Selected {action} in state {state}")
-            plan.append(action)
-            state = next_state
-            steps += 1
-        if not state.literals_hold(problem.goal):
-            logging.info(f"Could not find a plan in {max_steps}.")
-            return None
-        plan_cost = sum(a.cost for a in plan)
-        return plan, plan_cost
