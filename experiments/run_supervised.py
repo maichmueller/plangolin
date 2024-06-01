@@ -10,6 +10,8 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from torch_geometric.loader import ImbalancedSampler
 
+from experiments import PlanResult
+from experiments.analyze_run import CompletedExperiment
 from experiments.data_layout import DataLayout, DatasetType
 from rgnet import (
     ColorGraphEncoder,
@@ -19,8 +21,8 @@ from rgnet import (
     PureGNN,
     StateEncoderBase,
 )
-from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.supervised.over_sampler import OverSampler
+from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.utils import import_problems, time_delta_now
 
 
@@ -120,6 +122,30 @@ def _create_encoder(domain: mi.Domain, encoder_type: str) -> StateEncoderBase:
     else:
         raise ValueError(f"Encoding type {encoder_type} not recognized.")
     return encoder
+
+
+def plan(data_layout, run_id, logger: WandbLogger):
+    exp = CompletedExperiment(data_layout, run_id)
+    results: List[PlanResult] = exp.run_vpolicy(DatasetType.TEST)
+    # add results to wandb as table
+    data = []
+    for result in results:
+        data.append(
+            [result.problem, result.cost, result.opt_cost],
+        )
+    logger.log_table(
+        "plans", columns=["problem", "plan cost", "optimal cost"], data=data
+    )
+    opt_solved = sum(1 for r in results if r.plan and r.cost == r.opt_cost)
+    subopt_solved = sum(1 for r in results if r.plan and r.cost > r.opt_cost)
+    unsolved = sum(1 for r in results if not r.plan)
+    logger.log_metrics(
+        {
+            "optimal solved": opt_solved,
+            "suboptimal solved": subopt_solved,
+            "unsolved": unsolved,
+        }
+    )
 
 
 def run(
@@ -222,6 +248,12 @@ def run(
     logging.info(f"Completed run after {time_delta_now(start_time)}.")
     torch.save(model.state_dict(), checkpoint_path / "model.pt")
     logging.info("Saved model to " + str(checkpoint_path))
+
+    plan_start_time = time.time()
+    logging.info(f"Starting plan for {run_id}")
+    plan(data_layout, run_id, wlogger)
+    logging.info(f"Finished plan for {run_id} in {time_delta_now(plan_start_time)}")
+
     wandb.finish()
 
 
