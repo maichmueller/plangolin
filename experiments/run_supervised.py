@@ -161,6 +161,9 @@ def run(
     num_samples,
     oversampling_factor,
 ):
+    # Fixes RuntimeError: received 0 items of ancdata which occurs with some domains
+    # https://discuss.pytorch.org/t/runtimeerror-received-0-items-of-ancdata/4999
+    torch.multiprocessing.set_sharing_strategy("file_system")
     curr_dir = os.getcwd()
     logging.getLogger().setLevel(logging.INFO)
     logging.info(f"Using {device} as device")
