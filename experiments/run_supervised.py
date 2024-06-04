@@ -149,17 +149,15 @@ def plan(data_layout, run_id, logger: WandbLogger):
 
 
 def run(
-    data_path,
-    domain_name,
-    epochs,
-    embedding_size,
-    num_layer,
-    batch_size,
-    device,
     encoder_type,
-    learning_rate,
+    domain_name,
+    batch_size,
+    data_path,
+    device,
+    epochs,
     num_samples,
     oversampling_factor,
+    **kwargs,  # model args
 ):
     # Fixes RuntimeError: received 0 items of ancdata which occurs with some domains
     # https://discuss.pytorch.org/t/runtimeerror-received-0-items-of-ancdata/4999
@@ -177,6 +175,7 @@ def run(
         # group="reproducibility",
     )
     run_id = wlogger.experiment.id
+    # Model hyperparameter saved by Lightning
     wlogger.experiment.config.update(
         {
             "epoch": epochs,
@@ -204,25 +203,21 @@ def run(
     start_time_training = time.time()
     if isinstance(encoder, HeteroGraphEncoder):
         model = LightningHetero(
-            hidden_size=embedding_size,
-            num_layer=num_layer,
+            **kwargs,
             obj_type_id=encoder.obj_type_id,
             arity_dict=encoder.arity_dict,
-            lr=learning_rate,
         )
         wlogger.watch(model.model)
     else:
         model = PureGNN(
-            size_out=1, size_in=1, size_embedding=embedding_size, num_layer=num_layer
+            size_out=1,
+            size_in=1,
+            size_embedding=kwargs["hidden_size"],
+            num_layer=kwargs["num_layer"],
         )
         wlogger.watch(model)
 
-    wlogger.experiment.config.update(
-        {
-            "num_parameter": model.num_parameter(),
-            "loss_function": model.loss_function,
-        }
-    )
+    wlogger.experiment.config["num_parameter"] = model.num_parameter()
 
     checkpoint_path = data_layout.model_save_path / run_id
     checkpoint_path.mkdir(parents=True, exist_ok=True)
@@ -264,16 +259,14 @@ if __name__ == "__main__":
     # Define default args
     DEFAULT_ENCODING = "hetero"
     DEFAULT_DOMAIN = "blocks-on"
-    DEFAULT_EMBEDDING_SIZE = 1
-    DEFAULT_NUM_LAYER = 1
     DEFAULT_BATCH_SIZE = 64
     DEFAULT_DATA_PATH = "../data"
     DEFAULT_DEVICES = "auto"
-    DEFAULT_EPOCHS = 1
-    DEFAULT_LEARNING_RATE = 0.001
+    DEFAULT_EPOCHS = 30
 
     # Create ArgumentParser object
     parser = argparse.ArgumentParser(description="Process some modules.")
+    parser = LightningHetero.add_model_args(parser)
 
     # Add arguments
     parser.add_argument(
@@ -289,18 +282,7 @@ if __name__ == "__main__":
         default=DEFAULT_DOMAIN,
         help=f"Encoding type (default: {DEFAULT_DOMAIN})",
     )
-    parser.add_argument(
-        "--embedding_size",
-        type=int,
-        default=DEFAULT_EMBEDDING_SIZE,
-        help=f"Embedding size (default: {DEFAULT_EMBEDDING_SIZE})",
-    )
-    parser.add_argument(
-        "--num_layer",
-        type=int,
-        default=DEFAULT_NUM_LAYER,
-        help=f"Number of layers (default: {DEFAULT_NUM_LAYER})",
-    )
+
     parser.add_argument(
         "--batch_size",
         type=int,
@@ -322,13 +304,6 @@ if __name__ == "__main__":
         type=int,
         default=DEFAULT_EPOCHS,
         help=f"Number of epochs (default: {DEFAULT_EPOCHS})",
-    )
-    parser.add_argument(
-        "--lr",
-        dest="learning_rate",
-        type=float,
-        default=DEFAULT_LEARNING_RATE,
-        help=f"Learning rate used by Adam (default: {DEFAULT_LEARNING_RATE})",
     )
     parser.add_argument(
         "--num_samples",

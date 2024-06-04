@@ -19,6 +19,7 @@ def test_hetero_gnn(hetero_encoded_state):
     model = HeteroGNN(
         hidden_size=2,
         num_layer=1,
+        aggr="sum",
         obj_type_id=encoder.obj_type_id,
         arity_dict=encoder.arity_dict,
     )
@@ -34,6 +35,7 @@ def test_hetero_batched(tmp_path):
         model = HeteroGNN(
             hidden_size=2,
             num_layer=1,
+            aggr="sum",
             obj_type_id=encoder.obj_type_id,
             arity_dict=encoder.arity_dict,
         )

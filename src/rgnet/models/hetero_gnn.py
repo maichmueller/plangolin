@@ -1,12 +1,8 @@
-from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch_geometric as pyg
-import wandb
-from lightning import LightningModule
 from torch import Tensor
-from torch.nn.modules.loss import L1Loss, MSELoss, _Loss
 from torch_geometric.typing import Adj
 
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
@@ -17,13 +13,14 @@ class HeteroGNN(torch.nn.Module):
         self,
         hidden_size: int,
         num_layer: int,
+        aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
-        aggr: Optional[str | pyg.nn.aggr.Aggregation] = "sum",
     ):
         """
         :param hidden_size: The size of object embeddings.
         :param num_layer: Total number of message exchange iterations.
+        :param aggr: Aggregation function to be used for message passing.
         :param obj_type_id: The type identifier of objects in the x_dict.
         :param arity_dict: A dictionary mapping predicate names to their arity.
         Creates one MLP for each predicate.
@@ -110,74 +107,3 @@ class HeteroGNN(torch.nn.Module):
     @staticmethod
     def mlp(in_size: int, hidden_size: int, out_size: int):
         return pyg.nn.MLP([in_size, hidden_size, out_size], norm=None, dropout=0.0)
-
-
-class LightningHetero(LightningModule):
-    def __init__(
-        self,
-        lr: float = 0.001,
-        weight_decay: float = 5e-4,
-        loss_function: _Loss | None = None,  # default l1 loss
-        **kwargs,
-    ) -> None:
-        super().__init__()
-        self.lr = lr
-        self.weight_decay = weight_decay
-        self.loss_function = loss_function or L1Loss()
-        self.model = HeteroGNN(**kwargs)
-        self.save_hyperparameters()
-        self.val_loss_by_label: Dict[int, List[Tensor]] = defaultdict(list)
-
-    def loss(self, out, true_ys):
-        exp_label = (
-            true_ys.float()
-            if (
-                isinstance(self.loss_function, MSELoss)
-                and (true_ys.dtype == torch.int or true_ys.dtype == torch.long)
-            )
-            else true_ys
-        )
-        return self.loss_function(out, exp_label)
-
-    def forward(self, x_dict, edge_index_dict, batch_dict=None):
-        return self.model(x_dict, edge_index_dict, batch_dict)
-
-    def training_step(self, data, batch_index) -> torch.Tensor:
-        return self._common_step(data, "train")[1]
-
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.Adam(
-            self.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-
-    def on_validation_epoch_start(self) -> None:
-        self.val_loss_by_label.clear()
-
-    def _common_step(self, batch, phase: str):
-        out = self.forward(batch.x_dict, batch.edge_index_dict, batch.batch_dict)
-        loss = self.loss(out, batch.y)
-        self.log(f"{phase}_loss", loss, batch_size=batch.batch_size)
-        return out, loss
-
-    def validation_step(self, batch, batch_index):
-        out, val_loss = self._common_step(batch, "val")
-        for i, true_y in enumerate(batch.y):
-            true_y_key = true_y.item() if isinstance(true_y, torch.Tensor) else true_y
-            self.val_loss_by_label[true_y_key].append(self.loss(out[i], true_y).item())
-        return val_loss
-
-    def on_validation_epoch_end(self) -> None:
-        if wandb.run is None:
-            return
-        wandb.log(
-            {
-                f"val_loss/{label}": torch.tensor(losses).mean()
-                for label, losses in self.val_loss_by_label.items()
-            }
-        )
-
-    def test_step(self, batch, batch_index):
-        return self._common_step(batch, "test")[1]
-
-    def num_parameter(self) -> int:
-        return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
