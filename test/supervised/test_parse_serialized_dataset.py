@@ -60,7 +60,7 @@ def test_parse_labeled_state():
     labeled_state_lines = inspect.cleandoc(lines).splitlines()
     _, domain, problem = problem_setup("blocks", "small")
     parser = DatasetParser(domain, problem)
-    label, state = parser.parse_labeled_state(labeled_state_lines)
+    label, state = parser.parse_labeled_state(labeled_state_lines, [])
     assert label == 0 and isinstance(state, mi.State)
     expected = {"clear(a)", "clear(b)", "ontable(a)", "ontable(b)", "handempty()"}
     assert set([atom.get_name() for atom in state.get_atoms()]) == expected

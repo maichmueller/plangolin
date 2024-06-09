@@ -25,9 +25,13 @@ def _lines_by_key(lines: List[str], key: str, is_list: bool = False) -> List[str
 
 class DatasetParser:
 
-    def __init__(self, domain: mi.Domain, problem: mi.Problem):
-        self.domain = domain
-        self.problem = problem
+    def __init__(
+        self, domain: mi.Domain, problem: mi.Problem, include_static_atoms: bool = True
+    ):
+        self.domain: mi.Domain = domain
+        self.problem: mi.Problem = problem
+        # Whether to include static atoms (those that never change) in each state.
+        self.include_static_atoms: bool = include_static_atoms
         self.predicate_ids = domain.get_predicate_id_map()
         self.obj_ids = {obj.id: obj for obj in problem.objects}
 
@@ -69,7 +73,9 @@ class DatasetParser:
             atoms.append(atom)
         return atoms
 
-    def parse_labeled_state(self, lines: List[str]) -> Tuple[int, mi.State]:
+    def parse_labeled_state(
+        self, lines: List[str], static_atoms: List[mi.Atom] | None = None
+    ) -> Tuple[int, mi.State]:
         """
         Example looks like:
         0 -> The label
@@ -80,9 +86,10 @@ class DatasetParser:
         END_STATE
         :return: label, atoms
         """
+        static_atoms = static_atoms or []
         label = int(lines[0])
         atoms = self.parse_atoms(lines[2:-1])
-        state = self.problem.create_state(atoms)
+        state = self.problem.create_state(atoms + static_atoms)
         return label, state
 
     def parse(self, txt_file: Path) -> Tuple[List[mi.Atom], List[Tuple[int, mi.State]]]:
@@ -96,11 +103,15 @@ class DatasetParser:
         pred_lines = _lines_by_key(lines, "PREDICATES")
         self.validate_predicates(pred_lines)
 
-        # NOTE fact-list is ignored
-
         # Goals are never negated and are just a collection of atoms
         goal_lines = _lines_by_key(lines, "GOAL", is_list=True)
         goals = self.parse_atoms(goal_lines)
+
+        # Facts are the statis atoms of the problem, e.g. connected(x,y) in visitall
+        static_atom_lines = _lines_by_key(lines, "FACT", is_list=True)
+        static_atoms = (
+            self.parse_atoms(static_atom_lines) if self.include_static_atoms else None
+        )
 
         state_lines = _lines_by_key(lines, "STATE", is_list=True)
         # Group every BEGIN_LABELED_STATE and END_LABELED_STATE together
@@ -114,7 +125,9 @@ class DatasetParser:
                 last_search_index = next_end + 1
             except ValueError:
                 break
-        labeled_states = [self.parse_labeled_state(group) for group in state_groups]
+        labeled_states = [
+            self.parse_labeled_state(group, static_atoms) for group in state_groups
+        ]
         return goals, labeled_states
 
 
