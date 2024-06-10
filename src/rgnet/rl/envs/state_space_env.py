@@ -1,26 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import List, Optional
 
-import gymnasium as gym
 import pymimir as mi
 import torch
-import torchvision
-from pymimir import Problem, State, StateSpace
+from pymimir import StateSpace
 from tensordict import NonTensorData
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torch import Tensor
-from torchrl.data import (
-    BinaryDiscreteTensorSpec,
-    BoundedTensorSpec,
-    CompositeSpec,
-    DiscreteTensorSpec,
-    NonTensorSpec,
-    UnboundedContinuousTensorSpec,
-    UnboundedDiscreteTensorSpec,
-)
+from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase
-from torchrl.envs.utils import check_env_specs
+
+from rgnet.rl.envs._StepMDPPatch import _StepMDPPatch
 
 
 class ExpandedStateSpaceEnv(EnvBase):
@@ -42,9 +33,10 @@ class ExpandedStateSpaceEnv(EnvBase):
         super().__init__(device=device, batch_size=torch.Size([]))
 
         self.rng: torch.Generator
-        self.state_space = space
-        self.problem = self.state_space.problem
-        self._initial_state = self.state_space.get_initial_state()
+        self.state_space: mi.StateSpace = space
+        self.problem: mi.Problem = self.state_space.problem
+        self._initial_state: mi.State = self.state_space.get_initial_state()
+        self.current_state: List[mi.State] = [self._initial_state]
         if td_params is None:
             td_params = self.gen_params(batch_size=batch_size)
 
@@ -52,6 +44,12 @@ class ExpandedStateSpaceEnv(EnvBase):
         if seed is None:
             seed = int(torch.empty((), dtype=torch.int64).random_().item())
         self.set_seed(seed)
+
+    def get_applicable_transitions(self):
+        return [
+            self.state_space.get_forward_transitions(state)
+            for state in self.current_state
+        ]
 
     @classmethod
     def gen_params(cls, batch_size: Optional[torch.Size] = None) -> TensorDict:
@@ -115,7 +113,7 @@ class ExpandedStateSpaceEnv(EnvBase):
 
         self.observation_spec = CompositeSpec(
             state=NonTensorSpec(shape=batch_size),  # a pymimir.State object
-            transitions=NonTensorSpec(shape=batch_size),  # a List[pymimir.State] object
+            transitions=NonTensorSpec(shape=batch_size),  # a List[pymimir.Transition]
             goal=NonTensorSpec(shape=torch.Size([])),  # a pymimir.LiteralList object
         )
         self.state_spec = self.observation_spec.clone()
@@ -138,15 +136,15 @@ class ExpandedStateSpaceEnv(EnvBase):
         if td is None or td.is_empty():
             td = self.gen_params(batch_size=self.batch_size)
 
-        bs = td.batch_size[0] if td.batch_size else 1
+        batch_size = td.batch_size[0] if td.batch_size else 1
         initial_transitions = self.state_space.get_forward_transitions(
             self._initial_state
         )
         out = TensorDict(
             {
-                "state": NonTensorData([self._initial_state] * bs),
-                "transitions": NonTensorData([initial_transitions] * bs),
-                "goal": NonTensorData([self.problem.goal] * bs),
+                "state": NonTensorData([self._initial_state] * batch_size),
+                "transitions": NonTensorData([initial_transitions] * batch_size),
+                "goal": NonTensorData([self.problem.goal] * batch_size),
             },
             batch_size=td.batch_size,
         )
@@ -178,6 +176,7 @@ class ExpandedStateSpaceEnv(EnvBase):
         out = TensorDict(
             {
                 "state": NonTensorData(self.current_state),
+                "transitions": NonTensorData(self.get_applicable_transitions()),
                 "goal": NonTensorData(td["goal"]),
                 "reward": reward,
                 "done": done,
@@ -185,6 +184,21 @@ class ExpandedStateSpaceEnv(EnvBase):
             td.shape,
         )
         return out
+
+    @property
+    def _step_mdp(self):
+        # This function is called in rollout-collections of EnvBase.
+        # We require the patched version of _step for NonTensorData and
+        # therefore use _StepMDPPatch in which _step_patched is called instead.
+        # See https://github.com/pytorch/rl/issues/2171 for the original issue
+        # NOTE if you set self._step_mdp_value in __init__ the done_keys are missing
+        # no idea at which point torchrl sets the _full_done_spec
+
+        step_func = self.__dict__.get("_step_mdp_value", None)
+        if step_func is None:
+            step_func = _StepMDPPatch(self, exclude_action=False)  # only change
+            self.__dict__["_step_mdp_value"] = step_func
+        return step_func
 
     def _set_seed(self, seed: Optional[int]):
         """Initialize random number generator with given seed.
