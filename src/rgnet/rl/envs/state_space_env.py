@@ -5,22 +5,12 @@ from typing import List, Optional
 import pymimir as mi
 import torch
 from pymimir import StateSpace
-from tensordict import NonTensorData, NonTensorStack
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torch import Tensor
 from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase
 
-from rgnet.rl.envs._StepMDPPatch import _StepMDPPatch
-
-
-def as_non_tensor_stack(list_: List) -> NonTensorStack:
-    """
-    Wrap every element of the list in a NonTensorData and stacks them into a
-    NonTensorDataStack. We do not use torch.stack() in order to avoid getting
-    NonTensorData returned, which is the case if all elements of the list are equal.
-    """
-    return NonTensorStack(*(NonTensorData(x) for x in list_))
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
 
 class ExpandedStateSpaceEnv(EnvBase):
