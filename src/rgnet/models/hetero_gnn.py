@@ -78,7 +78,7 @@ class HeteroGNN(torch.nn.Module):
         obj_emb = self.obj_update(obj_emb)
         x_dict[self.obj_type_id] = obj_emb
 
-    def forward(
+    def calculate_embedding(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[str, Adj],
@@ -100,7 +100,15 @@ class HeteroGNN(torch.nn.Module):
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
         # Aggregate all object embeddings into one aggregated embedding
-        aggr = pyg.nn.global_add_pool(obj_emb, batch)  # shape [hidden, 1]
+        return pyg.nn.global_add_pool(obj_emb, batch)  # shape [hidden, 1]
+
+    def forward(
+        self,
+        x_dict: Dict[str, Tensor],
+        edge_index_dict: Dict[str, Adj],
+        batch_dict: Optional[Dict[str, Tensor]] = None,
+    ):
+        aggr = self.calculate_embedding(x_dict, edge_index_dict, batch_dict)
         # Produce final single scalar of shape [1]
         return self.readout(aggr).view(-1)
 
