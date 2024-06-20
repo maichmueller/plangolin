@@ -5,9 +5,8 @@ import torch
 from tensordict import NonTensorStack
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl.agent import Agent
-from rgnet.rl.embedding import EmbeddingModule
-from rgnet.rl.envs.state_space_env import ExpandedStateSpaceEnv
+from rgnet.rl import Agent, EmbeddingModule
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 
 
 @pytest.mark.parametrize("batch_size", [1, 2, 3])
