@@ -6,7 +6,8 @@ from typing import List, Optional
 import pymimir as mi
 import torch
 from pymimir import StateSpace
-from tensordict import NestedKey, TensorDict, TensorDictBase
+from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
+from tensordict.base import CompatibleType
 from torch import Tensor
 from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase
@@ -28,6 +29,8 @@ class ExpandedStateSpaceEnv(EnvBase):
         action: NestedKey = "action"
         reward: NestedKey = "reward"
         done: NestedKey = "done"
+        terminated: NestedKey = "terminated"
+        truncated: NestedKey = "truncated"
 
     default_keys = Keys()
 
@@ -37,7 +40,6 @@ class ExpandedStateSpaceEnv(EnvBase):
     def __init__(
         self,
         space: StateSpace,
-        td_params: Optional[TensorDict] = None,
         seed: Optional[int] = None,
         device: str = "cpu",
         batch_size=torch.Size([1]),
@@ -56,13 +58,8 @@ class ExpandedStateSpaceEnv(EnvBase):
         self.state_space: mi.StateSpace = space
         self.problem: mi.Problem = self.state_space.problem
         self._initial_state: mi.State = self.state_space.get_initial_state()
-        self.current_states: List[mi.State]  # initialized by reset
-        if td_params is None:
-            td_params = self.gen_params(batch_size=batch_size)
-
-        self._make_spec(td_params)
-        if seed is None:
-            seed = int(torch.empty((), dtype=torch.int64).random_().item())
+        self.current_states: List[mi.State] = []  # initialized by reset
+        self._make_spec()
         self.set_seed(seed)
 
     def get_applicable_transitions(self) -> List[List[mi.Transition]]:
@@ -71,32 +68,11 @@ class ExpandedStateSpaceEnv(EnvBase):
             for state in self.current_states
         ]
 
-    @classmethod
-    def gen_params(cls, batch_size: Optional[torch.Size] = None) -> TensorDict:
-        """Generate default parameters for the environment.
-
-        Args:
-            batch_size (Optional[torch.Size], optional): Batch size for TensorDict.
-             Defaults to None.
-
-        Returns:
-            TensorDict: TensorDict with default parameters.
-        """
-
-        if batch_size is None:
-            batch_size = torch.Size([1])
-
-        td_params = TensorDict(
-            {
-                "params": TensorDict(
-                    {},
-                    batch_size=batch_size,
-                )
-            },
-            batch_size=batch_size,
-        )
-
-        return td_params
+    def create_td(
+        self, source: TensorDictBase | dict[str, CompatibleType] | None = None
+    ) -> TensorDict:
+        """Generate an empty tensordict with the correct device and batch-size.."""
+        return TensorDict(source or {}, batch_size=self.batch_size, device=self.device)
 
     def rand_action(self, tensordict: Optional[TensorDictBase] = None):
         """Generate a random action.
@@ -108,7 +84,7 @@ class ExpandedStateSpaceEnv(EnvBase):
             TensorDictBase: Output TensorDict.
         """
         if tensordict is None:
-            tensordict = self.gen_params(batch_size=self.batch_size)
+            tensordict = self.create_td()
 
         assert len(tensordict.batch_size) == 1  # we can only handle 1D batch-sizes
 
@@ -126,18 +102,10 @@ class ExpandedStateSpaceEnv(EnvBase):
         )
         return tensordict
 
-    def _make_spec(self, td_params: TensorDict):
-        """Configure environment specification.
+    def _make_spec(self):
+        """Configure environment specification."""
 
-        Args:
-            td_params (TensorDict): TensorDict with environment parameters.
-        """
-
-        if not td_params.batch_size:
-            batch_size = self.batch_size
-        else:
-            batch_size = td_params.batch_size
-
+        batch_size = self.batch_size
         self.observation_spec = CompositeSpec(
             state=NonTensorSpec(shape=batch_size),  # a pymimir.State object
             transitions=NonTensorSpec(shape=batch_size),  # a List[pymimir.Transition]
@@ -151,34 +119,22 @@ class ExpandedStateSpaceEnv(EnvBase):
             n=1, dtype=torch.int8, shape=torch.Size([batch_size[0], 1])
         )
 
-    def _reset(self, td: TensorDict, **kwargs) -> TensorDict:
+    def _reset(self, td: Optional[TensorDict], **kwargs) -> TensorDict:
         """Reset environment to new random state.
-
-        Args:
-            td (TensorDict): TensorDict to reset.
-
-        Returns:
-            TensorDict: TensorDict with reset state.
+        We do not require inputs through the td and therefore ignore it.
+        _reset should not manipulate the tensordict inplace (see EnvBase.reset).
+        :param td (TensorDict): The tensordict which is being reset
+        :returns TensorDict: TensorDict with reset state.
         """
-
-        if td is None or td.is_empty():
-            td = self.gen_params(batch_size=self.batch_size)
-
-        batch_size = td.batch_size[0]
-
+        batch_size = self.batch_size[0]
         self.current_states = [self._initial_state] * batch_size
-        initial_transitions = self.state_space.get_forward_transitions(
-            self._initial_state
-        )
-        out = TensorDict(
+        initial_transitions = self.get_applicable_transitions()
+        out = self.create_td(
             {
                 self.keys.state: as_non_tensor_stack(self.current_states),
-                self.keys.transitions: as_non_tensor_stack(
-                    [initial_transitions] * batch_size
-                ),
+                self.keys.transitions: as_non_tensor_stack(initial_transitions),
                 self.keys.goals: as_non_tensor_stack([self.problem.goal] * batch_size),
-            },
-            batch_size=td.batch_size,
+            }
         )
 
         return out
@@ -186,12 +142,9 @@ class ExpandedStateSpaceEnv(EnvBase):
     def _step(self, td: TensorDict) -> TensorDict:
         """Perform a step in the environment.
         Apply the action, compute a new state, render pixels and determine reward, termination and valid next actions.
-
-        Args:
-            td (TensorDict): TensorDict with state and action.
-
-        Returns:
-            TensorDict: Output TensorDict.
+        NOTE that EnvBase.step() already checks that the batch_size matches.
+        :param td (TensorDict): TensorDict with state and action.
+        :returns TensorDict: Output TensorDict.
         """
 
         # get action
@@ -208,7 +161,7 @@ class ExpandedStateSpaceEnv(EnvBase):
         )
         reward = 1 - done.float()
 
-        out = TensorDict(
+        return self.create_td(
             {
                 self.keys.state: as_non_tensor_stack(self.current_states),
                 self.keys.transitions: as_non_tensor_stack(
@@ -217,35 +170,24 @@ class ExpandedStateSpaceEnv(EnvBase):
                 self.keys.goals: td.get(self.keys.goals),
                 self.keys.reward: reward,
                 self.keys.done: done,
-            },
-            td.batch_size,
+            }
         )
-        return out
 
     def _set_seed(self, seed: Optional[int]):
         """Initialize random number generator with given seed.
-
-        Args:
-            seed (Optional[int]): Seed.
+        If seed is None a default seed of 42 is used.
+        :param seed (Optional[int]): Seed.
         """
+        seed = int(torch.empty((), dtype=torch.int64).random_().item())
         self.rng = torch.manual_seed(seed)
         return True
 
-
-if __name__ == "__main__":
-    domain = mi.DomainParser(
-        f"/work/rleap1/michael.aichmueller/projects/hpl/experiments/domains/paperdomains/blocks/domain.pddl"
-    ).parse()
-    problem = mi.ProblemParser(
-        f"/work/rleap1/michael.aichmueller/projects/hpl/experiments/domains/paperdomains/blocks/probBLOCKS-4-0.pddl"
-    ).parse(domain)
-    state_space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
-    env = ExpandedStateSpaceEnv(state_space)
-
-    rollout = env.rollout(max_steps=10)
-    print(rollout)
-    # check_env_specs(env, return_contiguous=False)
-    print("observation_spec:", env.observation_spec)
-    print("reward_spec:", env.reward_spec)
-    print("input_spec:", env.input_spec)
-    print("action_spec (as defined by input_spec):", env.action_spec)
+    def set_state(self, **kwargs):
+        states: List[mi.State] | None = kwargs.get("states", None)
+        if states is None:
+            return
+        if len(states) != self.batch_size[0]:
+            raise ValueError(
+                f"Missmatch in batch size. Expected {self.batch_size[0]} but got {len(states)}"
+            )
+        self.current_states = states
