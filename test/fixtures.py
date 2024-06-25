@@ -1,3 +1,5 @@
+import os
+
 import networkx as nx
 import pymimir as mi
 import pytest
@@ -22,15 +24,35 @@ def _draw_networkx_graph(graph: nx.Graph, **kwargs):
 
 
 def problem_setup(domain_name, problem):
-    domain = mi.DomainParser(f"test/pddl_instances/{domain_name}/domain.pddl").parse()
+    # Pycharm usually executes tests with .../test as working directory
+    source_dir = "" if os.getcwd().endswith("/test") else "test/"
+    domain = mi.DomainParser(
+        f"{source_dir}pddl_instances/{domain_name}/domain.pddl"
+    ).parse()
     problem = mi.ProblemParser(
-        f"test/pddl_instances/{domain_name}/{problem}.pddl"
+        f"{source_dir}pddl_instances/{domain_name}/{problem}.pddl"
     ).parse(domain)
     return (
         mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem)),
         domain,
         problem,
     )
+
+
+# Use a shared blocks-problem, neither of space, domain or problem should be mutated.
+@pytest.fixture(scope="session")
+def small_blocks():
+    return problem_setup("blocks", "small")
+
+
+@pytest.fixture(scope="session")
+def medium_blocks():
+    return problem_setup("blocks", "medium")
+
+
+@pytest.fixture(scope="session")
+def large_blocks():
+    return problem_setup("blocks", "large")
 
 
 @pytest.fixture
