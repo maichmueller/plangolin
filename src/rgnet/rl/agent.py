@@ -11,7 +11,11 @@ from torchrl.modules import ProbabilisticActor, ValueOperator
 from torchrl.objectives import A2CLoss, ValueEstimators
 
 from rgnet.rl.embedding import EmbeddingModule, embed_states_and_transitions
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import (
+    NonTensorWrapper,
+    as_non_tensor_stack,
+    non_tensor_to_list,
+)
 
 
 class Agent:
@@ -54,6 +58,7 @@ class Agent:
         embedding_module: EmbeddingModule,
         value_estimator_type: ValueEstimators = ValueEstimators.TD0,
         value_estimator_kwargs=None,
+        loss_kwargs=None,
     ):
         """
         The Agent class creates all components necessary for an actor-critic policy
@@ -139,19 +144,31 @@ class Agent:
         self.policy = TensorDictSequential(
             self.embedding_td_module, self.prob_actor, self.action_selector
         )
-
+        loss_kwargs = loss_kwargs or {}
         self.loss = A2CLoss(
             actor_network=self.prob_actor,
             critic_network=self.value_operator,
             functional=False,
+            **loss_kwargs,
         )
         self.loss.set_keys(action=self._keys.action_idx)
         self.loss.make_value_estimator(value_estimator_type, **value_estimator_kwargs)
 
     def _policy_function(
-        self, current_embeddings: torch.Tensor, successor_embeddings: List[torch.Tensor]
+        self,
+        current_embeddings: torch.Tensor,
+        successor_embeddings: List[torch.Tensor] | NonTensorWrapper,
     ) -> torch.Tensor:  # logits are padded with 0 in order to get homogenous shape
+        """
+        Calculate the logits for all pairs (current state, successor state).
+        :param current_embeddings: batched embeddings for the current state.
+            Shape batch_size x hidden_size.
+        :param successor_embeddings: batched embeddings for each successor state for
+            each current state. Shape batch_size x num_successor x hidden_size.
+        :return: A tensor of shape batch_size x max_number_successors, where the second
+            dimension is the greatest number of successors over the entire batch.
 
+        """
         successor_embeddings = non_tensor_to_list(successor_embeddings)
 
         assert isinstance(successor_embeddings, List)

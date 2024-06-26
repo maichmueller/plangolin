@@ -1,12 +1,14 @@
 import pytest
 import torch
-from tensordict import LazyStackedTensorDict, NonTensorData, NonTensorStack, TensorDict
+from tensordict import NonTensorData, NonTensorStack, TensorDict
+from tensordict.nn import TensorDictModule
 from torchrl.envs import step_mdp
 from torchrl.envs.utils import _update_during_reset
+from torchrl.objectives.value import TD0Estimator
 
-from rgnet.rl import torchrl_patches
+# from rgnet.rl import torchrl_patches
 
-print(torchrl_patches)  # leaving this in so the import is not optimized
+# print(torchrl_patches)  # leaving this in so the import is not optimized
 
 
 def test_step_function():
@@ -117,3 +119,45 @@ def test_update_during_reset():
     assert torch.allclose(
         tensordict["observation"], torch.tensor([[1.0, 2.0], [-3.0, -4.0]])
     )
+
+
+def test_value_estimators_td0():
+
+    prediction = torch.randn(size=(2, 5, 1))
+    next_prediction = prediction[:, :5, :]
+
+    gamma = 0.9
+
+    value_network = TensorDictModule(
+        lambda x: 1 / 0,  # raise exception
+        in_keys=["obs"],
+        out_keys=["state_value"],
+    )
+    estimator = TD0Estimator(
+        gamma=gamma,
+        value_network=value_network,
+        average_rewards=False,
+        skip_existing=True,
+    )
+
+    td = TensorDict(
+        {
+            # "obs": torch.empty(size=(2, 5, 1)),
+            "state_value": prediction,
+            ("next", "state_value"): next_prediction,
+            # ("next", "obs"): torch.empty(size=(2, 5, 1)),
+            ("next", "reward"): torch.ones(size=(2, 5, 1)),
+            ("next", "done"): torch.zeros((2, 5, 1), dtype=torch.bool),
+        },
+        batch_size=(2, 5),
+    )
+    # will calculate TD0 for each time step independently
+    estimator(td)
+    # td advantage is R_{t+1} + gamma * V(S_{t+1}) - V(S_t)
+    # td value_target is V(S_t) + advantage
+    expected_advantage = td[("next", "reward")] + gamma * next_prediction - prediction
+    expected_value_target = prediction + expected_advantage
+    assert "value_target" in td
+    assert "advantage" in td
+    assert torch.allclose(expected_advantage, td["advantage"])
+    assert torch.allclose(expected_value_target, td["value_target"])
