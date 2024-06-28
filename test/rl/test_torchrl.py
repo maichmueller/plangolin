@@ -6,10 +6,6 @@ from torchrl.envs import step_mdp
 from torchrl.envs.utils import _update_during_reset
 from torchrl.objectives.value import TD0Estimator
 
-# from rgnet.rl import torchrl_patches
-
-# print(torchrl_patches)  # leaving this in so the import is not optimized
-
 
 def test_step_function():
     """Test whether NonTensorStack entries get correctly moved in step_mdp"""
@@ -161,3 +157,13 @@ def test_value_estimators_td0():
     assert "advantage" in td
     assert torch.allclose(expected_advantage, td["advantage"])
     assert torch.allclose(expected_value_target, td["value_target"])
+
+
+def test_non_tensor_data():
+    td = TensorDict({"x": torch.tensor([1.0, 2.0, 3.0])}, batch_size=(3,))
+
+    TensorDictModule(
+        lambda: NonTensorData(["a", "b", "c"]), in_keys=[], out_keys=["y"]
+    )(td)
+
+    assert td["y"] == ["a", "b", "c"]

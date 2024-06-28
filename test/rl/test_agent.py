@@ -1,29 +1,51 @@
 from test.fixtures import small_blocks
+from typing import List
 
 import mockito
 import pytest
 import torch
 import torch.nn.functional as F
-from tensordict import NonTensorStack, TensorDict
+from tensordict import NonTensorData, NonTensorStack, TensorDict
 from tensordict.nn import TensorDictModule
 from torchrl.objectives import ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 
 from rgnet import HeteroGraphEncoder
 from rgnet.rl import Agent, EmbeddingModule
+from rgnet.rl.agent import PolicyPreparationModule
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.non_tensor_data_utils import (
+    NonTensorWrapper,
+    as_non_tensor_stack,
+    non_tensor_to_list,
+)
 
 
 @pytest.fixture
-def agent(small_blocks, value_estimator_type=None):
-    _, domain, _ = small_blocks
-    # TODO use mocking for all side-effects
-    embedding = EmbeddingModule(
-        HeteroGraphEncoder(domain), hidden_size=2, num_layer=1, aggr="sum"
+def embedding_mock(hidden_size=2):
+
+    def random_embeddings(states: List | NonTensorWrapper):
+        states = non_tensor_to_list(states)
+        batch_size = len(states)
+        return torch.randn(size=(batch_size, hidden_size))
+
+    mock = mockito.mock(
+        {"hidden_size": hidden_size, "__call__": random_embeddings},
+        strict=True,
+        spec=EmbeddingModule,
     )
+    # some torchrl/tensordict asks for the named modules. Sadly I don't know how to
+    # use the original Module implemented method.
+    mockito.when(mock).named_modules(...).thenReturn([("", mock)])
+    return mock
+
+
+@pytest.fixture
+@pytest.mark.parametrize("embedding_mock", [2], indirect=True)
+def agent(small_blocks, embedding_mock, value_estimator_type=None):
+    _, domain, _ = small_blocks
     estimator = value_estimator_type or ValueEstimators.TD0
-    return Agent(embedding, value_estimator_type=estimator)
+    return Agent(embedding_mock, value_estimator_type=estimator)
 
 
 @pytest.fixture
@@ -38,8 +60,8 @@ def environment(small_blocks, batch_size):
 
 def test_init(agent):
     assert agent._hidden_size == 2
+    assert agent._embedding_module is not None
     assert agent.embedding_td_module is not None
-    assert agent.actor_net is not None
     assert agent.prob_actor is not None
     assert agent.value_operator is not None
     assert agent.action_selector is not None
@@ -54,18 +76,16 @@ def test_init(agent):
 )
 def test_manual_agent_use(batch_size, agent, environment, value_estimator_type):
     td = environment.reset()
+
     agent.embedding_td_module(td)
 
-    c_key = (agent.default_keys.current_embedding,)
-    succ_key = (agent.default_keys.successor_embedding,)
-    assert c_key in td and succ_key in td
+    c_key = agent.default_keys.current_embedding
+    assert c_key in td
     assert isinstance(td.get(c_key), torch.Tensor)
-    assert isinstance(td.get(succ_key), NonTensorStack)
     assert td.get(c_key).shape[0] == batch_size  # first dimension ist batch_size
-    assert td.get(succ_key).batch_size == (batch_size,)
-    assert td[succ_key][0] is not None
 
     agent.prob_actor(td)
+
     assert "logits" in td
     assert isinstance(td.get("logits"), torch.Tensor)
     assert td.get("logits").shape[0] == batch_size  # first dimension ist batch_size
@@ -126,50 +146,80 @@ def test_as_policy(batch_size, agent, environment, value_estimator_type):
     # TODO test soundness of produced rollout
 
 
-def test_policy_function(agent):
-    hidden_size = 10
+@pytest.mark.parametrize("embedding_mock", [10], indirect=True)
+def test_policy_preparation(embedding_mock):
+    batch_size = 5  # hardcoded for this test
 
     def actor_mock(tensor):
         batch_size = tensor.shape[0]
         return torch.ones(size=(batch_size, 1), dtype=tensor.dtype)
 
-    def verify(result):
-        assert result.shape == (5, 4)
-        # We get 1 (from the mock) for each pair and 0s as padding
-        # softmax is 1 / (number of successors)
-        expected = torch.tensor(
-            [
-                [1.0 / 3.0] * 3 + [0.0],
-                [0.25, 0.25, 0.25, 0.25],
-                [0.5, 0.5, 0.0, 0.0],
-                [1.0 / 3.0] * 3 + [0.0],
-                [1.0, 0.0, 0.0, 0.0],
-            ]
-        )
-        assert torch.allclose(result, expected)
+    actor_net_mock = mockito.mock({"__call__": actor_mock})
 
-    with mockito.patch(agent.actor_net, actor_mock):
+    # Only the target is used and passed to the embeddings module so the value doesn't
+    # matter
+    transition_mock = mockito.mock({"target": "X"})
 
-        current_embeddings = torch.rand(5, hidden_size)
-        successor_embeddings = [
-            torch.rand(3, hidden_size),
-            torch.rand(4, hidden_size),
-            torch.rand(2, hidden_size),
-            torch.rand(3, hidden_size),
-            torch.rand(1, hidden_size),
+    policy_preparation = PolicyPreparationModule(embedding_mock, actor_net_mock)
+    assert policy_preparation.in_keys == [
+        Agent.default_keys.current_embedding,
+        Agent.default_keys.transitions,
+    ]
+    transitions = as_non_tensor_stack(
+        [
+            [transition_mock] * 3,
+            [transition_mock] * 4,
+            [transition_mock] * 2,
+            [transition_mock] * 3,
+            [transition_mock] * 1,
         ]
-        logits = agent._policy_function(current_embeddings, successor_embeddings)
-        verify(logits)
+    )
+    td = TensorDict(
+        {
+            policy_preparation.in_keys[0]: embedding_mock([None] * batch_size),
+            policy_preparation.in_keys[1]: transitions,
+        },
+        batch_size=batch_size,
+    )
 
-        # Wrap successor_embeddings in a NonTensorStack
-        logits = agent._policy_function(
-            current_embeddings, as_non_tensor_stack(successor_embeddings)
-        )
-        verify(logits)
+    out_td = policy_preparation(td)
+    assert out_td is td, "PolicyPreparationModule should not create new tensordicts"
+    assert all(key in out_td for key in policy_preparation.out_keys)
+    logits = out_td.get(policy_preparation.out_keys[0])
+    # We get 1 (from the mock) for each pair and 0s as padding
+    # softmax is 1 / (number of successors)
+    expected_logits = torch.tensor(
+        [
+            [1.0 / 3.0] * 3 + [0.0],
+            [0.25, 0.25, 0.25, 0.25],
+            [0.5, 0.5, 0.0, 0.0],
+            [1.0 / 3.0] * 3 + [0.0],
+            [1.0, 0.0, 0.0, 0.0],
+        ]
+    )
+    assert torch.allclose(logits, expected_logits)
 
-        # Assert mismatching between number of current_embeddings and successors throws
-        with pytest.raises(AssertionError):
-            agent._policy_function(torch.rand(2, 1), [torch.rand(1, 1)])
+    mockito.verify(embedding_mock, times=2).__call__(...)
+    # At most one call for every element in the batch_size
+    mockito.verify(actor_net_mock, atmost=batch_size).__call__(...)
+
+    # Assert that another call to the module where the output is already present
+    # skips the computation
+    mockito.forget_invocations(actor_net_mock)
+    policy_preparation(td)
+    mockito.verify(actor_net_mock, times=0).__call__(...)
+
+    # Assert mismatching between number of current_embeddings and transitions
+    illegal_td = TensorDict(
+        {
+            policy_preparation.in_keys[0]: embedding_mock([None] * batch_size),
+            policy_preparation.in_keys[1]: NonTensorData(
+                [transition_mock] * 3, batch_size=(1,)
+            ),
+        },
+    )
+    with pytest.raises(AssertionError):
+        policy_preparation(illegal_td)
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])
