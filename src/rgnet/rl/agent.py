@@ -15,7 +15,7 @@ from tensordict.nn import (
 from torch import Tensor
 from torch_geometric.nn.models import MLP
 from torchrl.modules.tensordict_module import ProbabilisticActor, ValueOperator
-from torchrl.objectives import ValueEstimators
+from torchrl.objectives import A2CLoss, ValueEstimators
 
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import (
@@ -23,7 +23,6 @@ from rgnet.rl.non_tensor_data_utils import (
     as_non_tensor_stack,
     non_tensor_to_list,
 )
-from rgnet.rl.RecyclingA2CLoss import RecyclingA2CLoss
 
 
 class Agent:
