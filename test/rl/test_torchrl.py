@@ -1,8 +1,11 @@
+from typing import Optional
+
 import pytest
 import torch
-from tensordict import NonTensorData, NonTensorStack, TensorDict
+from tensordict import NonTensorData, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
-from torchrl.envs import step_mdp
+from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
+from torchrl.envs import EnvBase, step_mdp
 from torchrl.envs.utils import _update_during_reset
 from torchrl.objectives.value import TD0Estimator
 
@@ -167,3 +170,87 @@ def test_non_tensor_data():
     )(td)
 
     assert td["y"] == ["a", "b", "c"]
+
+
+def test_environment_partial_reset():
+    """Test partial reset bahvior with non tensor data.
+    See isesue https://github.com/pytorch/rl/issues/2257 for more details.
+    """
+    test_batch_size = 2
+
+    class CustomEnv(EnvBase):
+        # Custom environment
+
+        def __init__(
+            self,
+            *,
+            device=None,
+            batch_size: Optional[torch.Size] = torch.Size([test_batch_size]),
+            run_type_checks: bool = False,
+            allow_done_after_reset: bool = False,
+        ):
+            assert batch_size == (test_batch_size,)  # hardcoded for minimal example
+            super().__init__(
+                device=device,
+                batch_size=batch_size,
+                run_type_checks=run_type_checks,
+                allow_done_after_reset=allow_done_after_reset,
+            )
+
+            self.observation_spec = CompositeSpec(
+                observation=NonTensorSpec(shape=batch_size), shape=batch_size
+            )
+            self.action_spec = NonTensorSpec(shape=batch_size)
+            self.reward_spec: BinaryDiscreteTensorSpec = BinaryDiscreteTensorSpec(
+                n=1, dtype=torch.int8, shape=torch.Size([test_batch_size, 1])
+            )
+
+        def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
+            done = torch.tensor([True, False], dtype=torch.bool)
+            next_observation = NonTensorStack(
+                NonTensorData("B"), NonTensorData("Z"), batch_size=(test_batch_size,)
+            )
+            return TensorDict(
+                {
+                    "observation": next_observation,
+                    "done": done,
+                    "reward": torch.ones((test_batch_size,)),
+                },
+                batch_size=(test_batch_size,),
+            )
+
+        def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
+            return TensorDict(
+                {
+                    "observation": NonTensorStack(
+                        NonTensorData("A"),
+                        NonTensorData("C"),
+                        batch_size=(test_batch_size,),
+                    )
+                },
+                batch_size=(test_batch_size,),
+            )
+
+        def rand_action(self, tensordict: Optional[TensorDictBase] = None):
+            action = NonTensorStack(
+                *([NonTensorData("+")] * test_batch_size), batch_size=(test_batch_size,)
+            )
+            if tensordict is None:
+                tensordict = TensorDict({}, batch_size=self.batch_size)
+            tensordict["action"] = action
+            return tensordict
+
+        def _set_seed(self, seed: Optional[int]):
+            pass
+
+    env = CustomEnv()
+    td = env.reset()
+    env.rand_action(td)
+    out_td, reset_td = env.step_and_maybe_reset(td)
+    assert out_td is td
+    assert torch.equal(td["next", "done"], torch.tensor([[True], [False]]))
+    observation = "observation"
+    next_observation = ("next", observation)
+
+    assert td[next_observation] == ["B", "Z"]  # the result of _step
+    assert reset_td[observation] == ["A", "Z"]  # first entry is reset

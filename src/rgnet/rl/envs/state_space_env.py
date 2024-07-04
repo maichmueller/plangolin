@@ -58,15 +58,13 @@ class ExpandedStateSpaceEnv(EnvBase):
         self.state_space: mi.StateSpace = space
         self.problem: mi.Problem = self.state_space.problem
         self._initial_state: mi.State = self.state_space.get_initial_state()
-        self.current_states: List[mi.State] = []  # initialized by reset
         self._make_spec()
         self.set_seed(seed)
 
-    def get_applicable_transitions(self) -> List[List[mi.Transition]]:
-        return [
-            self.state_space.get_forward_transitions(state)
-            for state in self.current_states
-        ]
+    def get_applicable_transitions(
+        self, states: List[mi.State]
+    ) -> List[List[mi.Transition]]:
+        return [self.state_space.get_forward_transitions(state) for state in states]
 
     def create_td(
         self, source: TensorDictBase | dict[str, CompatibleType] | None = None
@@ -107,9 +105,14 @@ class ExpandedStateSpaceEnv(EnvBase):
 
         batch_size = self.batch_size
         self.observation_spec = CompositeSpec(
-            state=NonTensorSpec(shape=batch_size),  # a pymimir.State object
-            transitions=NonTensorSpec(shape=batch_size),  # a List[pymimir.Transition]
-            goal=NonTensorSpec(shape=batch_size),  # a pymimir.LiteralList object
+            **{
+                # a pymimir.State object
+                self.keys.state: NonTensorSpec(shape=batch_size),
+                # a List[pymimir.Transition]
+                self.keys.transitions: NonTensorSpec(shape=batch_size),
+                # a pymimir.LiteralList object
+                self.keys.goals: NonTensorSpec(shape=batch_size),
+            },
             shape=batch_size,
         )
         # Defines what else the step function requires beside the "action" entry
@@ -127,11 +130,11 @@ class ExpandedStateSpaceEnv(EnvBase):
         :returns TensorDict: TensorDict with reset state.
         """
         batch_size = self.batch_size[0]
-        self.current_states = [self._initial_state] * batch_size
-        initial_transitions = self.get_applicable_transitions()
+        current_states = [self._initial_state] * batch_size
+        initial_transitions = self.get_applicable_transitions(current_states)
         out = self.create_td(
             {
-                self.keys.state: as_non_tensor_stack(self.current_states),
+                self.keys.state: as_non_tensor_stack(current_states),
                 self.keys.transitions: as_non_tensor_stack(initial_transitions),
                 self.keys.goals: as_non_tensor_stack([self.problem.goal] * batch_size),
             }
@@ -152,20 +155,20 @@ class ExpandedStateSpaceEnv(EnvBase):
         transitions = td[self.keys.action]
         assert isinstance(transitions, list)  # batch of chosen-transitions
 
-        self.current_states = [transition.target for transition in transitions]
+        next_states = [transition.target for transition in transitions]
 
         # check for termination and reward
         done = torch.tensor(
-            [self.state_space.is_goal_state(state) for state in self.current_states],
+            [self.state_space.is_goal_state(state) for state in next_states],
             dtype=torch.bool,
         )
         reward = 1 - done.float()
 
         return self.create_td(
             {
-                self.keys.state: as_non_tensor_stack(self.current_states),
+                self.keys.state: as_non_tensor_stack(next_states),
                 self.keys.transitions: as_non_tensor_stack(
-                    self.get_applicable_transitions()
+                    self.get_applicable_transitions(next_states)
                 ),
                 self.keys.goals: td.get(self.keys.goals),
                 self.keys.reward: reward,
@@ -181,13 +184,3 @@ class ExpandedStateSpaceEnv(EnvBase):
         seed = int(torch.empty((), dtype=torch.int64).random_().item())
         self.rng = torch.manual_seed(seed)
         return True
-
-    def set_state(self, **kwargs):
-        states: List[mi.State] | None = kwargs.get("states", None)
-        if states is None:
-            return
-        if len(states) != self.batch_size[0]:
-            raise ValueError(
-                f"Missmatch in batch size. Expected {self.batch_size[0]} but got {len(states)}"
-            )
-        self.current_states = states
