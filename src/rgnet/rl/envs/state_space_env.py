@@ -6,10 +6,10 @@ from typing import List, Optional
 import pymimir as mi
 import torch
 from pymimir import StateSpace
-from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
+from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
 from torch import Tensor
-from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
+from torchrl.data import BoundedTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase
 
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
@@ -118,8 +118,11 @@ class ExpandedStateSpaceEnv(EnvBase):
         # Defines what else the step function requires beside the "action" entry
         self.state_spec = CompositeSpec(shape=batch_size)  # a.k.a. void
         self.action_spec = NonTensorSpec(shape=batch_size)  # a pymimir.State object
-        self.reward_spec: BinaryDiscreteTensorSpec = BinaryDiscreteTensorSpec(
-            n=1, dtype=torch.int8, shape=torch.Size([batch_size[0], 1])
+        self.reward_spec: BoundedTensorSpec = BoundedTensorSpec(
+            low=-1.0,
+            high=1.0,
+            dtype=torch.float32,
+            shape=torch.Size([batch_size[0], 1]),
         )
 
     def _reset(self, td: Optional[TensorDict], **kwargs) -> TensorDict:
