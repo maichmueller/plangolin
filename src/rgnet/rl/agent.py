@@ -1,16 +1,13 @@
-import dataclasses
 import itertools
 from typing import List, Tuple
 
 import pymimir as mi
 import torch
-import torch.nn.functional as F
-from tensordict import NestedKey, NonTensorStack
-from tensordict.nn import TensorDictModule, TensorDictModuleBase, TensorDictSequential
+from tensordict import NestedKey, NonTensorStack, TensorDict
+from tensordict.nn import ProbabilisticTensorDictModule, TensorDictModule
 from torch import Tensor
 from torch_geometric.nn.models import MLP
-from torchrl.modules.tensordict_module import ProbabilisticActor, ValueOperator
-from torchrl.objectives import A2CLoss, ValueEstimators
+from torchrl.modules.tensordict_module import ValueOperator
 
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import (
@@ -20,70 +17,38 @@ from rgnet.rl.non_tensor_data_utils import (
 )
 
 
-class Agent:
+class Agent(torch.nn.Module):
 
-    @dataclasses.dataclass
-    class _AcceptedKeys:
-        """Maintains the default values for all steps within the agent pipeline.
-        Attributes:
-            state : The input key under which the batched current state is stored.
-            transitions: The input key under which the batched transitions are stored.
-            current_embedding: The key for the embeddings of the current states.
-            action_idx: The key for index of the selected action, as sampled by the actor.
-            state_value: The key for the state value, estimated by the critic.
-            action: The key for the chosen action (transition), should most likely match what the environment expects.
+    # Keys used for the output
+    log_probs: NestedKey = "log_probs"  # the log_prob of the taken action
+    state_value: NestedKey = "state_value"  # the output of the value-operator
+    current_embedding = "current_embedding"  # the embeddings of states
+    # Keys used internally
+    _probs_key = "probs"  # the input for the Categorical distribution
+    _action_idx_key = "action_idx"  # the output for the distribution
 
+    def __init__(self, embedding_module: EmbeddingModule):
         """
-
-        state: NestedKey = "state"
-        transitions: NestedKey = "transitions"
-        current_embedding: NestedKey = "current_embedding"
-        action_idx: NestedKey = "action_idx"
-        state_value: NestedKey = "state_value"
-        action: NestedKey = "action"
-
-    default_keys = _AcceptedKeys()
-
-    def set_keys(self, **kwargs):
-        for key, value in kwargs.items():
-            if key not in self._AcceptedKeys.__dict__:
-                raise ValueError(f"{key} is not an accepted tensordict key")
-            if value is not None:
-                setattr(self._keys, key, value)
-            else:
-                setattr(self._keys, key, self.default_keys.key)
-
-    def __init__(
-        self,
-        embedding_module: EmbeddingModule,
-        value_estimator_type: ValueEstimators = ValueEstimators.TD0,
-        value_estimator_kwargs=None,
-        loss_kwargs=None,
-    ):
-        """
-        The Agent class creates all components necessary for an actor-critic policy
-        including a suitable loss function.
+        The Agent class creates all components necessary for an actor-critic policy.
+        Due to high amount of bugs in the beta and the untypical use-case we have
+        we do not use ProbabilisticActor with only TensorDictModules.
 
         Attributes:
             embedding_module (EmbeddingModule): a module which can generate embeddings
                 of states (typically done with the use of a GNN).
-            value_estimator_type (ValueEstimators, optional): which value estimator to use for the A2C loss.
-                Defaults to ValueEstimators.TD0.
-            value_estimator_kwargs: The arguments for the ValueEstimator as passed to the A2C loss.
-                Defaults to {'gamma': 0.9}
         """
-        if value_estimator_kwargs is None:
-            value_estimator_kwargs = {"gamma": 0.9}
-
-        self._keys = self._AcceptedKeys()
+        super().__init__()
 
         self._hidden_size = embedding_module.hidden_size
 
         self._embedding_module = embedding_module
-        self.embedding_td_module = TensorDictModule(
-            embedding_module,
-            in_keys=[self._keys.state],
-            out_keys=[self._keys.current_embedding],
+
+        self.probabilistic_module = ProbabilisticTensorDictModule(
+            in_keys=[Agent._probs_key],
+            out_keys=[Agent._action_idx_key],
+            distribution_class=torch.distributions.Categorical,
+            return_log_prob=True,
+            log_prob_key=Agent.log_probs,
         )
 
         self.actor_net = torch.nn.Sequential(
@@ -101,18 +66,6 @@ class Agent:
             ),
         )
 
-        # The ProbabilisticActor is the actor of the actor-critic approach.
-        # It takes the embeddings as input, calculates probabilities for each pair
-        # (current_embedding,successor_embedding) over all successors and
-        # samples an index based on the probability.
-        self.prob_actor = ProbabilisticActor(
-            module=PolicyPreparationModule(self._embedding_module, self.actor_net),
-            in_keys=["probs"],  # keyword argument for the distribution
-            out_keys=[self._keys.action_idx],
-            distribution_class=torch.distributions.Categorical,
-            return_log_prob=False,
-        )
-
         # The ValueOperator is the critic of the actor-critic approach.
         # provided with the embeddings of the current state it estimates the value.
         self.value_operator = ValueOperator(
@@ -121,83 +74,19 @@ class Agent:
                 norm=None,
                 dropout=0.0,
             ),
-            in_keys=[self._keys.current_embedding],
-            out_keys=[self._keys.state_value],
+            in_keys=[Agent.current_embedding],
+            out_keys=[Agent.state_value],
         )
-
-        # After sampling an index with torch.distributions.Categorical we need to
-        # actually select the element of that index from the input transitions
-        self.action_selector = TensorDictModule(
-            Agent._select_action,
-            in_keys=[self._keys.action_idx, self._keys.transitions],
-            out_keys=[self._keys.action],
-        )
-
-        # The policy is a pipeline of all the components necessary to produce an
-        # action given the state and transitions. It can for example be used to
-        # compute rollouts like environment.rollout(10, agent.policy)
-        self.policy = TensorDictSequential(
-            self.embedding_td_module,  # compute current embeddings
-            self.prob_actor,  # compute successor-embeddings -> probs -> action_idx
-            self.action_selector,  # select action with the sampled action_idx
-        )
-        loss_kwargs = loss_kwargs or {}
-        self.loss = A2CLoss(
-            actor_network=self.prob_actor,
-            critic_network=self.value_operator,
-            functional=False,
-            **loss_kwargs,
-        )
-        self.loss.set_keys(action=self._keys.action_idx)
-        self.loss.make_value_estimator(value_estimator_type, **value_estimator_kwargs)
-
-    @staticmethod
-    def _select_action(
-        action_idx: torch.Tensor, transitions: List[List[mi.Transition]]
-    ) -> Tuple[NonTensorStack]:  # List[mi.Transition]
-
-        transitions = non_tensor_to_list(transitions)
-
-        assert action_idx.dim() == 1
-        assert len(transitions) == len(action_idx)
-
-        # Select the transition with the sampled index
-        # NonTensorStack.select(...) only works with keys -> TensorDictBase.select
-        # We have to return a single item tuple because TensorDictModule.forward would
-        # otherwise try to retrieve the output-key from the NonTensorStack (Line 1204).
-        # Open issue https://github.com/pytorch/tensordict/issues/821
-        return (
-            as_non_tensor_stack(
-                [t[idx.item()] for t, idx in zip(transitions, action_idx)]
-            ),
-        )
-
-    def parameter(self):
-        return itertools.chain(
-            self.embedding_td_module.parameters(),
-            self.prob_actor.parameters(),
-            self.value_operator.parameters(),
-        )
-
-
-class PolicyPreparationModule(TensorDictModuleBase):
-    """
-    This module computes probabilities given the embeddings of the current states and the
-    transitions from the current state. This is wrapped inside a TensorDictModule
-    inorder to use set_skip_existing and hence avoid teh re-computation of embeddings.
-    """
-
-    in_keys = [Agent.default_keys.current_embedding, Agent.default_keys.transitions]
-    out_keys = ["probs"]
-
-    def __init__(self, embedding_module, actor_net, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._embedding_module = embedding_module
-        self.actor_net = actor_net
 
     def _embed_transitions(
         self, batched_transitions: List[List[mi.Transition]]
     ) -> Tuple[Tensor, ...]:
+        """
+        Calculate embeddings for the targets for each transition. This will only
+        trigger one call to the embedding module by flattening the batch beforehand.
+        :param batched_transitions: We expect the transitions to be batched as a list.
+        :return: the embedded targets of shape [batch_size x num_successors]
+        """
         flattened = list(
             itertools.chain.from_iterable(
                 [t.target for t in transitions] for transitions in batched_transitions
@@ -210,31 +99,44 @@ class PolicyPreparationModule(TensorDictModuleBase):
         start_indices = start_indices[:-1]
         return long_tensor.tensor_split(start_indices, dim=0)
 
-    def forward(self, tensordict, *args, tensordict_out=None):
+    @staticmethod
+    def _select_action(
+        action_idx: List[int | torch.Tensor], transitions: List[List[mi.Transition]]
+    ) -> List[mi.Transition]:
+
+        assert len(transitions) == len(action_idx)
+        return [t[idx] for t, idx in zip(transitions, action_idx)]
+
+    def _sample_distribution(
+        self, batched_probs: List[torch.Tensor]
+    ) -> Tuple[List[int | torch.Tensor], torch.Tensor]:
         """
-        Calculate the probabilities for all pairs (current state, successor state).
-        Note we can't use skip_existing true because otherwise successive calls to this module
-        during a rollout (one for each time step) will be ignored.
-        :param tensordict: tensor dict with the following keys:
-            - current_embeddings: embeddings of the current states.
-                Shape batch_size x hidden_size.
-            - transitions: transitions for each current state.
-                Shape batch_size x num_successor.
-        :param tensordict_out: Optional tensordict to write the outputs to.
-            If not provided the outputs will be written to tensordict.
-        :return: The tensordict to which the output is written to. It will contain
-            a new entry 'probs', which holds a tensor of shape
-            batch_size x max_number_successors, where the second dimension is the
-            greatest number of successors over the entire batch.
-
+        Forward the normalized probabilities to the ProbabilisticTensorDictModule.
+        This would normally be done inside the ProbabilisticActor, however as  we have
+        a ragged tensor across the batch and time dimension we use lists of tensors
+        and sample each action-index with a separate call to the probabilistic_module.
+        :param batched_probs: A list of tensors containing the normalized logits of the
+            actor_net. The length of the list is the batch_size.
+        :return: The sampled action_index and the log_probs of chosen sample.
+            The action_idx will be list of tensors, which are effectively a single int.
         """
-        current_embeddings: torch.Tensor = tensordict.get(self.in_keys[0])
-        transitions: List[List[mi.Transition]] | NonTensorWrapper = tensordict.get(
-            self.in_keys[1]
-        )
 
-        successor_embeddings = self._embed_transitions(non_tensor_to_list(transitions))
+        # td[Agent._action_idx_key] will actually be a one-element tensor
+        sample_indices: List[int | torch.Tensor] = []
+        log_probs: List[torch.Tensor] = []
+        for probs in batched_probs:
+            td = TensorDict({Agent._probs_key: probs})
+            self.probabilistic_module(td)
+            sample_indices.append(td[Agent._action_idx_key])
+            log_probs.append(td[Agent.log_probs])
 
+        return sample_indices, torch.tensor(log_probs)
+
+    def _actor_probs(
+        self,
+        current_embeddings: torch.Tensor,
+        successor_embeddings: Tuple[torch.Tensor, ...],
+    ) -> List[torch.Tensor]:
         assert isinstance(successor_embeddings, Tuple)
 
         # First dimension is batch, second number of successors, third hidden_size
@@ -247,8 +149,6 @@ class PolicyPreparationModule(TensorDictModuleBase):
         #    for each successor_embedding in successor_embeddings[i]
         # 2. Run self.actor_net on each pair
         # 3. Compute the softmax over all outputs of 2.
-        max_number_successors = max(se.shape[0] for se in successor_embeddings)
-
         probabilities_batched: List[torch.Tensor] = []  # batch_size x num_successors
         for i in range(current_embeddings.shape[0]):  # loop over the batch
             num_successor = successor_embeddings[i].shape[0]
@@ -266,22 +166,36 @@ class PolicyPreparationModule(TensorDictModuleBase):
             probs_successors = self.actor_net(pairs).flatten().softmax(dim=0)
             probabilities_batched.append(probs_successors)
 
-        assert all(t.dim() == 1 for t in probabilities_batched)
+        return probabilities_batched
 
-        # We need to return a tensor as torch.distributions.Categorical expects a
-        # tensor and torchrl just passes the output of this function to Categorical.
-        # Therefore, we create a homogenous shape by adding trailing zeros, which will
-        # never be sampled by the distribution.
-        paddings = [max_number_successors - t.shape[0] for t in probabilities_batched]
-        # shape = batch_size x max_number_successors
-        batch_tensor = torch.stack(
-            [
-                F.pad(t, (0, pad), value=0.0)  # add trailing 0s
-                for (pad, t) in zip(paddings, probabilities_batched)
-            ]
+    def forward(
+        self,
+        state: NonTensorWrapper | List[mi.State],
+        transitions: NonTensorWrapper | List[List[mi.Transition]],
+    ) -> Tuple[NonTensorStack, torch.Tensor, torch.Tensor]:
+
+        transitions = non_tensor_to_list(transitions)
+
+        current_embeddings = self._embedding_module(state)
+        successor_embeddings = self._embed_transitions(transitions)
+
+        batched_probs = self._actor_probs(current_embeddings, successor_embeddings)
+
+        action_indices, log_probs = self._sample_distribution(batched_probs)
+
+        actions = Agent._select_action(action_indices, transitions)
+
+        return (
+            as_non_tensor_stack(actions),
+            current_embeddings,
+            log_probs,
         )
-        if tensordict_out is None:
-            tensordict_out = tensordict
 
-        tensordict_out.set(self.out_keys[0], batch_tensor)
-        return tensordict_out
+    def as_td_module(
+        self, state_key: NestedKey, transition_key: NestedKey, action_key: NestedKey
+    ):
+        return TensorDictModule(
+            module=self,
+            in_keys=[state_key, transition_key],
+            out_keys=[action_key, Agent.current_embedding, Agent.log_probs],
+        )
