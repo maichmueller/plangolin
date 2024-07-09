@@ -6,12 +6,7 @@ import pymimir as mi
 import torch
 import torch.nn.functional as F
 from tensordict import NestedKey, NonTensorStack
-from tensordict.nn import (
-    TensorDictModule,
-    TensorDictModuleBase,
-    TensorDictSequential,
-    set_skip_existing,
-)
+from tensordict.nn import TensorDictModule, TensorDictModuleBase, TensorDictSequential
 from torch import Tensor
 from torch_geometric.nn.models import MLP
 from torchrl.modules.tensordict_module import ProbabilisticActor, ValueOperator
@@ -107,15 +102,15 @@ class Agent:
         )
 
         # The ProbabilisticActor is the actor of the actor-critic approach.
-        # It takes the embeddings as input, calculates logits for each pair
+        # It takes the embeddings as input, calculates probabilities for each pair
         # (current_embedding,successor_embedding) over all successors and
-        # samples an index based on the logits.
+        # samples an index based on the probability.
         self.prob_actor = ProbabilisticActor(
             module=PolicyPreparationModule(self._embedding_module, self.actor_net),
-            in_keys=["logits"],  # keyword argument for the distribution
+            in_keys=["probs"],  # keyword argument for the distribution
             out_keys=[self._keys.action_idx],
             distribution_class=torch.distributions.Categorical,
-            return_log_prob=True,
+            return_log_prob=False,
         )
 
         # The ValueOperator is the critic of the actor-critic approach.
@@ -143,7 +138,7 @@ class Agent:
         # compute rollouts like environment.rollout(10, agent.policy)
         self.policy = TensorDictSequential(
             self.embedding_td_module,  # compute current embeddings
-            self.prob_actor,  # compute successor-embeddings -> logits -> action_idx
+            self.prob_actor,  # compute successor-embeddings -> probs -> action_idx
             self.action_selector,  # select action with the sampled action_idx
         )
         loss_kwargs = loss_kwargs or {}
@@ -187,13 +182,13 @@ class Agent:
 
 class PolicyPreparationModule(TensorDictModuleBase):
     """
-    This module computes logits given the embeddings of the current states and the
+    This module computes probabilities given the embeddings of the current states and the
     transitions from the current state. This is wrapped inside a TensorDictModule
     inorder to use set_skip_existing and hence avoid teh re-computation of embeddings.
     """
 
     in_keys = [Agent.default_keys.current_embedding, Agent.default_keys.transitions]
-    out_keys = ["logits"]
+    out_keys = ["probs"]
 
     def __init__(self, embedding_module, actor_net, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -215,10 +210,11 @@ class PolicyPreparationModule(TensorDictModuleBase):
         start_indices = start_indices[:-1]
         return long_tensor.tensor_split(start_indices, dim=0)
 
-    @set_skip_existing(True)
     def forward(self, tensordict, *args, tensordict_out=None):
         """
-        Calculate the logits for all pairs (current state, successor state).
+        Calculate the probabilities for all pairs (current state, successor state).
+        Note we can't use skip_existing true because otherwise successive calls to this module
+        during a rollout (one for each time step) will be ignored.
         :param tensordict: tensor dict with the following keys:
             - current_embeddings: embeddings of the current states.
                 Shape batch_size x hidden_size.
@@ -227,7 +223,7 @@ class PolicyPreparationModule(TensorDictModuleBase):
         :param tensordict_out: Optional tensordict to write the outputs to.
             If not provided the outputs will be written to tensordict.
         :return: The tensordict to which the output is written to. It will contain
-            a new entry 'logits', which holds a tensor of shape
+            a new entry 'probs', which holds a tensor of shape
             batch_size x max_number_successors, where the second dimension is the
             greatest number of successors over the entire batch.
 
@@ -253,7 +249,7 @@ class PolicyPreparationModule(TensorDictModuleBase):
         # 3. Compute the softmax over all outputs of 2.
         max_number_successors = max(se.shape[0] for se in successor_embeddings)
 
-        logits_batched: List[torch.Tensor] = []  # batch_size x num_successors
+        probabilities_batched: List[torch.Tensor] = []  # batch_size x num_successors
         for i in range(current_embeddings.shape[0]):  # loop over the batch
             num_successor = successor_embeddings[i].shape[0]
             # Use expand instead of repeat as we only need a view and not a copy
@@ -266,21 +262,22 @@ class PolicyPreparationModule(TensorDictModuleBase):
                 dim=1,
             )
             # flatten to reduce shape = num_successors x 1 to shape = num_successor
-            logits_successors = self.actor_net(pairs).flatten().softmax(dim=0)
-            logits_batched.append(logits_successors)
+            # Here we convert logits to probabilities by normalizing using softmax
+            probs_successors = self.actor_net(pairs).flatten().softmax(dim=0)
+            probabilities_batched.append(probs_successors)
 
-        assert all(t.dim() == 1 for t in logits_batched)
+        assert all(t.dim() == 1 for t in probabilities_batched)
 
         # We need to return a tensor as torch.distributions.Categorical expects a
         # tensor and torchrl just passes the output of this function to Categorical.
         # Therefore, we create a homogenous shape by adding trailing zeros, which will
         # never be sampled by the distribution.
-        paddings = [max_number_successors - t.shape[0] for t in logits_batched]
+        paddings = [max_number_successors - t.shape[0] for t in probabilities_batched]
         # shape = batch_size x max_number_successors
         batch_tensor = torch.stack(
             [
                 F.pad(t, (0, pad), value=0.0)  # add trailing 0s
-                for (pad, t) in zip(paddings, logits_batched)
+                for (pad, t) in zip(paddings, probabilities_batched)
             ]
         )
         if tensordict_out is None:

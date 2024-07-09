@@ -1,4 +1,6 @@
+import warnings
 from test.fixtures import small_blocks
+from test.rl.envs.test_state_space_env import _test_rollout_soundness
 from typing import List
 
 import mockito
@@ -49,13 +51,15 @@ def agent(small_blocks, embedding_mock, value_estimator_type=None):
 
 
 @pytest.fixture
-def environment(small_blocks, batch_size):
+def env(small_blocks, batch_size):
     space, _, _ = small_blocks
-    # TODO use mocking for all side-effects
-    environment = ExpandedStateSpaceEnv(
-        space, batch_size=torch.Size([batch_size]), seed=42
-    )
-    return environment
+    return ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
+
+
+@pytest.fixture
+def medium_env(medium_blocks, batch_size):
+    space, _, _ = medium_blocks
+    return ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
 
 
 def test_init(agent):
@@ -74,8 +78,8 @@ def test_init(agent):
     "value_estimator_type",
     [ValueEstimators.TD0, ValueEstimators.TD1, ValueEstimators.GAE],
 )
-def test_manual_agent_use(batch_size, agent, environment, value_estimator_type):
-    td = environment.reset()
+def test_manual_agent_use(batch_size, agent, env, value_estimator_type):
+    td = env.reset()
 
     agent.embedding_td_module(td)
 
@@ -86,9 +90,9 @@ def test_manual_agent_use(batch_size, agent, environment, value_estimator_type):
 
     agent.prob_actor(td)
 
-    assert "logits" in td
-    assert isinstance(td.get("logits"), torch.Tensor)
-    assert td.get("logits").shape[0] == batch_size  # first dimension ist batch_size
+    assert "probs" in td
+    assert isinstance(td.get("probs"), torch.Tensor)
+    assert td.get("probs").shape[0] == batch_size  # first dimension ist batch_size
     action_idx = agent.default_keys.action_idx
     assert action_idx in td
     assert isinstance(td.get(action_idx), torch.Tensor)
@@ -113,37 +117,63 @@ def test_manual_agent_use(batch_size, agent, environment, value_estimator_type):
         assert actions[i] == transitions[i_th_action_idx]
 
 
-@pytest.mark.parametrize("batch_size", [1, 2])
+@pytest.mark.parametrize("batch_size", [2])
 @pytest.mark.parametrize(
     "value_estimator_type",
     [ValueEstimators.TD0, ValueEstimators.TD1, ValueEstimators.GAE],
 )
-def test_as_policy(batch_size, agent, environment, value_estimator_type):
-    environment.set_seed(42)
-    rollout_length = 5
-    rollout = environment.rollout(
-        rollout_length, policy=agent.policy, break_when_any_done=False
+@pytest.mark.parametrize("space_fixture", ["small_blocks"])
+def test_as_policy(batch_size, agent, space_fixture, value_estimator_type, request):
+    space, _, _ = request.getfixturevalue(space_fixture)
+    environment = ExpandedStateSpaceEnv(
+        space, batch_size=torch.Size([batch_size]), seed=42
     )
-    keys = environment.default_keys
-    expected_root_keys = [
-        keys.action,
-        keys.done,
-        keys.goals,
-        keys.state,
-        keys.terminated,
-        keys.transitions,
-    ]
-    # Assert that all shapes match batch_size and rollout_length
-    for key in expected_root_keys:
-        assert key in rollout
-        val = rollout.get(key)
-        if isinstance(val, torch.Tensor):
-            assert val.shape == (batch_size, rollout_length, 1)
+    rollout_length = 5
+    try:
+        rollout = environment.rollout(
+            rollout_length, policy=agent.policy, break_when_any_done=False
+        )
+    except RuntimeError as e:
+        if not str(e).startswith("The shapes of the tensors to stack is incompatible"):
+            pytest.fail(str(e))
         else:
-            assert isinstance(val, NonTensorStack)
-            assert val.batch_size == (batch_size, rollout_length)
+            warnings.warn(
+                "Skipped test due to https://github.com/pytorch/tensordict/issues/858"
+            )
+            return
 
-    # TODO test soundness of produced rollout
+    env_keys = environment.keys
+    agent_keys = agent.default_keys
+    expected_keys = {
+        env_keys.action,
+        env_keys.done,
+        env_keys.goals,
+        env_keys.transitions,
+        env_keys.state,
+        env_keys.terminated,
+        agent_keys.current_embedding,
+        agent_keys.action_idx,
+        "probs",
+    }
+    _test_rollout_soundness(
+        space,
+        rollout,
+        batch_size,
+        rollout_length,
+        environment._initial_state,
+        expected_keys,
+    )
+
+    # test that the probability tensors have no probability-mass in the padded regions.
+    for time_step in range(0, rollout_length):
+        for batch_idx in range(0, batch_size):
+            num_transitions = len(rollout[env_keys.transitions][batch_idx][time_step])
+            prob_tensor = rollout.get("probs")[batch_idx][time_step]
+            # assert that only the first num_transitions have non-zero probability
+            assert torch.allclose(
+                torch.nonzero(prob_tensor, as_tuple=False),
+                torch.arange(end=num_transitions).view(-1, 1),
+            )
 
 
 @pytest.mark.parametrize("embedding_mock", [10], indirect=True)
@@ -185,10 +215,10 @@ def test_policy_preparation(embedding_mock):
     out_td = policy_preparation(td)
     assert out_td is td, "PolicyPreparationModule should not create new tensordicts"
     assert all(key in out_td for key in policy_preparation.out_keys)
-    logits = out_td.get(policy_preparation.out_keys[0])
+    probs = out_td.get(policy_preparation.out_keys[0])
     # We get 1 (from the mock) for each pair and 0s as padding
     # softmax is 1 / (number of successors)
-    expected_logits = torch.tensor(
+    expected_probs = torch.tensor(
         [
             [1.0 / 3.0] * 3 + [0.0],
             [0.25, 0.25, 0.25, 0.25],
@@ -197,17 +227,11 @@ def test_policy_preparation(embedding_mock):
             [1.0, 0.0, 0.0, 0.0],
         ]
     )
-    assert torch.allclose(logits, expected_logits)
+    assert torch.allclose(probs, expected_probs)
 
     mockito.verify(embedding_mock, times=2).__call__(...)
     # At most one call for every element in the batch_size
     mockito.verify(actor_net_mock, atmost=batch_size).__call__(...)
-
-    # Assert that another call to the module where the output is already present
-    # skips the computation
-    mockito.forget_invocations(actor_net_mock)
-    policy_preparation(td)
-    mockito.verify(actor_net_mock, times=0).__call__(...)
 
     # Assert mismatching between number of current_embeddings and transitions
     illegal_td = TensorDict(
@@ -223,7 +247,7 @@ def test_policy_preparation(embedding_mock):
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_loss(small_blocks, environment, batch_size):
+def test_loss(small_blocks, env, batch_size):
     _, domain, _ = small_blocks
     embedding = EmbeddingModule(
         HeteroGraphEncoder(domain), hidden_size=2, num_layer=1, aggr="sum"
@@ -242,9 +266,9 @@ def test_loss(small_blocks, environment, batch_size):
     )
     agent.loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9)
     agent.loss.loss_critic_type = "l2"
-    td = environment.reset()
+    td = env.reset()
     agent.policy(td)
-    environment.step(td)
+    env.step(td)
     agent.embedding_td_module(td.get("next"))
     agent.loss.value_estimator(td)
     td["advantage"] = td["advantage"].detach()

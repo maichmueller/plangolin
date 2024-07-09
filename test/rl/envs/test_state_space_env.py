@@ -1,4 +1,5 @@
 from test.fixtures import small_blocks
+from typing import Iterable
 
 import pytest
 import torch
@@ -37,34 +38,39 @@ def test_reset(batch_size, small_blocks):
     assert out.sorted_keys == expected_keys
 
 
-@pytest.mark.parametrize("batch_size", [1, 2, 3])
-# for seed=0 a partial reset is necessary because a goal is encountered
-@pytest.mark.parametrize("seed", [0, 42])
-def test_rollout_random(batch_size, small_blocks, seed):
-    space, environment = create_state_space(batch_size, small_blocks, seed)
-    rollout_length = 5
-    rollout = environment.rollout(
-        rollout_length, break_when_any_done=False, auto_reset=True
-    )
-    keys = ExpandedStateSpaceEnv.default_keys
-    assert "next" in rollout.keys()
-    expected_root_keys = [
-        keys.action,
-        keys.done,
-        keys.goals,
-        keys.state,
-        keys.terminated,
-        keys.transitions,
+def _test_rollout_soundness(
+    space,
+    rollout,
+    batch_size,
+    rollout_length,
+    initial_state,
+    expected_keys: Iterable = None,
+):
+
+    expected_root_keys = expected_keys or [
+        ExpandedStateSpaceEnv.default_keys.action,
+        ExpandedStateSpaceEnv.default_keys.done,
+        ExpandedStateSpaceEnv.default_keys.goals,
+        ExpandedStateSpaceEnv.default_keys.state,
+        ExpandedStateSpaceEnv.default_keys.terminated,
+        ExpandedStateSpaceEnv.default_keys.transitions,
     ]
+    assert "next" in rollout.keys()
+    expected_root_keys = sorted(expected_root_keys)
+
+    actual_keys = rollout.sorted_keys
+    actual_keys.remove("next")
+    assert actual_keys == expected_root_keys
+
     for key in expected_root_keys:
-        assert key in rollout
         val = rollout.get(key)
         if isinstance(val, torch.Tensor):
-            assert val.shape == (batch_size, rollout_length, 1)
+            assert val.shape[0] == batch_size and val.shape[1] == rollout_length
         else:
             assert isinstance(val, NonTensorStack)
             assert val.batch_size == (batch_size, rollout_length)
 
+    keys = ExpandedStateSpaceEnv.default_keys
     # Test that the rollout makes sense
     batched_curr_state = rollout[keys.state]
     batched_transitions = rollout[keys.transitions]
@@ -85,15 +91,26 @@ def test_rollout_random(batch_size, small_blocks, seed):
                     rollout["next", keys.state][batch_idx][time_step]
                     == rollout[keys.action][batch_idx][time_step].target
                 )
-                assert (
-                    batched_curr_state[batch_idx][time_step + 1]
-                    == environment._initial_state
-                )
+                assert batched_curr_state[batch_idx][time_step + 1] == initial_state
             else:
                 assert (
                     batched_curr_state[batch_idx][time_step + 1]
                     == rollout[keys.action][batch_idx][time_step].target
                 )
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3])
+# for seed=0 a partial reset is necessary because a goal is encountered
+@pytest.mark.parametrize("seed", [0, 42])
+def test_rollout_random(batch_size, small_blocks, seed):
+    space, environment = create_state_space(batch_size, small_blocks, seed)
+    rollout_length = 5
+    rollout = environment.rollout(
+        rollout_length, break_when_any_done=False, auto_reset=True
+    )
+    _test_rollout_soundness(
+        space, rollout, batch_size, rollout_length, environment._initial_state
+    )
 
 
 @pytest.mark.parametrize("batch_size", [2, 3])
