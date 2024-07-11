@@ -173,14 +173,15 @@ class Agent(torch.nn.Module):
         self,
         state: NonTensorWrapper | List[mi.State],
         transitions: NonTensorWrapper | List[List[mi.Transition]],
+        current_embedding: Optional[torch.Tensor] = None,
     ) -> Tuple[NonTensorStack, torch.Tensor, torch.Tensor]:
 
         transitions = non_tensor_to_list(transitions)
-
-        current_embeddings = self._embedding_module(state)
+        if current_embedding is None:
+            current_embedding = self._embedding_module(state)
         successor_embeddings = self._embed_transitions(transitions)
 
-        batched_probs = self._actor_probs(current_embeddings, successor_embeddings)
+        batched_probs = self._actor_probs(current_embedding, successor_embeddings)
 
         action_indices, log_probs = self._sample_distribution(batched_probs)
 
@@ -188,7 +189,7 @@ class Agent(torch.nn.Module):
 
         return (
             as_non_tensor_stack(actions),
-            current_embeddings,
+            current_embedding,
             log_probs,
         )
 
@@ -197,6 +198,6 @@ class Agent(torch.nn.Module):
     ):
         return TensorDictModule(
             module=self,
-            in_keys=[state_key, transition_key],
+            in_keys=[state_key, transition_key, Agent.current_embedding],
             out_keys=[action_key, Agent.current_embedding, Agent.log_probs],
         )
