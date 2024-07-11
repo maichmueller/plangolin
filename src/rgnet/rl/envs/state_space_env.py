@@ -165,7 +165,7 @@ class ExpandedStateSpaceEnv(EnvBase):
             [self.state_space.is_goal_state(state) for state in next_states],
             dtype=torch.bool,
         )
-        reward = 1 - done.float()
+        reward = -1 + done.float()
 
         return self.create_td(
             {
@@ -181,7 +181,6 @@ class ExpandedStateSpaceEnv(EnvBase):
 
     def _set_seed(self, seed: Optional[int]):
         """Initialize random number generator with given seed.
-        If seed is None a default seed of 42 is used.
         :param seed (Optional[int]): Seed.
         """
         seed = int(torch.empty((), dtype=torch.int64).random_().item())
