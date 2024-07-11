@@ -1,11 +1,15 @@
 import os
+from typing import List
 
+import mockito
 import networkx as nx
 import pymimir as mi
 import pytest
+import torch
 from matplotlib import pyplot as plt
 
 from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
@@ -100,3 +104,17 @@ def hetero_encoded_state(request):
         encoder.encode(state),
         encoder,
     )
+
+
+@pytest.fixture
+def embedding_mock(hidden_size):
+
+    def random_embeddings(states: List | NonTensorWrapper):
+        states = non_tensor_to_list(states)
+        batch_size = len(states)
+        return torch.randn(size=(batch_size, hidden_size), requires_grad=True)
+
+    empty_module = torch.nn.Module()
+    mockito.when(empty_module).forward(...).thenAnswer(random_embeddings)
+    empty_module.hidden_size = hidden_size
+    return empty_module

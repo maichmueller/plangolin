@@ -1,4 +1,4 @@
-from test.fixtures import medium_blocks, small_blocks
+from test.fixtures import embedding_mock, medium_blocks, small_blocks
 from test.rl.envs.test_state_space_env import _test_rollout_soundness
 from typing import List
 
@@ -7,34 +7,12 @@ import pytest
 import torch
 from tensordict import NonTensorData
 
-from rgnet.rl import Agent, EmbeddingModule
+from rgnet.rl import Agent
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 
 
 @pytest.fixture
-def embedding_mock(hidden_size=2):
-
-    def random_embeddings(states: List | NonTensorWrapper):
-        states = non_tensor_to_list(states)
-        batch_size = len(states)
-        return torch.randn(size=(batch_size, hidden_size))
-
-    mock = mockito.mock(
-        {"hidden_size": hidden_size, "__call__": random_embeddings},
-        strict=True,
-        spec=EmbeddingModule,
-    )
-    # some torchrl/tensordict asks for the named modules. Sadly I don't know how to
-    # use the original Module implemented method.
-    mockito.when(mock).named_modules(...).thenReturn([("", mock)])
-    return mock
-
-
-@pytest.fixture
-@pytest.mark.parametrize("embedding_mock", [2], indirect=True)
-def agent(small_blocks, embedding_mock):
-    _, domain, _ = small_blocks
+def agent(embedding_mock):
     return Agent(embedding_mock)
 
 
@@ -50,8 +28,9 @@ def medium_env(medium_blocks, batch_size):
     return ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
 
 
-def test_init(agent):
-    assert agent._hidden_size == 2
+@pytest.mark.parametrize("hidden_size", [3])
+def test_init(agent, hidden_size):
+    assert agent._hidden_size == hidden_size
     assert agent._embedding_module is not None
     assert agent.actor_net is not None
     assert agent.value_operator is not None
@@ -59,6 +38,7 @@ def test_init(agent):
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])
+@pytest.mark.parametrize("hidden_size", [3])
 @pytest.mark.parametrize("space_fixture", ["small_blocks", "medium_blocks"])
 @pytest.mark.parametrize("rollout_length", [5, 20])
 def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
@@ -98,15 +78,14 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
         for batch_idx in range(0, batch_size):
             log_prob_tensor = rollout.get(Agent.log_probs)[batch_idx][time_step]
             assert log_prob_tensor.numel() == 1
+            assert log_prob_tensor.requires_grad
             # log of a probability is in (-infty, 0]
             assert (log_prob_tensor <= 0).all()
 
 
-@pytest.mark.parametrize("embedding_mock", [10], indirect=True)
-def test_policy_preparation(embedding_mock):
+@pytest.mark.parametrize("hidden_size", [3])
+def test_policy_preparation(embedding_mock, hidden_size):
     batch_size = 3  # hardcoded for this test
-
-    hidden_size = embedding_mock.hidden_size
 
     def actor_mock(tensor):
         _batch_size = tensor.shape[0]

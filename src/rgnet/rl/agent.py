@@ -1,5 +1,5 @@
 import itertools
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import pymimir as mi
 import torch
@@ -49,6 +49,7 @@ class Agent(torch.nn.Module):
             distribution_class=torch.distributions.Categorical,
             return_log_prob=True,
             log_prob_key=Agent.log_probs,
+            n_empirical_estimate=0,
         )
 
         self.actor_net = torch.nn.Sequential(
@@ -130,7 +131,7 @@ class Agent(torch.nn.Module):
             sample_indices.append(td[Agent._action_idx_key])
             log_probs.append(td[Agent.log_probs])
 
-        return sample_indices, torch.tensor(log_probs)
+        return sample_indices, torch.stack(log_probs)
 
     def _actor_probs(
         self,
