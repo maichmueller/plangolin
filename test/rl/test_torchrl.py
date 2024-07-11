@@ -9,6 +9,10 @@ from torchrl.envs import EnvBase, step_mdp
 from torchrl.envs.utils import _update_during_reset
 from torchrl.objectives.value import TD0Estimator
 
+from rgnet.rl import torchrl_patches
+
+print(torchrl_patches)
+
 
 def test_step_function():
     """Test whether NonTensorStack entries get correctly moved in step_mdp"""
@@ -170,6 +174,15 @@ def test_non_tensor_data():
     )(td)
 
     assert td["y"] == ["a", "b", "c"]
+
+
+def test_non_tensor_stack_ragged_tensors():
+    t1 = torch.tensor([1, 2, 3], dtype=torch.float)
+    t2 = torch.tensor([1, 2, 3, 4], dtype=torch.float)
+    stack = NonTensorStack(NonTensorData(t1), NonTensorData(t2))
+    assert all(isinstance(t, torch.Tensor) for t in stack.tolist())
+    stack = torch.stack([NonTensorData(t1), NonTensorData(t2)])
+    assert all(isinstance(t, torch.Tensor) for t in stack.tolist())
 
 
 def test_environment_partial_reset():
