@@ -12,7 +12,11 @@ from torch import Tensor
 from torchrl.data import BoundedTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase
 
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.non_tensor_data_utils import (
+    NonTensorWrapper,
+    as_non_tensor_stack,
+    non_tensor_to_list,
+)
 
 
 class ExpandedStateSpaceEnv(EnvBase):
@@ -125,7 +129,12 @@ class ExpandedStateSpaceEnv(EnvBase):
             shape=torch.Size([batch_size[0], 1]),
         )
 
-    def _reset(self, td: Optional[TensorDict], **kwargs) -> TensorDict:
+    def _reset(
+            self,
+            td: Optional[TensorDict],
+            states: List[mi.State] | NonTensorWrapper | None = None,
+            **kwargs,
+    ) -> TensorDict:
         """Reset environment to new random state.
         We do not require inputs through the td and therefore ignore it.
         _reset should not manipulate the tensordict inplace (see EnvBase.reset).
@@ -133,7 +142,16 @@ class ExpandedStateSpaceEnv(EnvBase):
         :returns TensorDict: TensorDict with reset state.
         """
         batch_size = self.batch_size[0]
-        current_states = [self._initial_state] * batch_size
+        if states is not None:
+            states = non_tensor_to_list(states)
+            if len(states) != batch_size:
+                raise ValueError(
+                    f"Provided initial states which did not match the batch_size."
+                    f" Expected {batch_size} but got {len(states)}."
+                )
+            current_states = states
+        else:
+            current_states = [self._initial_state] * batch_size
         initial_transitions = self.get_applicable_transitions(current_states)
         out = self.create_td(
             {
@@ -165,7 +183,7 @@ class ExpandedStateSpaceEnv(EnvBase):
             [self.state_space.is_goal_state(state) for state in next_states],
             dtype=torch.bool,
         )
-        reward = -1 + done.float()
+        reward = torch.full(done.shape, -1.0, device=done.device)
 
         return self.create_td(
             {
@@ -176,6 +194,8 @@ class ExpandedStateSpaceEnv(EnvBase):
                 self.keys.goals: td.get(self.keys.goals),
                 self.keys.reward: reward,
                 self.keys.done: done,
+                self.keys.terminated: done,
+                # issue: https://github.com/pytorch/rl/issues/2291
             }
         )
 
