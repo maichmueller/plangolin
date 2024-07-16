@@ -8,7 +8,8 @@ from torch_geometric.nn import Aggregation
 from torchrl.data import CompositeSpec, UnboundedContinuousTensorSpec
 from torchrl.envs import Transform, TransformedEnv
 
-from rgnet import HeteroGNN, HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
+from rgnet.models import HeteroGNN
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 
@@ -43,9 +44,7 @@ class EmbeddingModule(torch.nn.Module):
             [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
         )
         # TODO send to device?
-        return self.gnn.calculate_embedding(
-            as_batch.x_dict, as_batch.edge_index_dict, as_batch.batch_dict
-        )
+        return self.gnn(as_batch.x_dict, as_batch.edge_index_dict, as_batch.batch_dict)
 
 
 class EmbeddingTransform(Transform):

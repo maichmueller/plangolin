@@ -9,6 +9,7 @@ from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 
 
 class HeteroGNN(torch.nn.Module):
+
     def __init__(
         self,
         hidden_size: int,
@@ -53,7 +54,6 @@ class HeteroGNN(torch.nn.Module):
             dst_name=obj_type_id,
             aggr=aggr,
         )
-        self.readout = HeteroGNN.mlp(hidden_size, 2 * hidden_size, 1)
 
     def encoding_layer(self, x_dict: Dict[str, Tensor]):
         # Resize everything by the hidden_size
@@ -78,7 +78,7 @@ class HeteroGNN(torch.nn.Module):
         obj_emb = self.obj_update(obj_emb)
         x_dict[self.obj_type_id] = obj_emb
 
-    def calculate_embedding(
+    def forward(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[str, Adj],
@@ -102,16 +102,30 @@ class HeteroGNN(torch.nn.Module):
         # Aggregate all object embeddings into one aggregated embedding
         return pyg.nn.global_add_pool(obj_emb, batch)  # shape [hidden, 1]
 
+    @staticmethod
+    def mlp(in_size: int, hidden_size: int, out_size: int):
+        return pyg.nn.MLP([in_size, hidden_size, out_size], norm=None, dropout=0.0)
+
+
+class ValueHeteroGNN(HeteroGNN):
+
+    def __init__(
+            self,
+            hidden_size: int,
+            num_layer: int,
+            aggr: Optional[str | pyg.nn.aggr.Aggregation],
+            obj_type_id: str,
+            arity_dict: Dict[str, int],
+            **kwargs
+    ):
+        super().__init__(hidden_size, num_layer, aggr, obj_type_id, arity_dict)
+        self.readout = HeteroGNN.mlp(hidden_size, 2 * hidden_size, 1)
+
     def forward(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[str, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
     ):
-        aggr = self.calculate_embedding(x_dict, edge_index_dict, batch_dict)
-        # Produce final single scalar of shape [1]
+        aggr = super().forward(x_dict, edge_index_dict, batch_dict)
         return self.readout(aggr).view(-1)
-
-    @staticmethod
-    def mlp(in_size: int, hidden_size: int, out_size: int):
-        return pyg.nn.MLP([in_size, hidden_size, out_size], norm=None, dropout=0.0)

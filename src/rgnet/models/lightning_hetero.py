@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.nn import L1Loss, MSELoss
 from torch.nn.modules.loss import _Loss
 
-from .hetero_gnn import HeteroGNN
+from .hetero_gnn import ValueHeteroGNN
 
 
 class LightningHetero(LightningModule):
@@ -47,7 +47,9 @@ class LightningHetero(LightningModule):
         if aggr == "softmax":  # torch_geometric does not support softmax string
             aggr = pyg.nn.aggr.SoftmaxAggregation()
 
-        self.model = HeteroGNN(hidden_size, num_layer, aggr, obj_type_id, arity_dict)
+        self.model = ValueHeteroGNN(
+            hidden_size, num_layer, aggr, obj_type_id, arity_dict
+        )
         self.save_hyperparameters()
         self.val_loss_by_label: Dict[int, List[Tensor]] = defaultdict(list)
 
