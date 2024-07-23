@@ -22,11 +22,13 @@ class EmbeddingModule(torch.nn.Module):
         hidden_size: int,
         num_layer: int,
         aggr: str | Aggregation | None = None,
+            device: torch.device = torch.device("cpu"),
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
+        self.device = device
         self.gnn = HeteroGNN(
             hidden_size=hidden_size,
             num_layer=num_layer,
@@ -43,7 +45,7 @@ class EmbeddingModule(torch.nn.Module):
         as_batch = Batch.from_data_list(
             [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
         )
-        # TODO send to device?
+        as_batch = as_batch.to(self.device)
         return self.gnn(as_batch.x_dict, as_batch.edge_index_dict, as_batch.batch_dict)
 
 
