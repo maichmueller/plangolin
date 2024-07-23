@@ -56,7 +56,7 @@ class SimpleLoss(LossModule):
         super().__init__()
         self.loss_critic_type: str = loss_critic_type
         self.critic_network: ValueOperator = critic_network
-        self.reduction: str = reduction
+        self.reduction: str = reduction or "mean"
         self.clone_tensordict: bool = clone_tensordict
 
     def forward(self, tensordict: TensorDictBase) -> TensorDict:
@@ -105,16 +105,13 @@ class SimpleLoss(LossModule):
     def _loss_critic(self, tensordict: TensorDictBase) -> torch.Tensor:
         # value_target should have been computed with the advantage in forward
         target_return = tensordict.get(self.tensor_keys.value_target)
-        state_value = tensordict.get(self.tensor_keys.value, None)
-        if state_value is None or not state_value.requires_grad:
-            # The ValueEstimator might have detached values
-            # TODO get the value estimator to pass through gradients for the value_net in order to avoid second call
-            tensordict_select = tensordict.select(
-                *self.critic_network.in_keys, strict=False
-            )
-            state_value = self.critic_network(tensordict_select).get(
-                self.tensor_keys.value
-            )
+        # We have to always recompute as the ValueEstimator might use a copy of the actual parameter
+        # which means the result might still have gradients (just for non-nonsensical parameter)
+        # TODO get the value estimator to pass through gradients for the value_net in order to avoid second call
+        tensordict_select = tensordict.select(
+            *self.critic_network.in_keys, strict=False
+        )
+        state_value = self.critic_network(tensordict_select).get(self.tensor_keys.value)
 
         return distance_loss(
             target_return,

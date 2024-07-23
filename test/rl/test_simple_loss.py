@@ -1,5 +1,6 @@
 import copy
 import itertools
+from test.fixtures import embedding_mock, small_blocks
 
 import mockito
 import pytest
@@ -8,10 +9,14 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 from torch import nn
 from torch.distributions import Categorical
+from torchrl.envs import TransformedEnv
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet.rl import SimpleLoss
+from rgnet import HeteroGraphEncoder
+from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
+from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 
 
 @pytest.fixture
@@ -133,3 +138,61 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
     optim.step()
 
     assert not all(param.grad is None for param in critic_mock.parameters())
+
+
+@pytest.mark.parametrize("hidden_size", [5])
+@pytest.mark.parametrize("batch_size", [1, 2])
+@pytest.mark.parametrize("embedding_mode", ["embedding_mock", "gnn"])
+def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, request):
+    space, domain, _ = small_blocks
+    uses_gnn = embedding_mode == "gnn"
+    embedding = (
+        EmbeddingModule(HeteroGraphEncoder(domain), hidden_size, 1, "sum")
+        if uses_gnn
+        else request.getfixturevalue(embedding_mode)
+    )
+    base_env = ExpandedStateSpaceEnv(
+        space, batch_size=torch.Size((batch_size,)), seed=42
+    )
+    env = NonTensorTransformedEnv(
+        env=base_env,
+        transform=EmbeddingTransform(
+            current_embedding_key=Agent.current_embedding,
+            env=base_env,
+            embedding_module=embedding,
+        ),
+        cache_specs=True,
+    )
+
+    agent = Agent(embedding)
+    agent_policy = agent.as_td_module(
+        env.keys.state, env.keys.transitions, env.keys.action
+    )
+    rollout = env.rollout(1, policy=agent_policy, break_when_any_done=False)
+
+    loss = SimpleLoss(agent.value_operator)
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9)
+
+    optim = torch.optim.SGD(agent.parameters())
+
+    loss_out: TensorDict = loss(rollout)
+
+    assert loss_out.batch_size == torch.Size([])
+    assert loss_out.sorted_keys == ["loss_actor", "loss_critic"]
+    loss_actor = loss_out["loss_actor"]
+    loss_critic = loss_out["loss_critic"]
+
+    assert loss_actor.requires_grad
+    assert loss_critic.requires_grad
+
+    optim.zero_grad()
+    assert all(param.grad is None for param in agent.value_operator.parameters())
+    assert all(param.grad is None for param in agent.actor_net.parameters())
+    if uses_gnn:
+        assert all(param.grad is None for param in embedding.gnn.parameters())
+    (loss_actor + loss_critic).backward()
+
+    assert not all(param.grad is None for param in agent.value_operator.parameters())
+    assert not all(param.grad is None for param in agent.actor_net.parameters())
+    if uses_gnn:
+        assert not all(param.grad is None for param in embedding.gnn.parameters())
