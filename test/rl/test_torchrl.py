@@ -1,12 +1,20 @@
-from typing import Optional
+from typing import Optional, Tuple
 
+import mockito
 import pytest
 import torch
 from tensordict import NonTensorData, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
 from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
-from torchrl.envs import EnvBase, step_mdp
+from torchrl.envs import EnvBase, GymEnv, step_mdp
 from torchrl.envs.utils import _update_during_reset
+from torchrl.modules import (
+    ActorValueOperator,
+    ProbabilisticActor,
+    SafeModule,
+    ValueOperator,
+)
+from torchrl.objectives import A2CLoss, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 
 from rgnet.rl import torchrl_patches
@@ -267,3 +275,82 @@ def test_environment_partial_reset():
 
     assert td[next_observation] == ["B", "Z"]  # the result of _step
     assert reset_td[observation] == ["A", "Z"]  # first entry is reset
+
+
+@pytest.fixture
+def actor_critic_operator() -> (
+        Tuple[
+            EnvBase, ActorValueOperator, torch.nn.Module, torch.nn.Module, torch.nn.Module
+        ]
+):
+    env = GymEnv("CartPole-v1", device="cpu")
+    module_hidden = torch.nn.Linear(4, 4)
+    mockito.spy2(module_hidden.forward)
+    td_module_hidden = SafeModule(
+        module=module_hidden,
+        in_keys=["observation"],
+        out_keys=["hidden"],
+    )
+    module_action = torch.nn.Linear(4, 2)
+    mockito.spy2(module_action.forward)
+    td_module_action = TensorDictModule(
+        module_action, in_keys=["hidden"], out_keys=["logits"]
+    )
+    probabilistic_actor = ProbabilisticActor(
+        module=td_module_action,
+        in_keys=["logits"],
+        out_keys=["action"],
+        distribution_class=torch.distributions.OneHotCategorical,
+        return_log_prob=True,
+    )
+    module_value = torch.nn.Linear(in_features=4, out_features=1)
+    mockito.spy2(module_value.forward)
+    td_module_value = ValueOperator(
+        module=module_value,
+        in_keys=["hidden"],
+        out_keys=["state_value"],
+    )
+    td_module: ActorValueOperator = ActorValueOperator(
+        td_module_hidden, probabilistic_actor, td_module_value
+    )
+    return env, td_module, module_hidden, module_value, module_action
+
+
+@pytest.mark.skip
+def test_actor_critic_operator_manual(actor_critic_operator):
+    """Test the manual usage. actor(td) then critic(td) should call embedding just once."""
+    env, td_module, module_hidden, module_value, module_action = actor_critic_operator
+    td = env.reset()
+    td_module.get_policy_operator()(td)
+    assert "hidden" in td
+    mockito.verify(module_action, times=1).forward(...)
+    mockito.verify(module_hidden, times=1).forward(...)
+    mockito.verify(module_value, times=0).forward(...)
+    mockito.forget_invocations(module_action, module_hidden, module_value)
+
+    td_module.get_value_operator()(td)
+    mockito.verify(module_hidden, times=0).forward(...)
+    mockito.verify(module_value, times=1).forward(...)
+
+
+@pytest.mark.skip
+def test_actor_critic_rollout(actor_critic_operator):
+    """Test usage with rollout and loss. Using the actor as rollout-policy and then
+    the critic as value estimator should call the embedding also just once."""
+    env, td_module, module_hidden, module_value, module_action = actor_critic_operator
+    rollout_length = 3
+    td = env.rollout(max_steps=rollout_length, policy=td_module.get_policy_operator())
+    loss = A2CLoss(
+        td_module.get_policy_operator(),
+        td_module.get_value_operator(),
+        functional=False,
+    )
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9, shifted=True)
+    loss(td)
+    # Actor should be called once for every rollout step.
+    mockito.verify(module_action, times=rollout_length).forward(...)
+    # Critic can be called on the whole rollout batch (make sure that shifted=True.
+    mockito.verify(module_value, times=1).forward(...)
+    # Embedding should be called only once as there are no weights updated
+    # inbetween actor and critic call.
+    mockito.verify(module_hidden, times=rollout_length).forward(...)
