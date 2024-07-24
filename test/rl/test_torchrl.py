@@ -279,9 +279,9 @@ def test_environment_partial_reset():
 
 @pytest.fixture
 def actor_critic_operator() -> (
-        Tuple[
-            EnvBase, ActorValueOperator, torch.nn.Module, torch.nn.Module, torch.nn.Module
-        ]
+    Tuple[
+        EnvBase, ActorValueOperator, torch.nn.Module, torch.nn.Module, torch.nn.Module
+    ]
 ):
     env = GymEnv("CartPole-v1", device="cpu")
     module_hidden = torch.nn.Linear(4, 4)

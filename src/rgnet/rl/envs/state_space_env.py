@@ -130,10 +130,10 @@ class ExpandedStateSpaceEnv(EnvBase):
         )
 
     def _reset(
-            self,
-            td: Optional[TensorDict],
-            states: List[mi.State] | NonTensorWrapper | None = None,
-            **kwargs,
+        self,
+        td: Optional[TensorDict],
+        states: List[mi.State] | NonTensorWrapper | None = None,
+        **kwargs,
     ) -> TensorDict:
         """Reset environment to new random state.
         We do not require inputs through the td and therefore ignore it.

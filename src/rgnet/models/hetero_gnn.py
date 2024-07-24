@@ -110,13 +110,13 @@ class HeteroGNN(torch.nn.Module):
 class ValueHeteroGNN(HeteroGNN):
 
     def __init__(
-            self,
-            hidden_size: int,
-            num_layer: int,
-            aggr: Optional[str | pyg.nn.aggr.Aggregation],
-            obj_type_id: str,
-            arity_dict: Dict[str, int],
-            **kwargs
+        self,
+        hidden_size: int,
+        num_layer: int,
+        aggr: Optional[str | pyg.nn.aggr.Aggregation],
+        obj_type_id: str,
+        arity_dict: Dict[str, int],
+        **kwargs
     ):
         super().__init__(hidden_size, num_layer, aggr, obj_type_id, arity_dict)
         self.readout = HeteroGNN.mlp(hidden_size, 2 * hidden_size, 1)

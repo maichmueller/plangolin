@@ -22,7 +22,7 @@ class EmbeddingModule(torch.nn.Module):
         hidden_size: int,
         num_layer: int,
         aggr: str | Aggregation | None = None,
-            device: torch.device = torch.device("cpu"),
+        device: torch.device = torch.device("cpu"),
         *args,
         **kwargs,
     ):
