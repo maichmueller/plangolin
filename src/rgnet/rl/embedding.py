@@ -105,7 +105,9 @@ class EmbeddingTransform(Transform):
         embedding_shape: List[int] = list(observation_spec.shape)
         embedding_shape.append(self.embedding_module.hidden_size)
         new_observation_spec[self.current_embedding_key] = (
-            UnboundedContinuousTensorSpec(shape=torch.Size(embedding_shape))
+            UnboundedContinuousTensorSpec(
+                shape=torch.Size(embedding_shape), device=self.embedding_module.device
+            )
         )
         return new_observation_spec
 

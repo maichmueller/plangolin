@@ -17,6 +17,28 @@ from rgnet.rl.non_tensor_data_utils import (
 )
 
 
+def embed_transition_targets(
+    batched_transitions: List[List[mi.Transition]], embedding_module: EmbeddingModule
+) -> Tuple[Tensor, ...]:
+    """
+    Calculate embeddings for the targets for each transition. This will only
+    trigger one call to the embedding module by flattening the batch beforehand.
+    :param batched_transitions: We expect the transitions to be batched as a list.
+    :return: the embedded targets of shape [batch_size x num_successors]
+    """
+    flattened = list(
+        itertools.chain.from_iterable(
+            [t.target for t in transitions] for transitions in batched_transitions
+        )
+    )
+    long_tensor: torch.Tensor = embedding_module(flattened)
+    start_indices = list(itertools.accumulate(map(len, batched_transitions)))
+    # tensor_split will split at every index -> we need to remove last index,
+    # which is the length of the tensor
+    start_indices = start_indices[:-1]
+    return long_tensor.tensor_split(start_indices, dim=0)
+
+
 class Agent(torch.nn.Module):
 
     # Keys used for the output
@@ -79,38 +101,18 @@ class Agent(torch.nn.Module):
             out_keys=[Agent.state_value],
         )
 
-    def _embed_transitions(
-        self, batched_transitions: List[List[mi.Transition]]
-    ) -> Tuple[Tensor, ...]:
-        """
-        Calculate embeddings for the targets for each transition. This will only
-        trigger one call to the embedding module by flattening the batch beforehand.
-        :param batched_transitions: We expect the transitions to be batched as a list.
-        :return: the embedded targets of shape [batch_size x num_successors]
-        """
-        flattened = list(
-            itertools.chain.from_iterable(
-                [t.target for t in transitions] for transitions in batched_transitions
-            )
-        )
-        long_tensor: torch.Tensor = self._embedding_module(flattened)
-        start_indices = list(itertools.accumulate(map(len, batched_transitions)))
-        # tensor_split will split at every index -> we need to remove last index,
-        # which is the length of the tensor
-        start_indices = start_indices[:-1]
-        return long_tensor.tensor_split(start_indices, dim=0)
-
     @staticmethod
     def _select_action(
-        action_idx: List[int | torch.Tensor], transitions: List[List[mi.Transition]]
+        action_idx: torch.Tensor, transitions: List[List[mi.Transition]]
     ) -> List[mi.Transition]:
 
         assert len(transitions) == len(action_idx)
-        return [t[idx] for t, idx in zip(transitions, action_idx)]
+        # NOTE with .tolist() we assume that the transitions are on the CPU
+        return [t[idx] for t, idx in zip(transitions, action_idx.tolist())]
 
     def _sample_distribution(
         self, batched_probs: List[torch.Tensor]
-    ) -> Tuple[List[int | torch.Tensor], torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward the normalized probabilities to the ProbabilisticTensorDictModule.
         This would normally be done inside the ProbabilisticActor, however as  we have
@@ -123,7 +125,7 @@ class Agent(torch.nn.Module):
         """
 
         # td[Agent._action_idx_key] will actually be a one-element tensor
-        sample_indices: List[int | torch.Tensor] = []
+        sample_indices: List[torch.Tensor] = []
         log_probs: List[torch.Tensor] = []
         for probs in batched_probs:
             td = TensorDict({Agent._probs_key: probs})
@@ -131,7 +133,7 @@ class Agent(torch.nn.Module):
             sample_indices.append(td[Agent._action_idx_key])
             log_probs.append(td[Agent.log_probs])
 
-        return sample_indices, torch.stack(log_probs)
+        return torch.stack(sample_indices), torch.stack(log_probs)
 
     def _actor_probs(
         self,
@@ -179,8 +181,9 @@ class Agent(torch.nn.Module):
         transitions = non_tensor_to_list(transitions)
         if current_embedding is None:
             current_embedding = self._embedding_module(state)
-        successor_embeddings = self._embed_transitions(transitions)
-
+        successor_embeddings = embed_transition_targets(
+            transitions, self._embedding_module
+        )
         batched_probs = self._actor_probs(current_embedding, successor_embeddings)
 
         action_indices, log_probs = self._sample_distribution(batched_probs)

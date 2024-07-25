@@ -115,6 +115,7 @@ def embedding_mock(hidden_size):
         return torch.randn(size=(batch_size, hidden_size), requires_grad=True)
 
     empty_module = torch.nn.Module()
+    empty_module.device = torch.device("cpu")
     mockito.when(empty_module).forward(...).thenAnswer(random_embeddings)
     empty_module.hidden_size = hidden_size
     return empty_module
