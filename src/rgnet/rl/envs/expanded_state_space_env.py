@@ -1,3 +1,4 @@
+import abc
 from typing import List, Optional, Tuple
 
 import pymimir as mi
@@ -6,15 +7,35 @@ import torch
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
+class ResetStrategy(metaclass=abc.ABCMeta):
+
+    @abc.abstractmethod
+    def __call__(self, space: mi.StateSpace) -> mi.State:
+        pass
+
+
+class InitialStateReset(ResetStrategy):
+
+    def __call__(self, space: mi.StateSpace):
+        return space.get_initial_state()
+
+
+class UniformRandomReset(ResetStrategy):
+    def __call__(self, space: mi.StateSpace):
+        return space.sample_state()
+
+
 class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
 
     def __init__(
         self,
         spaces: List[mi.StateSpace],
-        batch_size: torch.Size,
+        reset_strategy: ResetStrategy = InitialStateReset(),
+        batch_size: torch.Size = torch.Size((1,)),
         seed: Optional[int] = None,
         device: str = "cpu",
     ):
+        self.reset_strategy = reset_strategy
         super().__init__(
             all_instances=spaces, batch_size=batch_size, seed=seed, device=device
         )
@@ -28,7 +49,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
         self, active_instances: mi.StateSpace
     ) -> Tuple[mi.State, List[mi.Literal]]:
         return (
-            active_instances.get_initial_state(),
+            self.reset_strategy(active_instances),
             active_instances.problem.goal,
         )
 
@@ -45,7 +66,7 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
     def __init__(
         self,
         space: mi.StateSpace,
-        batch_size: torch.Size = torch.Size((1,)),
+        batch_size: torch.Size,
         **kwargs,
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
