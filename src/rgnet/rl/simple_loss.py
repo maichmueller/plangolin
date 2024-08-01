@@ -18,7 +18,7 @@ class SimpleLoss(LossModule):
 
     default_value_estimator: ValueEstimators = ValueEstimators.TD0
 
-    @dataclass
+    @dataclass(frozen=True)
     class _AcceptedKeys:
         advantage: NestedKey = "advantage"
         value_target: NestedKey = "value_target"
@@ -36,6 +36,7 @@ class SimpleLoss(LossModule):
         reduction: Optional[str] = None,
         loss_critic_type: str = "l2",
         clone_tensordict: bool = True,
+        keys: _AcceptedKeys = default_keys,
     ):
         """
         SimpleLoss is nearly identical to a simplified version of ReinforceLoss.
@@ -58,6 +59,7 @@ class SimpleLoss(LossModule):
         self.critic_network: ValueOperator = critic_network
         self.reduction: str = reduction or "mean"
         self.clone_tensordict: bool = clone_tensordict
+        self._tensor_keys = keys
 
     def forward(self, tensordict: TensorDictBase) -> TensorDict:
         """

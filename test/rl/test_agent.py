@@ -9,6 +9,7 @@ from tensordict import NonTensorData
 
 from rgnet.rl import Agent
 from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 
 
 @pytest.fixture
@@ -62,7 +63,8 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
         env_keys.transitions,
         env_keys.state,
         env_keys.terminated,
-        Agent.log_probs,
+        agent.keys.log_probs,
+        "probs",
     }
     _test_rollout_soundness(
         space,
@@ -76,11 +78,20 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
     # test that the probability tensors have no probability-mass in the padded regions.
     for time_step in range(0, rollout_length):
         for batch_idx in range(0, batch_size):
-            log_prob_tensor = rollout.get(Agent.log_probs)[batch_idx][time_step]
+            log_prob_tensor = rollout.get(agent.keys.log_probs)[batch_idx][time_step]
             assert log_prob_tensor.numel() == 1
             assert log_prob_tensor.requires_grad
             # log of a probability is in (-infty, 0]
             assert (log_prob_tensor <= 0).all()
+
+            probs = non_tensor_to_list(rollout.get("probs")[batch_idx][time_step])
+            # assert that all values are between 0 and 1
+            assert torch.all(probs >= 0.0)
+            assert torch.all(probs <= 1.0)
+            # assert that there are as many probs as transitions
+            assert probs.numel() == len(
+                rollout[env_keys.transitions][batch_idx][time_step]
+            )
 
 
 @pytest.mark.parametrize("hidden_size", [3])
