@@ -57,7 +57,7 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
     env_keys = environment.keys
     expected_keys = {
         env_keys.action,
-        agent.current_embedding,
+        agent.keys.current_embedding,
         env_keys.done,
         env_keys.goals,
         env_keys.transitions,

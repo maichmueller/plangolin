@@ -9,6 +9,9 @@ import torch
 from matplotlib import pyplot as plt
 
 from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from rgnet.rl import Agent
+from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 
 
@@ -119,3 +122,24 @@ def embedding_mock(hidden_size):
     mockito.when(empty_module).forward(...).thenAnswer(random_embeddings)
     empty_module.hidden_size = hidden_size
     return empty_module
+
+
+@pytest.fixture
+def transformed_env(request, blocks=None, embedding=None, batch_size=None):
+    if blocks is None or embedding is None or batch_size is None:
+        blocks_name, embedding_name, batch_size = request.param
+        blocks = request.getfixturevalue(blocks_name)
+        embedding = request.getfixturevalue(embedding_name)
+
+    space, domain, _ = blocks
+    base_env = ExpandedStateSpaceEnv(
+        space, batch_size=torch.Size((batch_size,)), seed=42
+    )
+    return NonTensorTransformedEnv(
+        env=base_env,
+        transform=EmbeddingTransform(
+            current_embedding_key=Agent.default_keys.current_embedding,
+            env=base_env,
+            embedding_module=embedding,
+        ),
+    )

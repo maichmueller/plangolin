@@ -1,3 +1,4 @@
+from test.fixtures import embedding_mock, small_blocks, transformed_env
 from typing import Optional, Tuple
 
 import mockito
@@ -7,7 +8,7 @@ from tensordict import NonTensorData, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
 from torchrl.data import BinaryDiscreteTensorSpec, CompositeSpec, NonTensorSpec
 from torchrl.envs import EnvBase, GymEnv, step_mdp
-from torchrl.envs.utils import _update_during_reset
+from torchrl.envs.utils import ExplorationType, _update_during_reset
 from torchrl.modules import (
     ActorValueOperator,
     ProbabilisticActor,
@@ -16,8 +17,17 @@ from torchrl.modules import (
 )
 from torchrl.objectives import A2CLoss, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
+from torchrl.trainers import Trainer
 
-from rgnet.rl import torchrl_patches
+from rgnet.rl import (
+    Agent,
+    EmbeddingModule,
+    RolloutCollector,
+    SimpleLoss,
+    torchrl_patches,
+)
+from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 
 print(torchrl_patches)
 
@@ -275,6 +285,82 @@ def test_environment_partial_reset():
 
     assert td[next_observation] == ["B", "Z"]  # the result of _step
     assert reset_td[observation] == ["A", "Z"]  # first entry is reset
+
+
+@pytest.mark.parametrize("total_iterations", [20])
+@pytest.mark.parametrize("hidden_size", [8])
+@pytest.mark.parametrize("rollout_length", [1, 2])
+@pytest.mark.parametrize(
+    "transformed_env", [["small_blocks", "embedding_mock", 2]], indirect=True
+)
+def test_trainer(
+    transformed_env: NonTensorTransformedEnv,
+    total_iterations,
+    hidden_size,
+    rollout_length,
+):
+    """
+    Test the torchrl.trainers.Trainer with the full pipeline in respect to calls and usage
+    of the individual components.
+    """
+    env = transformed_env
+    embedding_mock: EmbeddingModule = env.transform.embedding_module
+    env_keys = ExpandedStateSpaceEnv.default_keys
+
+    agent = Agent(embedding_mock)
+    policy = agent.as_td_module(env_keys.state, env_keys.transitions, env_keys.action)
+    loss = SimpleLoss(agent.value_operator)
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9, shifted=True)
+    optim = torch.optim.Adam(agent.parameters(), lr=1e-3)
+
+    mockito.spy2(env._reset)
+    mockito.spy2(env._step)
+    mockito.spy2(loss.forward)
+    mockito.spy2(optim.step)
+    mockito.spy2(policy.forward)
+    mockito.spy2(agent.value_operator.forward)
+
+    data_loader = RolloutCollector(
+        env,
+        policy,
+        rollout_length=rollout_length,
+        exploration_type=ExplorationType.RANDOM,
+    )
+
+    # The trainer counts every step times the batch_size as collected frames.
+    total_frames = total_iterations * env.batch_size[0] * rollout_length
+    trainer = Trainer(
+        collector=data_loader,
+        total_frames=total_frames,
+        loss_module=loss,
+        optimizer=optim,
+        optim_steps_per_batch=1,
+        frame_skip=1,  # 1 will not skip anything
+        progress_bar=False,
+    )
+    trainer.train()
+
+    # We reset the environment before each rollout
+    mockito.verify(env, times=total_iterations)._reset(...)
+    # We step the environment for each rollout step
+    mockito.verify(env, times=total_iterations * rollout_length)._step(...)
+
+    # We want one loss calculation per step (optim_steps_per_batch=1)
+    # Independent of the batch_size and rollout-length
+    mockito.verify(loss, times=total_iterations).forward(...)
+    mockito.verify(optim, times=total_iterations).step(...)
+
+    # policy should be called once for each step (independent of batch_size)
+    mockito.verify(policy, times=total_iterations * rollout_length).forward(...)
+
+    # We use TD0 and shifted=True therefore the value_operator is called once on the whole rollout.
+    # TODO as value-estimator detaches gradients we have to compute it twice
+    mockito.verify(agent.value_operator, times=total_iterations * 2).forward(...)
+
+    # embeddings gets called by _reset, _step and by the agent (for successor-state embeddings)
+    mockito.verify(
+        embedding_mock, times=total_iterations + (total_iterations * rollout_length) * 2
+    ).forward(...)
 
 
 @pytest.fixture
