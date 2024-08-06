@@ -55,7 +55,10 @@ class Agent(torch.nn.Module):
     default_keys = AcceptedKeys()
 
     def __init__(
-        self, embedding_module: EmbeddingModule, keys: AcceptedKeys = default_keys
+        self,
+        embedding_module: EmbeddingModule,
+        value_net: torch.nn.Module | None = None,
+        keys: AcceptedKeys = default_keys,
     ):
         """
         The Agent class creates all components necessary for an actor-critic policy.
@@ -86,7 +89,7 @@ class Agent(torch.nn.Module):
         self.actor_net = torch.nn.Sequential(
             # Input: embeddings of current state and next state, Output: 2 + hidden size
             MLP(
-                channel_list=[2 * self._hidden_size] * 3,  # all three layer are same
+                channel_list=[2 * self._hidden_size] * 2,  # all three layer are same
                 norm=None,
                 dropout=0.0,
             ),
@@ -100,12 +103,14 @@ class Agent(torch.nn.Module):
 
         # The ValueOperator is the critic of the actor-critic approach.
         # provided with the embeddings of the current state it estimates the value.
-        self.value_operator = ValueOperator(
-            module=MLP(
+        if value_net is None:
+            value_net = MLP(
                 channel_list=[self._hidden_size, self._hidden_size, 1],
                 norm=None,
                 dropout=0.0,
-            ),
+            )
+        self.value_operator = ValueOperator(
+            module=value_net,
             in_keys=[self._keys.current_embedding],
             out_keys=[self._keys.state_value],
         )
