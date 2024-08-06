@@ -127,8 +127,9 @@ class FanInMP(HeteroRouting):
         self,
         hidden_size: int,
         dst_name: str,
-        aggr: Optional[Union[str, Aggregation]] = "sum",
+        aggr: Optional[Union[str, Aggregation]] = None,
     ) -> None:
+        aggr = aggr or "sum"
         super().__init__(aggr)
         self.select = SelectMP(hidden_size)
         self.dst_name = dst_name
