@@ -4,7 +4,7 @@ import logging
 import pathlib
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, List, Optional
 
 import mockito
 import pymimir as mi
@@ -17,19 +17,21 @@ from torch_geometric.nn import MLP
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
+from torchrl.trainers import Trainer
 
 from rgnet import HeteroGraphEncoder
 from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
-from rgnet.rl.early_stopping_trainer_hook import (
-    ConsecutiveStopping,
-    ValueFunctionConverged,
-)
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.epsilon_greedy import EGreedyAgent
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
+from rgnet.rl.trainer_hooks import (
+    ConsecutiveStopping,
+    LoggingHook,
+    ValueFunctionConverged,
+)
 from rgnet.utils import get_device_cuda_if_possible
 
 
@@ -116,12 +118,11 @@ def mlp_net(hidden_size: int):
     )
 
 
-def print_num_parameter(opimizer):
-    print(
-        "Training ",
-        sum(p.numel() for p in opimizer.param_groups[0]["params"] if p.requires_grad),
-        " parameter",
+def log_num_parameter(optimizer: torch.optim.Optimizer):
+    num_params = sum(
+        p.numel() for p in optimizer.param_groups[0]["params"] if p.requires_grad
     )
+    logging.info(f"Training {num_params} parameter.")
 
 
 def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=0.1):
@@ -132,8 +133,11 @@ def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=
     eval_td = env.reset(states=non_goal_states)
     optimal_values = calc_optimal_values(non_goal_states, space, gamma)
     predicted_values = value_op(eval_td).get(Agent.default_keys.state_value).squeeze(-1)
-    print(f"{torch.nn.functional.l1_loss(optimal_values, predicted_values)=}")
-    print(f"{torch.allclose(optimal_values, predicted_values, atol=atol)=}")
+    logging.info(
+        "--------------------------------Validation--------------------------------"
+    )
+    logging.info(f"{torch.nn.functional.l1_loss(optimal_values, predicted_values)=}")
+    logging.info(f"{torch.allclose(optimal_values, predicted_values, atol=atol)=}")
 
     if policy is None:
         return
@@ -148,7 +152,7 @@ def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=
     matching_successors = sum(
         chosen_successors[i] == best_successors[i] for i in range(len(best_successors))
     )
-    print(
+    logging.info(
         f"Policy chose {matching_successors} out of {len(best_successors)} optimal successors"
     )
 
@@ -156,7 +160,7 @@ def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=
 def with_profiler(function, use_gpu=True):
     with torch.profiler.profile(use_cuda=use_gpu, profile_memory=True) as prof:
         function()
-    print(prof.key_averages())
+    logging.info(prof.key_averages())
 
 
 def one_hot_embedding(states, hidden_size: Optional[int] = None, device=None):
@@ -240,7 +244,7 @@ def default_minimal_num_layer(problem_name):
 
 def build_env(space, batch_size, embedding):
     states = space.get_states()
-    print(f"{len(states)=}")
+    logging.info(f"{len(states)=}")
     num_states = len(states)
     non_goal_states = [s for s in states if not space.is_goal_state(s)]
     batch_size = batch_size or (num_states - 1)
@@ -256,7 +260,7 @@ def resolve_algorithm(
     policy: TensorDictModule | None
     loss: LossModule
     value_op: ValueOperator
-    optim_parameter: Iterator[torch.nn.Parameter]
+    optim_parameter: Iterator[torch.nn.Parameter] | List[dict[str, Any]]
 
     value_net = (
         mlp_net(embedding.hidden_size)
@@ -275,15 +279,29 @@ def resolve_algorithm(
         loss = SimpleLoss(agent.value_operator)
         loss.make_value_estimator(ValueEstimators.TD0, gamma=parser_args.gamma)
         # includes policy, value_net and embeddings
-        optim_parameter = agent.parameters()
+        # use different learning rates for the policy and the value net
+        if parser_args.separate_actor_loss:
+            optim_parameter = [
+                {
+                    "params": agent.actor_net.parameters(),
+                    "lr": parser_args.separate_actor_loss,
+                },
+                {"params": agent.value_operator.parameters()},
+            ]
+            if (emb_params := getattr(embedding, "parameters", None)) is not None:
+                optim_parameter.append({"params": emb_params()})
+        else:
+            optim_parameter = agent.parameters()
 
     elif parser_args.algorithm == "egreedy":
         eagent = EGreedyAgent(
             value_net=value_net,
             embedding=embedding,
-            eps_init=0.5,
-            eps_end=0.0,
-            annealing_num_steps=int(args.iterations * 0.8),
+            eps_init=parser_args.egreedy_epsilon_init,
+            eps_end=parser_args.egreedy_epsilon_end,
+            annealing_num_steps=int(
+                args.iterations * args.egreedy_epsilon_annealing_fraction
+            ),
         )
         policy = eagent.as_td_module(
             ExpandedStateSpaceEnv.default_keys.transitions,
@@ -371,7 +389,7 @@ def run(
     trainer_file = out_dir / "trainer.pt"
     values_file = out_dir / "values.pt"
 
-    print_num_parameter(opimizer=optimizer)
+    log_num_parameter(optimizer=optimizer)
 
     def all_non_goal_states_reset(curr_env):
         return curr_env.reset(states=non_goal_states)
@@ -394,12 +412,13 @@ def run(
     optimal_values = calc_optimal_values(
         states=non_goal_states, space=space, gamma=gamma, device=torch.device("cpu")
     )
+    optimal_values_lookup = {s: v for s, v in zip(non_goal_states, optimal_values)}
     stopping_hook = ConsecutiveStopping(
         5,
         ValueFunctionConverged(
             value_operator=value_operator,
             reset_func=lambda: all_non_goal_states_reset(curr_env=env),
-            optimal_values=optimal_values,
+            optimal_values_lookup=optimal_values_lookup,
             atol=atol,
         ),
     )
@@ -408,8 +427,7 @@ def run(
 
     logging.info("Saving values under %s", values_file.absolute())
     values = torch.stack(stopping_hook.stopping_module.state_value_history)
-    differences = optimal_values - values
-    torch.save(differences, values_file)
+    torch.save(values, values_file)
 
     validate(policy, value_operator, env, space, gamma, env.keys)
 
@@ -432,6 +450,39 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--algorithm", choices=["ac", "egreedy", "supervised"], default="ac"
+    )
+    parser.add_argument(
+        "--separate_actor_loss",
+        type=float,
+        required=False,
+        help="Only applies if algorithm =ac (Actor Critic)."
+        "If set the parameters of the actor_net will be updated with a different"
+        "learning rate then the general learning rate (--lr).",
+    )
+    parser.add_argument(
+        "--egreedy_epsilon_init",
+        type=float,
+        required=False,
+        default=0.5,
+        help="Only applies for algorithm = egreedy. "
+        "Initial epsilon value (default: 0.5)",
+    )
+    parser.add_argument(
+        "--egreedy_epsilon_end",
+        type=float,
+        required=False,
+        default=0.001,
+        help="Only applies for algorithm = egreedy. "
+        "Final epsilon value at the end of annealing (default: 0.001).",
+    )
+    parser.add_argument(
+        "--egreedy_epsilon_annealing_fraction",
+        type=float,
+        required=False,
+        default=0.8,
+        help="Only applies for algorithm = egreedy. "
+        "The fraction of iterations over which the epsilon value is annealed "
+        "(default: 0.8).",
     )
     parser.add_argument(
         "--gamma",
