@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, List, Optional
 
-import mockito
 import pymimir as mi
 import torch
 import torchrl
@@ -423,11 +422,33 @@ def run(
         ),
     )
     stopping_hook.register(trainer, "value_converged")
+
+    logging_hook = LoggingHook(
+        probs_key=Agent.default_keys.probs,
+        action_key=PlanningEnvironment.default_keys.action,
+    )
+    logging_hook.register(trainer, "logging_hook")
+
     trainer.train()
 
     logging.info("Saving values under %s", values_file.absolute())
     values = torch.stack(stopping_hook.stopping_module.state_value_history)
     torch.save(values, values_file)
+    for key, value in trainer._log_dict.items():
+        if not key.startswith("loss_"):
+            continue
+        torch.save(torch.stack(value), out_dir / f"{key}.pt")
+        logging.info("Saved %s", key)
+
+    # Save the transition probabilities as nested tensor
+    if logging_hook.probs_history:
+        torch.save(
+            [
+                torch.nested.nested_tensor([t[0] for t in ls])
+                for ls in logging_hook.probs_history
+            ],
+            out_dir / "probs.pt",
+        )
 
     validate(policy, value_operator, env, space, gamma, env.keys)
 

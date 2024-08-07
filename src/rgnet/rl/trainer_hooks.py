@@ -108,7 +108,8 @@ class LoggingHook(TrainerHookBase):
     def __call__(self, batch):
         dones: torch.Tensor = batch[("next", "done")]
         self.done_samples += dones.count_nonzero().item()
-        self.probs_history.append(batch[self.probs_key])
+        if self.probs_key in batch:
+            self.probs_history.append(batch[self.probs_key])
         self.selected_actions.append(batch[self.action_key])
 
     def register(self, trainer: Trainer, name: str):
