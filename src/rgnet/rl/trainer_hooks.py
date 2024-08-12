@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, ABCMeta, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
 from tensordict import NestedKey
@@ -96,21 +96,18 @@ class LoggingHook(TrainerHookBase):
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         pass
 
-    def __init__(self, probs_key: NestedKey, action_key: NestedKey):
+    def __init__(self, logging_keys: List[NestedKey]):
         super().__init__()
-        self.action_key = action_key
-        self.probs_key = probs_key
-        self.probs_history = []
-        self.values_history = []
-        self.done_samples = 0
-        self.selected_actions = []
+        self.logging_keys = logging_keys
+        self.done_samples = []
+        self.logging_dict = {key: [] for key in logging_keys}
 
     def __call__(self, batch):
         dones: torch.Tensor = batch[("next", "done")]
-        self.done_samples += dones.count_nonzero().item()
-        if self.probs_key in batch:
-            self.probs_history.append(batch[self.probs_key])
-        self.selected_actions.append(batch[self.action_key])
+        self.done_samples.append(dones.count_nonzero().item())
+        for key in self.logging_keys:
+            if key in batch:
+                self.logging_dict[key].append(batch[key])
 
     def register(self, trainer: Trainer, name: str):
         trainer.register_op("post_steps_log", self)

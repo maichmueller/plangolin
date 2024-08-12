@@ -35,6 +35,7 @@ class SimpleLoss(LossModule):
         critic_network: ValueOperator,
         reduction: Optional[str] = None,
         loss_critic_type: str = "l2",
+        log_prob_clip_value: Optional[float] = None,
         clone_tensordict: bool = True,
         keys: _AcceptedKeys = default_keys,
     ):
@@ -58,6 +59,7 @@ class SimpleLoss(LossModule):
         self.loss_critic_type: str = loss_critic_type
         self.critic_network: ValueOperator = critic_network
         self.reduction: str = reduction or "mean"
+        self.log_prob_clip = log_prob_clip_value
         self.clone_tensordict: bool = clone_tensordict
         self._tensor_keys = keys
 
@@ -88,6 +90,8 @@ class SimpleLoss(LossModule):
             log_prob = log_prob.unsqueeze(-1)
         # The advantage could have gradients from the critic_network which should not
         # influence the actor-loss.
+        if self.log_prob_clip:
+            log_prob = log_prob.clamp(-self.log_prob_clip, self.log_prob_clip)
         loss_actor = -log_prob * advantage.detach()
         td_out = TensorDict({"loss_actor": loss_actor}, batch_size=[])
 

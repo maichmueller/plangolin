@@ -2,7 +2,9 @@ import argparse
 import itertools
 import logging
 import pathlib
+from collections import defaultdict
 from datetime import datetime
+from distutils.util import strtobool
 from pathlib import Path
 from typing import Any, Iterator, List, Optional
 
@@ -13,17 +15,17 @@ from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
 from torch.nn import Parameter
 from torch_geometric.nn import MLP
+from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
-from torchrl.trainers import Trainer
 
 from rgnet import HeteroGraphEncoder
 from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.epsilon_greedy import EGreedyAgent
+from rgnet.rl.epsilon_greedy import EGreedyActorCritic, EGreedyAgent, EpsilonAnnealing
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer_hooks import (
@@ -74,8 +76,8 @@ class TD0Loss(torchrl.objectives.LossModule):
 
     def forward(self, tensordict: TensorDictBase):
         td = tensordict.clone(False)
-        self.td0(td)
         estimates = self.value_operator(td)[Agent.default_keys.state_value].squeeze()
+        self.td0(td)
         targets = td[self.td0.value_target_key].squeeze()
         loss_out = torch.nn.functional.mse_loss(estimates, targets, reduction="none")
         return TensorDict(
@@ -106,7 +108,7 @@ class SupervisedLoss(torchrl.objectives.LossModule):
 
 
 def simple_linear_net(hidden_size: int):
-    return torch.nn.Linear(hidden_size, 1)
+    return torch.nn.Linear(hidden_size, 1, bias=False)
 
 
 def mlp_net(hidden_size: int):
@@ -146,7 +148,8 @@ def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=
         targets = [t.target for t in space.get_forward_transitions(state)]
         best = min(targets, key=lambda s: space.get_distance_to_goal_state(s))
         best_successors.append(best)
-    policy(eval_td)
+    with set_exploration_type(ExplorationType.DETERMINISTIC):
+        policy(eval_td)
     chosen_successors = [t.target for t in eval_td[env_keys.action]]
     matching_successors = sum(
         chosen_successors[i] == best_successors[i] for i in range(len(best_successors))
@@ -252,10 +255,68 @@ def build_env(space, batch_size, embedding):
     return env, non_goal_states
 
 
-def resolve_algorithm(
-    parser_args, space, embedding, non_goal_states
-) -> tuple[TensorDictModule | None, ValueOperator, LossModule, Iterator[Parameter]]:
+def resolve_egreedy(parser_args, embedding, value_net, env_keys):
+    epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
+    agent = EGreedyAgent(
+        epsilon_manager=epsilon_annealing,
+        embedding=embedding,
+        value_net=value_net,
+    )
+    policy = agent.as_td_module(env_keys.transitions, env_keys.action)
 
+    value_op = ValueOperator(
+        value_net,
+        in_keys=[Agent.default_keys.current_embedding],
+        out_keys=[Agent.default_keys.state_value],
+    )
+    loss = TD0Loss(gamma=parser_args.gamma, value_operator=value_op)
+    optim_parameter = agent.parameters()
+
+    return policy, value_op, loss, optim_parameter
+
+
+def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
+    if not parser_args.use_epsilon_for_actor_critic:
+        agent = Agent(embedding, value_net=value_net)
+    else:
+        epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
+        agent = EGreedyActorCritic(epsilon_annealing, embedding, value_net=value_net)
+    policy = agent.as_td_module(
+        env_keys.state,
+        env_keys.transitions,
+        env_keys.action,
+    )
+    value_op = agent.value_operator
+    # includes policy, value_net and embeddings
+    # use different learning rates for the policy and the value net
+    if parser_args.separate_actor_loss:
+        optim_parameter = [
+            {
+                "params": agent.actor_net.parameters(),
+                "lr": parser_args.separate_actor_loss,
+            },
+            {"params": agent.value_operator.parameters()},
+        ]
+        if (emb_params := getattr(embedding, "parameters", None)) is not None:
+            optim_parameter.append({"params": emb_params()})
+    else:
+        optim_parameter = agent.parameters()
+
+    loss = SimpleLoss(
+        agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
+    )
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=parser_args.gamma)
+
+    return policy, value_op, loss, optim_parameter
+
+
+def resolve_algorithm(
+    parser_args,
+    space,
+    embedding,
+    non_goal_states,
+    env_keys,
+) -> tuple[TensorDictModule | None, ValueOperator, LossModule, Iterator[Parameter]]:
     policy: TensorDictModule | None
     loss: LossModule
     value_op: ValueOperator
@@ -268,51 +329,14 @@ def resolve_algorithm(
     )
 
     if parser_args.algorithm == "ac":
-        agent = Agent(embedding, value_net=value_net)
-        policy = agent.as_td_module(
-            PlanningEnvironment.default_keys.state,
-            PlanningEnvironment.default_keys.transitions,
-            PlanningEnvironment.default_keys.action,
+        policy, value_op, loss, optim_parameter = resolve_actor_critic(
+            parser_args, embedding, value_net, env_keys=env_keys
         )
-        value_op = agent.value_operator
-        loss = SimpleLoss(agent.value_operator)
-        loss.make_value_estimator(ValueEstimators.TD0, gamma=parser_args.gamma)
-        # includes policy, value_net and embeddings
-        # use different learning rates for the policy and the value net
-        if parser_args.separate_actor_loss:
-            optim_parameter = [
-                {
-                    "params": agent.actor_net.parameters(),
-                    "lr": parser_args.separate_actor_loss,
-                },
-                {"params": agent.value_operator.parameters()},
-            ]
-            if (emb_params := getattr(embedding, "parameters", None)) is not None:
-                optim_parameter.append({"params": emb_params()})
-        else:
-            optim_parameter = agent.parameters()
 
     elif parser_args.algorithm == "egreedy":
-        eagent = EGreedyAgent(
-            value_net=value_net,
-            embedding=embedding,
-            eps_init=parser_args.egreedy_epsilon_init,
-            eps_end=parser_args.egreedy_epsilon_end,
-            annealing_num_steps=int(
-                args.iterations * args.egreedy_epsilon_annealing_fraction
-            ),
+        policy, value_op, loss, optim_parameter = resolve_egreedy(
+            parser_args, embedding, value_net, env_keys=env_keys
         )
-        policy = eagent.as_td_module(
-            ExpandedStateSpaceEnv.default_keys.transitions,
-            ExpandedStateSpaceEnv.default_keys.action,
-        )
-        value_op = ValueOperator(
-            value_net,
-            in_keys=[Agent.default_keys.current_embedding],
-            out_keys=[Agent.default_keys.state_value],
-        )
-        loss = TD0Loss(gamma=parser_args.gamma, value_operator=value_op)
-        optim_parameter = eagent.parameters()
 
     elif parser_args.algorithm == "supervised":
         policy = None
@@ -345,9 +369,10 @@ def resolve_and_run(parser_args):
     )
 
     env, non_goal_states = build_env(space, batch_size=None, embedding=embedding_module)
+    env_keys = env.base_env.keys
 
     policy, value_operator, loss_module, optim_params = resolve_algorithm(
-        parser_args, space, embedding_module, non_goal_states
+        parser_args, space, embedding_module, non_goal_states, env_keys=env_keys
     )
     optimizer = torch.optim.Adam(optim_params, lr=parser_args.learning_rate)
 
@@ -384,7 +409,6 @@ def run(
     atol: float,
     out_dir: pathlib.Path,
 ):
-
     trainer_file = out_dir / "trainer.pt"
     values_file = out_dir / "values.pt"
 
@@ -424,8 +448,11 @@ def run(
     stopping_hook.register(trainer, "value_converged")
 
     logging_hook = LoggingHook(
-        probs_key=Agent.default_keys.probs,
-        action_key=PlanningEnvironment.default_keys.action,
+        logging_keys=[
+            Agent.default_keys.probs,
+            PlanningEnvironment.default_keys.action,
+            EGreedyAgent.AcceptedKeys.epsilon_action_key,
+        ]
     )
     logging_hook.register(trainer, "logging_hook")
 
@@ -434,20 +461,44 @@ def run(
     logging.info("Saving values under %s", values_file.absolute())
     values = torch.stack(stopping_hook.stopping_module.state_value_history)
     torch.save(values, values_file)
+
     for key, value in trainer._log_dict.items():
         if not key.startswith("loss_"):
             continue
         torch.save(torch.stack(value), out_dir / f"{key}.pt")
         logging.info("Saved %s", key)
 
-    # Save the transition probabilities as nested tensor
-    if logging_hook.probs_history:
+    # Save the logged keys to disc
+    # Done samples is number of encountered goal states per iteration List[float]
+    torch.save(logging_hook.done_samples, out_dir / "done_samples.pt")
+
+    # Selected actions
+    actions: List[List[mi.Transition]] = logging_hook.logging_dict[
+        PlanningEnvironment.default_keys.action
+    ]
+    forward_transitions = [space.get_forward_transitions(s) for s in non_goal_states]
+    indices_of_actions: List[List[int]] = [
+        [ft.index(action[0]) for action, ft in zip(batch_actions, forward_transitions)]
+        for batch_actions in actions
+    ]
+    torch.save(indices_of_actions, out_dir / "actions.pt")
+
+    if logging_hook.logging_dict[Agent.default_keys.probs]:
+        # Save as nested_tensor as non-uniform across batch and (potentially time)
+        # List[nested_tensor[Tensor[batch_size x num_actions]]]
         torch.save(
             [
                 torch.nested.nested_tensor([t[0] for t in ls])
-                for ls in logging_hook.probs_history
+                for ls in logging_hook.logging_dict[Agent.default_keys.probs]
             ],
             out_dir / "probs.pt",
+        )
+    if logging_hook.logging_dict[EGreedyAgent.default_keys.epsilon_action_key]:
+        torch.save(
+            torch.stack(
+                logging_hook.logging_dict[EGreedyAgent.default_keys.epsilon_action_key]
+            ),
+            out_dir / "epsilon.pt",
         )
 
     validate(policy, value_operator, env, space, gamma, env.keys)
@@ -476,35 +527,29 @@ if __name__ == "__main__":
         "--separate_actor_loss",
         type=float,
         required=False,
-        help="Only applies if algorithm =ac (Actor Critic)."
+        help="Only applies if algorithm = ac (Actor Critic)."
         "If set the parameters of the actor_net will be updated with a different"
         "learning rate then the general learning rate (--lr).",
     )
     parser.add_argument(
-        "--egreedy_epsilon_init",
+        "--log_prob_clip_value",
         type=float,
         required=False,
-        default=0.5,
-        help="Only applies for algorithm = egreedy. "
-        "Initial epsilon value (default: 0.5)",
+        help="Only applies if algorithm = ac (Actor Critic)."
+        "If set the log probabilities will be clipped to the given value."
+        "This can be especially useful if combined with --use_epsilon_for_actor_critic.",
     )
     parser.add_argument(
-        "--egreedy_epsilon_end",
-        type=float,
+        "--use_epsilon_for_actor_critic",
         required=False,
-        default=0.001,
-        help="Only applies for algorithm = egreedy. "
-        "Final epsilon value at the end of annealing (default: 0.001).",
+        default=False,
+        type=lambda x: bool(strtobool(str(x))),
+        help="Only applies if algorithm = ac (Actor Critic). "
+        "If set the epsilon greedy wrapper will be used around the actor. "
+        "You can use --egreedy* arguments to specify the epsilon wrapper.",
     )
-    parser.add_argument(
-        "--egreedy_epsilon_annealing_fraction",
-        type=float,
-        required=False,
-        default=0.8,
-        help="Only applies for algorithm = egreedy. "
-        "The fraction of iterations over which the epsilon value is annealed "
-        "(default: 0.8).",
-    )
+    EpsilonAnnealing.add_parser_args(parser)
+
     parser.add_argument(
         "--gamma",
         type=float,
