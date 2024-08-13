@@ -440,3 +440,13 @@ def test_actor_critic_rollout(actor_critic_operator):
     # Embedding should be called only once as there are no weights updated
     # inbetween actor and critic call.
     mockito.verify(module_hidden, times=rollout_length).forward(...)
+
+
+def test_non_tensor_data_preserves_gradients():
+    t1 = torch.tensor([1, 2, 3], dtype=torch.float, requires_grad=True)
+    ntd = NonTensorData(t1)
+    # TensorDictBase checks if any of its values requires grad but NonTensorData has no values()
+    # assert ntd.requires_grad
+    data = ntd.tolist()
+    assert data.requires_grad
+    assert data is t1

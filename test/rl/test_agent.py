@@ -5,7 +5,7 @@ from typing import List
 import mockito
 import pytest
 import torch
-from tensordict import NonTensorData
+from tensordict import NonTensorData, NonTensorStack
 
 from rgnet.rl import Agent
 from rgnet.rl.envs import ExpandedStateSpaceEnv
@@ -140,3 +140,21 @@ def test_policy_preparation(embedding_mock, hidden_size):
             embedding_mock([None] * batch_size),
             NonTensorData([None] * 3, batch_size=(1,)),
         )
+
+
+@pytest.mark.parametrize("hidden_size", [3])
+@pytest.mark.parametrize("batch_size", [2])
+def test_probabilities_require_grad(agent, env, hidden_size, batch_size):
+    """As of the 13.08.2024 NonTensorData will remove any gradients by calling .data
+    on the tensor. This test ensures that the gradients are kept for the transition
+    probabilities, which don't share a uniform shape across the batch and time dimension
+    and therefore have to be wrapped in NonTensorData.
+    This test requires torchrl_patches.py to be applied before running the test"""
+    rollout = env.reset()
+    policy = agent.as_td_module(env.keys.state, env.keys.transitions, env.keys.action)
+    out = policy(rollout)
+    probs_non_tensor_stack = out.get(agent.keys.probs)
+    assert isinstance(probs_non_tensor_stack, NonTensorStack)
+    probs = non_tensor_to_list(probs_non_tensor_stack)
+    assert all(p.requires_grad for p in probs)
+    assert len(probs) == batch_size
