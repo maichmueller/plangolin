@@ -9,7 +9,7 @@ import torch
 from matplotlib import pyplot as plt
 
 from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
-from rgnet.rl import Agent
+from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
@@ -138,7 +138,7 @@ def transformed_env(request, blocks=None, embedding=None, batch_size=None):
     return NonTensorTransformedEnv(
         env=base_env,
         transform=EmbeddingTransform(
-            current_embedding_key=Agent.default_keys.current_embedding,
+            current_embedding_key=ActorCritic.default_keys.current_embedding,
             env=base_env,
             embedding_module=embedding,
         ),

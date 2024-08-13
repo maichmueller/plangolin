@@ -5,7 +5,7 @@ import torch.nn
 from tensordict.nn import TensorDictModule
 from torch_geometric.nn import MLP
 
-from rgnet.rl.agents.agent import embed_transition_targets
+from rgnet.rl.agents.actor_critic import embed_transition_targets
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import (
     NonTensorWrapper,

@@ -14,7 +14,7 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
+from rgnet.rl import ActorCritic, EmbeddingModule, SimpleLoss
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 
@@ -157,14 +157,14 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
     env = NonTensorTransformedEnv(
         env=base_env,
         transform=EmbeddingTransform(
-            current_embedding_key=Agent.default_keys.current_embedding,
+            current_embedding_key=ActorCritic.default_keys.current_embedding,
             env=base_env,
             embedding_module=embedding,
         ),
         cache_specs=True,
     )
 
-    agent = Agent(embedding)
+    agent = ActorCritic(embedding)
     agent_policy = agent.as_td_module(
         env.keys.state, env.keys.transitions, env.keys.action
     )

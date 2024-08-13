@@ -21,7 +21,7 @@ from torchrl.objectives import LossModule, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
+from rgnet.rl import ActorCritic, EmbeddingModule, SimpleLoss
 from rgnet.rl.agents import (
     EGreedyActorCriticHook,
     EGreedyModule,
@@ -46,7 +46,7 @@ def transformed_environment(space, embedding_module, batch_size):
     env = NonTensorTransformedEnv(
         env=base_env,
         transform=EmbeddingTransform(
-            current_embedding_key=Agent.default_keys.current_embedding,
+            current_embedding_key=ActorCritic.default_keys.current_embedding,
             env=base_env,
             embedding_module=embedding_module,
         ),
@@ -77,12 +77,14 @@ class TD0Loss(torchrl.objectives.LossModule):
             average_rewards=False,
             value_network=value_operator,
         )
-        self.td0.set_keys(value=Agent.default_keys.state_value)
+        self.td0.set_keys(value=ActorCritic.default_keys.state_value)
 
     def forward(self, tensordict: TensorDictBase):
         td = tensordict.clone(False)
         self.td0(td)
-        estimates = self.value_operator(td)[Agent.default_keys.state_value].squeeze()
+        estimates = self.value_operator(td)[
+            ActorCritic.default_keys.state_value
+        ].squeeze()
         targets = td[self.td0.value_target_key].squeeze()
         loss_out = torch.nn.functional.mse_loss(estimates, targets, reduction="none")
         return TensorDict(
@@ -102,7 +104,7 @@ class SupervisedLoss(torchrl.objectives.LossModule):
     def forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         td = tensordict.clone(False)
         self.value_op(td)
-        estimates = td[Agent.default_keys.state_value].squeeze()
+        estimates = td[ActorCritic.default_keys.state_value].squeeze()
         return TensorDict(
             {
                 "loss_critic": torch.nn.functional.mse_loss(
@@ -138,7 +140,9 @@ def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=
     non_goal_states = [s for s in space.get_states() if not space.is_goal_state(s)]
     eval_td = env.reset(states=non_goal_states)
     optimal_values = calc_optimal_values(non_goal_states, space, gamma)
-    predicted_values = value_op(eval_td).get(Agent.default_keys.state_value).squeeze(-1)
+    predicted_values = (
+        value_op(eval_td).get(ActorCritic.default_keys.state_value).squeeze(-1)
+    )
     logging.info(
         "--------------------------------Validation--------------------------------"
     )
@@ -278,8 +282,8 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
 
     value_op = ValueOperator(
         value_net,
-        in_keys=[Agent.default_keys.current_embedding],
-        out_keys=[Agent.default_keys.state_value],
+        in_keys=[ActorCritic.default_keys.current_embedding],
+        out_keys=[ActorCritic.default_keys.state_value],
     )
     loss = TD0Loss(gamma=parser_args.gamma, value_operator=value_op)
     optim_parameter = agent.parameters()
@@ -288,7 +292,7 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
 
 
 def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
-    agent = Agent(embedding, value_net=value_net)
+    agent = ActorCritic(embedding, value_net=value_net)
     policy = agent.as_td_module(
         env_keys.state,
         env_keys.transitions,
@@ -364,8 +368,8 @@ def resolve_algorithm(
         policy = None
         value_op = ValueOperator(
             value_net,
-            in_keys=[Agent.default_keys.current_embedding],
-            out_keys=[Agent.default_keys.state_value],
+            in_keys=[ActorCritic.default_keys.current_embedding],
+            out_keys=[ActorCritic.default_keys.state_value],
         )
         loss = SupervisedLoss(
             value_op, calc_optimal_values(non_goal_states, space, parser_args.gamma)
@@ -471,7 +475,7 @@ def run(
 
     logging_hook = LoggingHook(
         logging_keys=[
-            Agent.default_keys.probs,
+            ActorCritic.default_keys.probs,
             PlanningEnvironment.default_keys.action,
             EGreedyModule.AcceptedKeys.epsilon_action_key,
         ]
@@ -505,13 +509,13 @@ def run(
     ]
     torch.save(indices_of_actions, out_dir / "actions.pt")
 
-    if logging_hook.logging_dict[Agent.default_keys.probs]:
+    if logging_hook.logging_dict[ActorCritic.default_keys.probs]:
         # Save as nested_tensor as non-uniform across batch and (potentially time)
         # List[nested_tensor[Tensor[batch_size x num_actions]]]
         torch.save(
             [
                 torch.nested.nested_tensor([t[0] for t in ls])
-                for ls in logging_hook.logging_dict[Agent.default_keys.probs]
+                for ls in logging_hook.logging_dict[ActorCritic.default_keys.probs]
             ],
             out_dir / "probs.pt",
         )

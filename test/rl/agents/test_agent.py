@@ -7,14 +7,14 @@ import pytest
 import torch
 from tensordict import NonTensorData, NonTensorStack
 
-from rgnet.rl import Agent
+from rgnet.rl import ActorCritic
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 
 
 @pytest.fixture
 def agent(embedding_mock):
-    return Agent(embedding_mock)
+    return ActorCritic(embedding_mock)
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def test_policy_preparation(embedding_mock, hidden_size):
         _batch_size = tensor.shape[0]
         return torch.ones(size=(_batch_size, 1), dtype=tensor.dtype)
 
-    agent = Agent(embedding_mock)
+    agent = ActorCritic(embedding_mock)
 
     mockito.when(agent.actor_net).forward(...).thenAnswer(actor_mock)
 

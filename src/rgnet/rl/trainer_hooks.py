@@ -6,7 +6,7 @@ import torch
 from tensordict import NestedKey
 from torchrl.trainers import Trainer, TrainerHookBase
 
-from rgnet.rl import Agent
+from rgnet.rl import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
@@ -43,7 +43,7 @@ class ValueFunctionConverged(EarlyStoppingTrainerHook):
         reset_func,
         optimal_values_lookup,
         atol=0.1,
-        state_value_key=Agent.default_keys.state_value,
+        state_value_key=ActorCritic.default_keys.state_value,
     ):
         super().__init__()
         self.value_operator = value_operator

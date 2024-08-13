@@ -40,7 +40,7 @@ def embed_transition_targets(
     return long_tensor.tensor_split(start_indices, dim=0)
 
 
-class Agent(torch.nn.Module):
+class ActorCritic(torch.nn.Module):
     @dataclasses.dataclass(frozen=True)
     class AcceptedKeys:
         # Keys used for the output
@@ -71,7 +71,7 @@ class Agent(torch.nn.Module):
         """
         super().__init__()
 
-        self._keys: Agent.Acceptedkeys = keys
+        self._keys: ActorCritic.Acceptedkeys = keys
 
         self._hidden_size = embedding_module.hidden_size
 
