@@ -22,15 +22,15 @@ from torchrl.objectives.value import TD0Estimator
 
 from rgnet import HeteroGraphEncoder
 from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.epsilon_greedy import (
-    EGreedyActorCritic,
+from rgnet.rl.agents import (
+    EGreedyActorCriticHook,
     EGreedyModule,
     EpsilonAnnealing,
     ValueModule,
 )
+from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer_hooks import (
@@ -303,6 +303,9 @@ def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
                 env_keys.transitions,
                 env_keys.action,
                 log_epsilon_actions=True,
+                replace_action_hook=EGreedyActorCriticHook(
+                    agent.keys.probs, agent.keys.log_probs
+                ),
             ),
         )
     value_op = agent.value_operator
