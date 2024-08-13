@@ -48,6 +48,9 @@ class ActorCritic(torch.nn.Module):
         probs: NestedKey = "probs"  # the probability for each possible action
         state_value: NestedKey = "state_value"  # the output of the value-operator
         current_embedding: NestedKey = "current_embedding"  # the embeddings of states
+        successor_embeddings: NestedKey = (
+            "successor_embeddings"  # the embeddings of the successors
+        )
         # Keys used internally
         _distr_key: NestedKey = "probs"  # the input for the Categorical distribution
         _action_idx_key: NestedKey = "action_idx"  # the output for the distribution
@@ -194,12 +197,14 @@ class ActorCritic(torch.nn.Module):
         state: NonTensorWrapper | List[mi.State],
         transitions: NonTensorWrapper | List[List[mi.Transition]],
         current_embedding: Optional[torch.Tensor] = None,
-    ) -> Tuple[NonTensorStack, torch.Tensor, torch.Tensor, NonTensorStack]:
+    ) -> Tuple[
+        NonTensorStack, torch.Tensor, torch.Tensor, NonTensorStack, NonTensorStack
+    ]:
 
         transitions = non_tensor_to_list(transitions)
         if current_embedding is None:
             current_embedding = self._embedding_module(state)
-        successor_embeddings = embed_transition_targets(
+        successor_embeddings: Tuple[Tensor, ...] = embed_transition_targets(
             transitions, self._embedding_module
         )
         # len(batched_probs) == batch_size, batched_probs[i].shape == len(transitions[i])
@@ -216,18 +221,28 @@ class ActorCritic(torch.nn.Module):
             current_embedding,
             log_probs,
             as_non_tensor_stack(batched_probs),
+            as_non_tensor_stack(successor_embeddings),
         )
 
     def as_td_module(
-        self, state_key: NestedKey, transition_key: NestedKey, action_key: NestedKey
+        self,
+        state_key: NestedKey,
+        transition_key: NestedKey,
+        action_key: NestedKey,
+        add_probs: bool = False,
+        out_successor_embeddings: bool = False,
     ):
+        out_keys = [
+            action_key,
+            self._keys.current_embedding,
+            self._keys.log_probs,
+        ]
+        if add_probs:
+            out_keys.append(self._keys.probs)
+        if out_successor_embeddings:
+            out_keys.append(self._keys.successor_embeddings)
         return TensorDictModule(
             module=self,
             in_keys=[state_key, transition_key, self._keys.current_embedding],
-            out_keys=[
-                action_key,
-                self._keys.current_embedding,
-                self._keys.log_probs,
-                self._keys.probs,
-            ],
+            out_keys=out_keys,
         )

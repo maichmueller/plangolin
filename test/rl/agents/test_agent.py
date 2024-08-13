@@ -48,7 +48,10 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
         space, batch_size=torch.Size([batch_size]), seed=42
     )
     policy = agent.as_td_module(
-        environment.keys.state, environment.keys.transitions, environment.keys.action
+        environment.keys.state,
+        environment.keys.transitions,
+        environment.keys.action,
+        add_probs=True,
     )
     rollout = environment.rollout(
         rollout_length, policy=policy, break_when_any_done=False
@@ -64,7 +67,7 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
         env_keys.state,
         env_keys.terminated,
         agent.keys.log_probs,
-        "probs",
+        agent.keys.probs,
     }
     _test_rollout_soundness(
         space,
@@ -84,7 +87,9 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
             # log of a probability is in (-infty, 0]
             assert (log_prob_tensor <= 0).all()
 
-            probs = non_tensor_to_list(rollout.get("probs")[batch_idx][time_step])
+            probs = non_tensor_to_list(
+                rollout.get(agent.keys.probs)[batch_idx][time_step]
+            )
             # assert that all values are between 0 and 1
             assert torch.all(probs >= 0.0)
             assert torch.all(probs <= 1.0)
@@ -151,7 +156,9 @@ def test_probabilities_require_grad(agent, env, hidden_size, batch_size):
     and therefore have to be wrapped in NonTensorData.
     This test requires torchrl_patches.py to be applied before running the test"""
     rollout = env.reset()
-    policy = agent.as_td_module(env.keys.state, env.keys.transitions, env.keys.action)
+    policy = agent.as_td_module(
+        env.keys.state, env.keys.transitions, env.keys.action, add_probs=True
+    )
     out = policy(rollout)
     probs_non_tensor_stack = out.get(agent.keys.probs)
     assert isinstance(probs_non_tensor_stack, NonTensorStack)
