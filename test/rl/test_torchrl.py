@@ -21,9 +21,9 @@ from torchrl.trainers import Trainer
 
 from rgnet.rl import (
     ActorCritic,
+    ActorCriticLoss,
     EmbeddingModule,
     RolloutCollector,
-    SimpleLoss,
     torchrl_patches,
 )
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
@@ -309,7 +309,7 @@ def test_trainer(
 
     agent = ActorCritic(embedding_mock)
     policy = agent.as_td_module(env_keys.state, env_keys.transitions, env_keys.action)
-    loss = SimpleLoss(agent.value_operator)
+    loss = ActorCriticLoss(agent.value_operator)
     loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9, shifted=True)
     optim = torch.optim.Adam(agent.parameters(), lr=1e-3)
 

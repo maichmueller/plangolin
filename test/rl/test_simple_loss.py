@@ -14,7 +14,7 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, EmbeddingModule, SimpleLoss
+from rgnet.rl import ActorCritic, ActorCriticLoss, EmbeddingModule
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 
@@ -72,7 +72,7 @@ def actor_mock(hidden_size=3):
     tdm = TensorDictModule(
         module=M(),
         in_keys=["observation"],
-        out_keys=[SimpleLoss.default_keys.sample_log_prob],
+        out_keys=[ActorCriticLoss.default_keys.sample_log_prob],
     )
     mockito.spy2(tdm.forward)
     return tdm
@@ -81,7 +81,7 @@ def actor_mock(hidden_size=3):
 @pytest.mark.parametrize("rollout_not_done", [[1, 2], [1, 5]], indirect=True)
 def test_forward(critic_mock, actor_mock, rollout_not_done):
     gamma = 0.9
-    loss = SimpleLoss(critic_mock, reduction="mean")
+    loss = ActorCriticLoss(critic_mock, reduction="mean")
     loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=True)
 
     optim = torch.optim.SGD(
@@ -110,18 +110,20 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
     # Verify the losses
     with torch.no_grad():
         prediction = critic_mock(rollout_not_done.select(*critic_mock.in_keys)).get(
-            SimpleLoss.default_keys.value
+            ActorCriticLoss.default_keys.value
         )
         loss.value_estimator(rollout_not_done)
-        expected_value_target = rollout_not_done[SimpleLoss.default_keys.value_target]
-        expected_advantage = rollout_not_done[SimpleLoss.default_keys.advantage]
+        expected_value_target = rollout_not_done[
+            ActorCriticLoss.default_keys.value_target
+        ]
+        expected_advantage = rollout_not_done[ActorCriticLoss.default_keys.advantage]
         expected_loss_critic = torch.nn.functional.mse_loss(
             prediction, expected_value_target, reduction="mean"
         )
         assert torch.allclose(loss_out["loss_critic"], expected_loss_critic)
-        log_probs = rollout_not_done[SimpleLoss.default_keys.sample_log_prob].unsqueeze(
-            -1
-        )
+        log_probs = rollout_not_done[
+            ActorCriticLoss.default_keys.sample_log_prob
+        ].unsqueeze(-1)
         expected_loss_actor = (-log_probs * expected_advantage.detach()).mean()
 
         assert torch.allclose(loss_out["loss_actor"], expected_loss_actor)
@@ -170,7 +172,7 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
     )
     rollout = env.rollout(1, policy=agent_policy, break_when_any_done=False)
 
-    loss = SimpleLoss(agent.value_operator)
+    loss = ActorCriticLoss(agent.value_operator)
     loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9)
 
     optim = torch.optim.SGD(agent.parameters())

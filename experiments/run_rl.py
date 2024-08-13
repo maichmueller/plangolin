@@ -21,7 +21,7 @@ from torchrl.objectives import LossModule, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, EmbeddingModule, SimpleLoss
+from rgnet.rl import ActorCritic, ActorCriticLoss, EmbeddingModule
 from rgnet.rl.agents import (
     EGreedyActorCriticHook,
     EGreedyModule,
@@ -328,7 +328,7 @@ def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     else:
         optim_parameter = agent.parameters()
 
-    loss = SimpleLoss(
+    loss = ActorCriticLoss(
         agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
     )
     loss.make_value_estimator(ValueEstimators.TD0, gamma=parser_args.gamma)

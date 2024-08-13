@@ -14,7 +14,7 @@ from torchrl.objectives.utils import (
 from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
 
 
-class SimpleLoss(LossModule):
+class ActorCriticLoss(LossModule):
 
     default_value_estimator: ValueEstimators = ValueEstimators.TD0
 
@@ -40,7 +40,7 @@ class SimpleLoss(LossModule):
         keys: _AcceptedKeys = default_keys,
     ):
         """
-        SimpleLoss is nearly identical to a simplified version of ReinforceLoss.
+        ActorCriticLoss is nearly identical to a simplified version of ReinforceLoss.
         The core difference is that we do not require the Actor (ProbabilisticActor) and
         instead assume that the log_probs are already present in the tensordict.
         This loss does neither work with functional modules nor with clipped losses.
