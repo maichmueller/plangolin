@@ -1,13 +1,16 @@
 import dataclasses
 import enum
 from argparse import ArgumentParser
-from typing import Callable
+from typing import Callable, List
 
+import pymimir as mi
 import torch.nn
 from tensordict import NestedKey, TensorDict
 from tensordict.nn import TensorDictModuleBase
 from torch.distributions import Categorical
 from torchrl.envs.utils import ExplorationType, exploration_type
+
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
 
 class EpsilonAnnealing:
@@ -121,13 +124,16 @@ class EGreedyModule(TensorDictModuleBase):
         batch_size = len(transitions)
         random_steps = torch.rand(size=(batch_size,)) < self.epsilon_manager.epsilon
 
+        new_actions: List[mi.Transition] = tensordict[self.actions_key]
         for idx, should_replace in enumerate(random_steps):
             if should_replace:
                 sampled_action_idx = torch.randint(0, len(transitions[idx]), (1,))
                 new_sampled_action = transitions[idx][sampled_action_idx.item()]
-                tensordict[self.actions_key][idx] = new_sampled_action
+                new_actions[idx] = new_sampled_action
                 if self.replace_action_hook is not None:
                     self.replace_action_hook(tensordict, idx, sampled_action_idx)
+
+        tensordict[self.actions_key] = as_non_tensor_stack(new_actions)
 
         self.epsilon_manager.step_epsilon()  # only one step per batch (debatable)
 
