@@ -9,7 +9,6 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 from torch import nn
 from torch.distributions import Categorical
-from torchrl.envs import TransformedEnv
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 

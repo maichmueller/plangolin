@@ -1,34 +1,23 @@
 from dataclasses import dataclass
 from typing import Optional
 
-import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from torchrl.modules import ValueOperator
-from torchrl.objectives import LossModule
-from torchrl.objectives.utils import (
-    ValueEstimators,
-    _reduce,
-    default_value_kwargs,
-    distance_loss,
-)
-from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
+from torchrl.objectives.utils import ValueEstimators, _reduce
+
+from rgnet.rl.losses.critic_loss import CriticLoss
 
 
-class ActorCriticLoss(LossModule):
+class ActorCriticLoss(CriticLoss):
 
     default_value_estimator: ValueEstimators = ValueEstimators.TD0
 
     @dataclass(frozen=True)
-    class _AcceptedKeys:
-        advantage: NestedKey = "advantage"
-        value_target: NestedKey = "value_target"
-        value: NestedKey = "state_value"
+    class _AcceptedKeys(CriticLoss._AcceptedKeys):
         sample_log_prob: NestedKey = "log_probs"
-        reward: NestedKey = "reward"
-        done: NestedKey = "done"
-        terminated: NestedKey = "terminated"
 
     default_keys = _AcceptedKeys()
+    tensor_keys: _AcceptedKeys
 
     def __init__(
         self,
@@ -55,13 +44,18 @@ class ActorCriticLoss(LossModule):
             into the input tensordict.
             Defaults to True.
         """
-        super().__init__()
-        self.loss_critic_type: str = loss_critic_type
-        self.critic_network: ValueOperator = critic_network
-        self.reduction: str = reduction or "mean"
+        super().__init__(
+            critic_network=critic_network,
+            reduction=reduction,
+            loss_critic_type=loss_critic_type,
+            clone_tensordict=clone_tensordict,
+        )
         self.log_prob_clip = log_prob_clip_value
-        self.clone_tensordict: bool = clone_tensordict
         self._tensor_keys = keys
+
+    @property
+    def loss_components(self):
+        return ["loss_critic", "loss_actor"]
 
     def forward(self, tensordict: TensorDictBase) -> TensorDict:
         """
@@ -107,55 +101,3 @@ class ActorCriticLoss(LossModule):
         )
 
         return td_out
-
-    def _loss_critic(self, tensordict: TensorDictBase) -> torch.Tensor:
-        # value_target should have been computed with the advantage in forward
-        target_return = tensordict.get(self.tensor_keys.value_target)
-        # We have to always recompute as the ValueEstimator might use a copy of the actual parameter
-        # which means the result might still have gradients (just for non-nonsensical parameter)
-        # TODO get the value estimator to pass through gradients for the value_net in order to avoid second call
-        tensordict_select = tensordict.select(
-            *self.critic_network.in_keys, strict=False
-        )
-        state_value = self.critic_network(tensordict_select).get(self.tensor_keys.value)
-
-        return distance_loss(
-            target_return,
-            state_value,
-            loss_function=self.loss_critic_type,
-        )
-
-    def make_value_estimator(self, value_type: ValueEstimators = None, **hyperparams):
-        """Taken from ReinforceLoss.make_value_estimator."""
-        if value_type is None:
-            value_type = self.default_value_estimator
-        self.value_type = value_type
-        hp = dict(default_value_kwargs(value_type))
-        hp.update(hyperparams)
-        if value_type == ValueEstimators.TD1:
-            self._value_estimator = TD1Estimator(
-                value_network=self.critic_network, **hp
-            )
-        elif value_type == ValueEstimators.TD0:
-            self._value_estimator = TD0Estimator(
-                value_network=self.critic_network, **hp
-            )
-        elif value_type == ValueEstimators.GAE:
-            self._value_estimator = GAE(value_network=self.critic_network, **hp)
-        elif value_type == ValueEstimators.TDLambda:
-            self._value_estimator = TDLambdaEstimator(
-                value_network=self.critic_network, **hp
-            )
-        else:
-            raise NotImplementedError(f"Unknown value type {value_type}")
-
-        tensor_keys = {
-            "advantage": self.tensor_keys.advantage,
-            "value": self.tensor_keys.value,
-            "value_target": self.tensor_keys.value_target,
-            "reward": self.tensor_keys.reward,
-            "done": self.tensor_keys.done,
-            "terminated": self.tensor_keys.terminated,
-            "sample_log_prob": self.tensor_keys.sample_log_prob,
-        }
-        self._value_estimator.set_keys(**tensor_keys)

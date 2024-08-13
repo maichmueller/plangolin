@@ -18,11 +18,11 @@ from torch_geometric.nn import MLP
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators
-from torchrl.objectives.value import TD0Estimator
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, ActorCriticLoss, EmbeddingModule
+from rgnet.rl import EmbeddingModule
 from rgnet.rl.agents import (
+    ActorCritic,
     EGreedyActorCriticHook,
     EGreedyModule,
     EpsilonAnnealing,
@@ -31,6 +31,7 @@ from rgnet.rl.agents import (
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.rl.losses import ActorCriticLoss, CriticLoss
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer_hooks import (
@@ -65,33 +66,6 @@ def calc_optimal_values(
         device=device,
     )
     return -(1 - gamma**distances) / (1 - gamma)
-
-
-class TD0Loss(torchrl.objectives.LossModule):
-    def __init__(self, gamma, value_operator):
-        super().__init__()
-        self.value_operator = value_operator
-        self.td0 = TD0Estimator(
-            gamma=gamma,
-            shifted=True,
-            average_rewards=False,
-            value_network=value_operator,
-        )
-        self.td0.set_keys(value=ActorCritic.default_keys.state_value)
-
-    def forward(self, tensordict: TensorDictBase):
-        td = tensordict.clone(False)
-        self.td0(td)
-        estimates = self.value_operator(td)[
-            ActorCritic.default_keys.state_value
-        ].squeeze()
-        targets = td[self.td0.value_target_key].squeeze()
-        loss_out = torch.nn.functional.mse_loss(estimates, targets, reduction="none")
-        return TensorDict(
-            {
-                "loss_critic": loss_out.mean(),
-            }
-        )
 
 
 class SupervisedLoss(torchrl.objectives.LossModule):
@@ -285,7 +259,8 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
         in_keys=[ActorCritic.default_keys.current_embedding],
         out_keys=[ActorCritic.default_keys.state_value],
     )
-    loss = TD0Loss(gamma=parser_args.gamma, value_operator=value_op)
+    loss = CriticLoss(critic_network=value_op)
+    loss.make_value_estimator(value_type=ValueEstimators.TD0, gamma=parser_args.gamma)
     optim_parameter = agent.parameters()
 
     return policy, value_op, loss, optim_parameter
