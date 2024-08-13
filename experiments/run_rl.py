@@ -12,7 +12,7 @@ import pymimir as mi
 import torch
 import torchrl
 from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModule
+from tensordict.nn import TensorDictModule, TensorDictSequential
 from torch.nn import Parameter
 from torch_geometric.nn import MLP
 from torchrl.envs.utils import ExplorationType, set_exploration_type
@@ -25,7 +25,12 @@ from rgnet.rl import Agent, EmbeddingModule, SimpleLoss
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.epsilon_greedy import EGreedyActorCritic, EGreedyAgent, EpsilonAnnealing
+from rgnet.rl.epsilon_greedy import (
+    EGreedyActorCritic,
+    EGreedyModule,
+    EpsilonAnnealing,
+    ValueModule,
+)
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer_hooks import (
@@ -76,8 +81,8 @@ class TD0Loss(torchrl.objectives.LossModule):
 
     def forward(self, tensordict: TensorDictBase):
         td = tensordict.clone(False)
-        estimates = self.value_operator(td)[Agent.default_keys.state_value].squeeze()
         self.td0(td)
+        estimates = self.value_operator(td)[Agent.default_keys.state_value].squeeze()
         targets = td[self.td0.value_target_key].squeeze()
         loss_out = torch.nn.functional.mse_loss(estimates, targets, reduction="none")
         return TensorDict(
@@ -257,12 +262,19 @@ def build_env(space, batch_size, embedding):
 
 def resolve_egreedy(parser_args, embedding, value_net, env_keys):
     epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
-    agent = EGreedyAgent(
-        epsilon_manager=epsilon_annealing,
+    agent = ValueModule(
         embedding=embedding,
         value_net=value_net,
     )
-    policy = agent.as_td_module(env_keys.transitions, env_keys.action)
+    policy = TensorDictSequential(
+        agent.as_td_module(env_keys.transitions, env_keys.action),
+        EGreedyModule(
+            epsilon_annealing,
+            env_keys.transitions,
+            env_keys.action,
+            log_epsilon_actions=True,
+        ),
+    )
 
     value_op = ValueOperator(
         value_net,
@@ -276,16 +288,23 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
 
 
 def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
-    if not parser_args.use_epsilon_for_actor_critic:
-        agent = Agent(embedding, value_net=value_net)
-    else:
-        epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
-        agent = EGreedyActorCritic(epsilon_annealing, embedding, value_net=value_net)
+    agent = Agent(embedding, value_net=value_net)
     policy = agent.as_td_module(
         env_keys.state,
         env_keys.transitions,
         env_keys.action,
     )
+    if parser_args.use_epsilon_for_actor_critic:
+        epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
+        policy = TensorDictSequential(
+            policy,
+            EGreedyModule(
+                epsilon_annealing,
+                env_keys.transitions,
+                env_keys.action,
+                log_epsilon_actions=True,
+            ),
+        )
     value_op = agent.value_operator
     # includes policy, value_net and embeddings
     # use different learning rates for the policy and the value net
@@ -451,7 +470,7 @@ def run(
         logging_keys=[
             Agent.default_keys.probs,
             PlanningEnvironment.default_keys.action,
-            EGreedyAgent.AcceptedKeys.epsilon_action_key,
+            EGreedyModule.AcceptedKeys.epsilon_action_key,
         ]
     )
     logging_hook.register(trainer, "logging_hook")
@@ -493,10 +512,10 @@ def run(
             ],
             out_dir / "probs.pt",
         )
-    if logging_hook.logging_dict[EGreedyAgent.default_keys.epsilon_action_key]:
+    if logging_hook.logging_dict[EGreedyModule.default_keys.epsilon_action_key]:
         torch.save(
             torch.stack(
-                logging_hook.logging_dict[EGreedyAgent.default_keys.epsilon_action_key]
+                logging_hook.logging_dict[EGreedyModule.default_keys.epsilon_action_key]
             ),
             out_dir / "epsilon.pt",
         )
