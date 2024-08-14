@@ -25,17 +25,21 @@ class EpsilonAnnealing:
         assert (
             epsilon_init >= epsilon_end
         ), "epsilon_init must be greater than or equal to epsilon_end"
-        self.epsilon = epsilon_init
-        self.eps_init = epsilon_init
-        self.eps_end = epsilon_end
-        self.annealing_steps = annealing_steps
-        self.eps_step = (epsilon_init - epsilon_end) / annealing_steps
+        self._epsilon = epsilon_init
+        self._eps_init = epsilon_init
+        self._eps_end = epsilon_end
+        self._annealing_steps = annealing_steps
+        self._eps_step = (epsilon_init - epsilon_end) / annealing_steps
 
     def step_epsilon(self):
-        self.epsilon = max(
-            self.eps_end,
-            (self.epsilon - self.eps_step),
+        self._epsilon = max(
+            self._eps_end,
+            (self._epsilon - self._eps_step),
         )
+
+    @property
+    def epsilon(self):
+        return self._epsilon
 
     @staticmethod
     def from_parser_args(parser_args):

@@ -1,12 +1,26 @@
-from test.fixtures import embedding_mock, small_blocks
+import math
+from test.fixtures import small_blocks
 
 import mockito
 import pytest
 import torch
 
-from rgnet.rl.agents import EGreedyModule, EpsilonAnnealing, ValueModule
+from rgnet.rl.agents import EGreedyModule, EpsilonAnnealing
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+
+
+def test_step_epsilon():
+    annealing = EpsilonAnnealing(epsilon_init=0.5, epsilon_end=0.1, annealing_steps=5)
+    assert annealing.epsilon == 0.5
+    annealing.step_epsilon()
+    assert math.isclose(annealing.epsilon, 0.5 - (0.5 - 0.1) / 5, abs_tol=0.001)
+    annealing.step_epsilon()
+    annealing.step_epsilon()
+    annealing.step_epsilon()
+    assert not math.isclose(annealing.epsilon, 0.1, abs_tol=0.001)
+    annealing.step_epsilon()
+    assert math.isclose(annealing.epsilon, 0.1, abs_tol=0.001)
 
 
 @pytest.mark.parametrize("batch_size", [2])
