@@ -92,7 +92,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             **{
                 # a pymimir.State object
                 self._keys.state: NonTensorSpec(shape=batch_size),
-                # a List[pymimir.Transition]
+                # a List[pymimir.Transition] might be empty
                 self._keys.transitions: NonTensorSpec(shape=batch_size),
                 # a pymimir.LiteralList object
                 self._keys.goals: NonTensorSpec(shape=batch_size),
@@ -101,7 +101,8 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
         # Defines what else the step function requires beside the "action" entry
         self.state_spec = CompositeSpec(shape=batch_size)  # a.k.a. void
-        self.action_spec = NonTensorSpec(shape=batch_size)  # a pymimir.State object
+        # For states without outgoing transitions the action will be None
+        self.action_spec = NonTensorSpec(shape=batch_size)  # Optional[pymimir.State]
         self.reward_spec: BoundedTensorSpec = BoundedTensorSpec(
             low=-1.0,
             high=1.0,
@@ -142,8 +143,13 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def compute_reward(
         self, actions: List[mi.Transition], done: torch.Tensor
     ) -> torch.Tensor:
-        """Implementations of this method might vary the reward with the done signal."""
-        return self._minus_one_rewards  # precomputed as it never changes
+        """Implementations of this method might vary the reward with the done signal.
+        Default gives 0 if the source state is a goal, -1 otherwise. This way the
+        goal state should have a value of 0.
+        """
+        return torch.where(
+            done, torch.tensor(0.0, device=done.device), self._minus_one_rewards
+        )
 
     def create_td(
         self, source: TensorDictBase | dict[str, CompatibleType] | None = None
@@ -192,26 +198,47 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def _replace_active_instance(self, index: int):
         self._active_instances[index] = next(self._next_active_iterator)
 
+    def _apply_transition_or_stay(
+        self,
+        i: int,
+        transition: Optional[mi.Transition],
+        current_states: List[mi.State],
+    ):
+        if transition:
+            return transition.target
+        else:
+            # Check that there were no transitions available
+            state = current_states[i]
+            assert (
+                len(self.transitions_for(self._active_instances[i], state)) == 0
+            ), "Got None transition for state with available transitions."
+        return state
+
     def _step(self, tensordict: TensorDict) -> TensorDict:
         """Perform a step in the environment.
         Apply the action, compute a new state, render pixels and determine reward, termination and valid next actions.
+        The trajectory is done after a goal state is visited!
         NOTE that EnvBase.step() already checks that the batch_size matches.
         :param td (TensorDict): TensorDict with state and action.
         :returns TensorDict: Output TensorDict.
         """
 
-        # get action
-        # using [] should automatically trigger .tolist for NonTensorData/Stack
-        actions = tensordict[self._keys.action]
+        current_states: List[mi.State] = tensordict[self._keys.state]
+
+        actions: List[Optional[mi.Transition]] = tensordict[self._keys.action]
         assert isinstance(actions, list)  # batch of chosen-transitions
 
-        next_states = [transition.target for transition in actions]
+        # Apply the transition or stay in the current state if none are available.
+        next_states = [
+            self._apply_transition_or_stay(i, transition, current_states)
+            for i, transition in enumerate(actions)
+        ]
 
         # check for termination and reward
         done = torch.tensor(
             [
                 self.is_goal(instance, state)
-                for (instance, state) in zip(self._active_instances, next_states)
+                for (instance, state) in zip(self._active_instances, current_states)
             ],
             dtype=torch.bool,
         )

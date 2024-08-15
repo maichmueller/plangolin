@@ -66,22 +66,26 @@ def test_reset(multi_instance_env, batch_size):
 @pytest.mark.parametrize("batch_size", [1, 2, 3])
 def test_partial_reset(multi_instance_env, batch_size):
     small_space, medium_space, environment = multi_instance_env
+    spaces = [small_space, medium_space]
 
     goal_state = small_space.get_goal_states()[0]
-    transition_to_goal = small_space.get_backward_transitions(goal_state)[0]
+    transition_from_goal = small_space.get_forward_transitions(goal_state)[0]
 
     keys = environment.keys
 
-    # Set the initial states such that (only) the first batch entry reaches the goal.
-    td = environment.reset()
+    # Set the initial states such that (only) the first batch entry will be done
+    batch_space_indices: List[int] = [0, 1, 0][:batch_size]
+    initial_states = [spaces[idx].get_initial_state() for idx in batch_space_indices]
+    initial_states[0] = goal_state
+    td = environment.reset(states=initial_states)
     td = environment.rand_action(td)
 
     actions: List[mi.Transition] = td[keys.action]
-    actions[0] = transition_to_goal
+    actions[0] = transition_from_goal
     td[keys.action] = as_non_tensor_stack(actions)
 
     tensordict, next_tensordict = environment.step_and_maybe_reset(td)
-    # On ly the first batch entry is done
+    # Only the first batch entry is done.
     assert (
         tensordict[("next", "done")].nonzero().view(-1) == torch.tensor([0, 0])
     ).all()
@@ -100,7 +104,7 @@ def test_partial_reset(multi_instance_env, batch_size):
     assert next_tensordict[keys.state] == expected_next_states
 
     # If the partial reset was not handled then the non-reset entries will misbehave.
-    # batch_size = 1 is trivial as its just a full reset
+    # batch_size = 1 is trivial as it's just a full reset
     # For batch_size = 2 we have batch_size == len(all_instances) therefore every space is
     # replaced by itself.
     # For batch_size = 3 we have:
