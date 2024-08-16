@@ -3,6 +3,7 @@ from test.fixtures import embedding_mock, small_blocks
 import mockito
 import pytest
 import torch
+from rl.envs.test_state_space_env import get_expected_next_keys, get_expected_root_keys
 
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
@@ -33,16 +34,9 @@ def test_forward(small_blocks, embedding_mock, batch_size):
     td = transformed.reset()
 
     env_keys = env.keys
-    expected_keys = sorted(
-        [
-            "current_embedding",
-            env_keys.done,
-            env_keys.goals,
-            env_keys.state,
-            env_keys.terminated,
-            env_keys.transitions,
-        ]
-    )
+    expected_keys = get_expected_root_keys(env)
+    expected_keys.append("current_embedding")
+    expected_keys = sorted(expected_keys)
     assert td.sorted_keys == expected_keys
     mockito.verify(embedding_mock, times=1).forward(
         match_non_tensor_stack(td.get(env_keys.state))
@@ -54,13 +48,8 @@ def test_forward(small_blocks, embedding_mock, batch_size):
     expected_next_keys = sorted(
         [
             "current_embedding",
-            env_keys.done,
-            env_keys.goals,
-            env_keys.reward,
-            env_keys.state,
-            env_keys.terminated,
-            env_keys.transitions,
         ]
+        + get_expected_next_keys(env)
     )
     assert td["next"].sorted_keys == expected_next_keys
     mockito.verify(embedding_mock, times=1).forward(

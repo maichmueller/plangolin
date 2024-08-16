@@ -1,12 +1,12 @@
 from test.fixtures import small_blocks
-from typing import Iterable
+from typing import Iterable, List
 
 import pytest
 import torch
-from tensordict import NonTensorStack, TensorDict
+from tensordict import NestedKey, NonTensorStack, TensorDict
 
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
 def create_state_space(batch_size, blocks, seed=42):
@@ -22,13 +22,7 @@ def create_state_space(batch_size, blocks, seed=42):
 def test_reset(batch_size, small_blocks):
     space, environment = create_state_space(batch_size, small_blocks)
     td = environment.reset()
-    expected_keys = [
-        ExpandedStateSpaceEnv.default_keys.done,
-        ExpandedStateSpaceEnv.default_keys.goals,
-        ExpandedStateSpaceEnv.default_keys.state,
-        ExpandedStateSpaceEnv.default_keys.terminated,
-        ExpandedStateSpaceEnv.default_keys.transitions,
-    ]
+    expected_keys = get_expected_root_keys(environment)
 
     assert td.sorted_keys == expected_keys
 
@@ -38,23 +32,37 @@ def test_reset(batch_size, small_blocks):
     assert out.sorted_keys == expected_keys
 
 
+def get_expected_root_keys(
+    environment: PlanningEnvironment, with_action: bool = False
+) -> List[NestedKey]:
+    all_keys = (
+        environment.done_keys
+        + list(environment.full_observation_spec.keys(True, True))
+        + list(environment.full_state_spec.keys(True, True))
+    )
+    if with_action:
+        all_keys.append(environment.keys.action)
+    return sorted(all_keys)
+
+
+def get_expected_next_keys(
+    environment: PlanningEnvironment, with_action: bool = False
+) -> List[NestedKey]:
+    return sorted(
+        get_expected_root_keys(environment, with_action) + environment.reward_keys
+    )
+
+
 def _test_rollout_soundness(
     space,
     rollout,
     batch_size,
     rollout_length,
     initial_state,
-    expected_keys: Iterable = None,
+    expected_root_keys: Iterable[NestedKey] = None,
+    set_truncated: bool = False,
 ):
 
-    expected_root_keys = expected_keys or [
-        ExpandedStateSpaceEnv.default_keys.action,
-        ExpandedStateSpaceEnv.default_keys.done,
-        ExpandedStateSpaceEnv.default_keys.goals,
-        ExpandedStateSpaceEnv.default_keys.state,
-        ExpandedStateSpaceEnv.default_keys.terminated,
-        ExpandedStateSpaceEnv.default_keys.transitions,
-    ]
     assert "next" in rollout.keys()
     expected_root_keys = sorted(expected_root_keys)
 
@@ -82,11 +90,26 @@ def _test_rollout_soundness(
             assert batched_transitions[batch_idx][time_step] == transitions
             assert batched_actions[batch_idx][time_step] in transitions
             if time_step == rollout_length - 1:
+                if set_truncated:
+                    assert rollout["next", keys.done][batch_idx][time_step]
+                    assert rollout["next", keys.truncated][batch_idx][time_step]
                 continue
             # If we transition into a done-state, torchrl will reset directly and
             # replace the done state with a reset state
-            if space.is_goal_state(rollout[keys.action][batch_idx][time_step].source):
+            # The environment will set terminated if a goal state is left!
+            available_transitions: List = rollout[keys.transitions][batch_idx][
+                time_step
+            ]
+            is_dead_end = (
+                len(available_transitions) == 1
+                and available_transitions[0].action is None
+            )
+            if (
+                space.is_goal_state(rollout[keys.action][batch_idx][time_step].source)
+                or is_dead_end
+            ):
                 assert rollout["next", keys.done][batch_idx][time_step]
+                assert rollout["next", keys.terminated][batch_idx][time_step]
                 assert (
                     rollout["next", keys.state][batch_idx][time_step]
                     == rollout[keys.action][batch_idx][time_step].target
@@ -102,14 +125,24 @@ def _test_rollout_soundness(
 @pytest.mark.parametrize("batch_size", [1, 2, 3])
 # for seed=0 a partial reset is necessary because a goal is encountered
 @pytest.mark.parametrize("seed", [0, 42])
-def test_rollout_random(batch_size, small_blocks, seed):
+@pytest.mark.parametrize("set_truncated", [True, False])
+def test_rollout_random(batch_size, small_blocks, seed, set_truncated):
     space, environment = create_state_space(batch_size, small_blocks, seed)
     rollout_length = 5
     rollout = environment.rollout(
-        rollout_length, break_when_any_done=False, auto_reset=True
+        rollout_length,
+        break_when_any_done=False,
+        auto_reset=True,
+        set_truncated=set_truncated,
     )
     _test_rollout_soundness(
-        space, rollout, batch_size, rollout_length, environment._initial_state
+        space,
+        rollout,
+        batch_size,
+        rollout_length,
+        environment._initial_state,
+        expected_root_keys=get_expected_root_keys(environment, with_action=True),
+        set_truncated=set_truncated,
     )
 
 
@@ -158,14 +191,7 @@ def test_step_mdp(batch_size, small_blocks):
     td = environment.rand_step(td)
     next_td = environment._step_mdp(td)
 
-    expected_keys = [
-        ExpandedStateSpaceEnv.default_keys.action,
-        ExpandedStateSpaceEnv.default_keys.done,
-        ExpandedStateSpaceEnv.default_keys.goals,
-        ExpandedStateSpaceEnv.default_keys.state,
-        ExpandedStateSpaceEnv.default_keys.terminated,
-        ExpandedStateSpaceEnv.default_keys.transitions,
-    ]
+    expected_keys = get_expected_root_keys(environment, with_action=True)
     assert next_td.sorted_keys == expected_keys
 
     for tensor_key in (

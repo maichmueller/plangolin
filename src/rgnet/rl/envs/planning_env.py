@@ -1,5 +1,7 @@
 import abc
 import dataclasses
+import logging
+import warnings
 from itertools import cycle
 from typing import Generic, List, Optional, Tuple, TypeVar
 
@@ -7,9 +9,15 @@ import pymimir as mi
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
-from torchrl.data import BoundedTensorSpec, CompositeSpec, NonTensorSpec
+from torchrl.data import (
+    BoundedTensorSpec,
+    CompositeSpec,
+    DiscreteTensorSpec,
+    NonTensorSpec,
+)
 from torchrl.envs import EnvBase
 
+from rgnet.rl.envs.manual_transition import MTransition
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
 
 InstanceType = TypeVar("InstanceType")
@@ -27,9 +35,20 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     round-robin manner.
     Note that this means that during a rollout states of a single batch can stem from
     different instances.
+
+    There will always be at least one possible transition, if transitions_for returns
+    an empty list the environment will add a transition that leads to the same state.
+    After such a transition the episode will be terminated.
     """
 
     batch_locked: bool = True
+    # Default rewards
+    # The reward precedence is default reward < dead end reward < goal reward.
+    # In order to avoid unnecessary dead-end trajectories we give a custom reward
+    # instead which should be equal to an infinite trajectory.
+    default_dead_end_reward: float = -10.0  # this should be set to 1 / (1- gamma)
+    default_goal_reward: float = 0.0
+    default_reward: float = -1.0
 
     @dataclasses.dataclass(frozen=True)
     class AcceptedKeys:
@@ -51,6 +70,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         seed: Optional[int] = None,
         device: str = "cpu",
         keys: AcceptedKeys = default_keys,
+        custom_dead_end_reward: Optional[float] = None,
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
         super().__init__(device=device, batch_size=batch_size)
@@ -69,9 +89,17 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         self._next_active_iterator = cycle(self._all_instances)
 
         # We return the unit cost of one (reward=-1) for every action.
-        self._minus_one_rewards = torch.full(
-            size=self.batch_size, fill_value=-1.0, dtype=torch.float
+        self._default_reward_tensor = torch.full(
+            size=self.batch_size,
+            fill_value=self.default_reward,
+            dtype=torch.float,
+            device=self.device,
         )
+        self._dead_end_reward: float = (
+            custom_dead_end_reward or self.default_dead_end_reward
+        )
+        self._custom_dead_end_reward_was_set: bool = custom_dead_end_reward is not None
+        self._goal_reward: float = self.default_goal_reward
         self._make_spec()
 
     @property
@@ -107,7 +135,23 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             low=-1.0,
             high=1.0,
             dtype=torch.float32,
-            shape=torch.Size([batch_size[0], 1]),
+            shape=torch.Size((*batch_size, 1)),
+        )
+        self.done_spec = CompositeSpec(
+            **{
+                # a boolean tensor indicating whether the episode is done
+                self.keys.done: DiscreteTensorSpec(
+                    n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
+                ),
+                self.keys.terminated: DiscreteTensorSpec(
+                    n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
+                ),
+                # We don't set truncated, but can be set in rollout
+                self.keys.truncated: DiscreteTensorSpec(
+                    n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
+                ),
+            },
+            shape=torch.Size(batch_size),
         )
 
     @abc.abstractmethod
@@ -140,22 +184,74 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         """
         pass
 
-    def compute_reward(
-        self, actions: List[mi.Transition], done: torch.Tensor
-    ) -> torch.Tensor:
-        """Implementations of this method might vary the reward with the done signal.
-        Default gives 0 if the source state is a goal, -1 otherwise. This way the
-        goal state should have a value of 0.
-        """
-        return torch.where(
-            done, torch.tensor(0.0, device=done.device), self._minus_one_rewards
-        )
-
     def create_td(
         self, source: TensorDictBase | dict[str, CompatibleType] | None = None
     ) -> TensorDict:
         """Generate an empty tensordict with the correct device and batch-size.."""
         return TensorDict(source or {}, batch_size=self.batch_size, device=self.device)
+
+    @staticmethod
+    def is_dead_end_transition(transition: mi.Transition) -> bool:
+        return transition.action is None
+
+    def get_reward_and_done(
+        self, actions: List[mi.Transition], current_states: List[mi.State]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the reward and done signal for the current state and actions taken.
+        The method is called from step, therefore current_states refers to the states
+        before the actions are taken.
+        :param actions: The actions taken by the agent.
+        :param current_states: Just for convenience, the states before the actions are taken.
+            current_states == [transition.source for transition in actions]
+        :return A tuple containing the rewards and done signal for the actions
+        """
+        is_goal: torch.Tensor = torch.tensor(
+            [
+                self.is_goal(self._active_instances[idx], current_states[idx])
+                for idx in range(len(current_states))
+            ],
+            dtype=torch.bool,
+            device=self.device,
+        )
+
+        is_dead_end: torch.Tensor = torch.tensor(
+            [self.is_dead_end_transition(a) for a in actions],
+            dtype=torch.bool,
+            device=self.device,
+        )
+        # Its important that we first compute dead end rewards and then the goal reward
+        # as a goal state that is a dead end should primarily count as goal state.
+        dead_end_rewards = torch.where(
+            condition=~is_dead_end,
+            input=self._default_reward_tensor,
+            other=self._dead_end_reward,
+        )
+        rewards = torch.where(
+            condition=~is_goal,
+            input=dead_end_rewards,
+            other=self._goal_reward,
+        )
+
+        if is_dead_end.any() and not self._custom_dead_end_reward_was_set:
+            warnings.warn(
+                "Encountered dead-end state but no custom reward was set. "
+                f"Using default reward of {self._dead_end_reward}."
+            )
+        return rewards, is_goal | is_dead_end
+
+    def get_applicable_transitions(
+        self, states: List[mi.State]
+    ) -> List[List[mi.Transition]]:
+        # We don't want empty transitions, therefore we add an artificial transition,
+        # whenever we encounter dead-end states.
+        return [
+            self.transitions_for(instance, state) or [MTransition(state, None, state)]
+            for (instance, state) in zip(self._active_instances, states)
+        ]
+
+    def _replace_active_instance(self, index: int):
+        self._active_instances[index] = next(self._next_active_iterator)
 
     def rand_action(
         self, tensordict: Optional[TensorDictBase] = None
@@ -187,30 +283,19 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
         return tensordict
 
-    def get_applicable_transitions(
-        self, states: List[mi.State]
-    ) -> List[List[mi.Transition]]:
-        return [
-            self.transitions_for(instance, state)
-            for (instance, state) in zip(self._active_instances, states)
-        ]
-
-    def _replace_active_instance(self, index: int):
-        self._active_instances[index] = next(self._next_active_iterator)
-
     def _apply_transition_or_stay(
         self,
-        i: int,
+        idx: int,
         transition: Optional[mi.Transition],
         current_states: List[mi.State],
     ):
         if transition:
             return transition.target
         else:
-            # Check that there were no transitions available
-            state = current_states[i]
+            # Check that there were no transitions available.
+            state = current_states[idx]
             assert (
-                len(self.transitions_for(self._active_instances[i], state)) == 0
+                len(self.transitions_for(self._active_instances[idx], state)) == 0
             ), "Got None transition for state with available transitions."
         return state
 
@@ -234,23 +319,15 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             for i, transition in enumerate(actions)
         ]
 
-        # check for termination and reward
-        done = torch.tensor(
-            [
-                self.is_goal(instance, state)
-                for (instance, state) in zip(self._active_instances, current_states)
-            ],
-            dtype=torch.bool,
-        )
-        reward = self.compute_reward(actions, done)
+        applicable_transitions = self.get_applicable_transitions(next_states)
+        # We terminate if either we came from a goal or from a dead end.
+        reward, done = self.get_reward_and_done(actions, current_states)
         assert reward.shape == done.shape
 
         return self.create_td(
             {
                 self._keys.state: as_non_tensor_stack(next_states),
-                self._keys.transitions: as_non_tensor_stack(
-                    self.get_applicable_transitions(next_states)
-                ),
+                self._keys.transitions: as_non_tensor_stack(applicable_transitions),
                 self._keys.goals: tensordict.get(self._keys.goals),
                 self._keys.reward: reward,
                 self._keys.done: done,
@@ -302,6 +379,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             initial_states = states
 
         initial_transitions = self.get_applicable_transitions(initial_states)
+
         out = self.create_td(
             {
                 self._keys.state: as_non_tensor_stack(initial_states),

@@ -201,7 +201,10 @@ class ActorCritic(torch.nn.Module):
         NonTensorStack, torch.Tensor, torch.Tensor, NonTensorStack, NonTensorStack
     ]:
 
-        transitions = non_tensor_to_list(transitions)
+        transitions: List[List[mi.Transition]] = non_tensor_to_list(transitions)
+        assert all(
+            len(ts) > 0 for ts in transitions
+        ), "Found empty transition, environment should reset on dead-end states."
         if current_embedding is None:
             current_embedding = self._embedding_module(state)
         successor_embeddings: Tuple[Tensor, ...] = embed_transition_targets(

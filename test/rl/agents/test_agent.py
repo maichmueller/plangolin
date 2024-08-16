@@ -1,5 +1,8 @@
 from test.fixtures import embedding_mock, medium_blocks, small_blocks
-from test.rl.envs.test_state_space_env import _test_rollout_soundness
+from test.rl.envs.test_state_space_env import (
+    _test_rollout_soundness,
+    get_expected_root_keys,
+)
 from typing import List
 
 import mockito
@@ -58,24 +61,20 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
     )
 
     env_keys = environment.keys
-    expected_keys = {
-        env_keys.action,
-        agent.keys.current_embedding,
-        env_keys.done,
-        env_keys.goals,
-        env_keys.transitions,
-        env_keys.state,
-        env_keys.terminated,
-        agent.keys.log_probs,
-        agent.keys.probs,
-    }
+    expected_keys = set(get_expected_root_keys(environment, with_action=True)).union(
+        {
+            agent.keys.current_embedding,
+            agent.keys.log_probs,
+            agent.keys.probs,
+        }
+    )
     _test_rollout_soundness(
         space,
         rollout,
         batch_size,
         rollout_length,
         environment._initial_state,
-        expected_keys,
+        expected_root_keys=expected_keys,
     )
 
     # test that the probability tensors have no probability-mass in the padded regions.

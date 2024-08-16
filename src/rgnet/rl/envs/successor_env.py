@@ -3,7 +3,8 @@ from typing import List, Optional, Tuple
 import pymimir as mi
 import torch
 
-from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
+from rgnet.rl.envs.manual_transition import MTransition
+from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
 class SuccessorEnvironment(
@@ -36,38 +37,3 @@ class SuccessorEnvironment(
 
     def is_goal(self, active_instance: Tuple, state: mi.State) -> bool:
         return state.matches_all(active_instance[1].goal)
-
-
-class MTransition(mi.Transition):
-    """There is sadly no constructor for mi.Transition, which is really just a data class"""
-
-    def __init__(self, source: mi.State, action: mi.Action, target: mi.State):
-        super().__init__()
-        self._source = source
-        self._action = action
-        self._target = target
-
-    @property
-    def action(self):
-        return self._action
-
-    @property
-    def source(self):
-        return self._source
-
-    @property
-    def target(self):
-        return self._target
-
-    def __repr__(self):
-        return "%s(%r)" % (self.__class__, self.__dict__)
-
-    def __eq__(self, __value):
-        return isinstance(__value, mi.Transition) and (
-            __value.action == self.action
-            and __value.source == self.source
-            and __value.target == self.target
-        )
-
-    def __hash__(self):
-        return hash((self.source, self.action, self.target))

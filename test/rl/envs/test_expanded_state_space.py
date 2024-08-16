@@ -4,6 +4,7 @@ from typing import List, Tuple
 import pymimir as mi
 import pytest
 import torch
+from rl.envs.test_state_space_env import get_expected_root_keys
 from tensordict import TensorDict
 
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
@@ -33,13 +34,7 @@ def test_reset(multi_instance_env, batch_size):
     small_space, medium_space, environment = multi_instance_env
 
     td = environment.reset()
-    expected_keys = [
-        ExpandedStateSpaceEnv.default_keys.done,
-        ExpandedStateSpaceEnv.default_keys.goals,
-        ExpandedStateSpaceEnv.default_keys.state,
-        ExpandedStateSpaceEnv.default_keys.terminated,
-        ExpandedStateSpaceEnv.default_keys.transitions,
-    ]
+    expected_keys = get_expected_root_keys(environment)
     assert td.sorted_keys == expected_keys
 
     if batch_size == 1:
