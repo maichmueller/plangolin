@@ -2,6 +2,7 @@ import logging
 from abc import ABC, ABCMeta, abstractmethod
 from typing import Any, Dict, List
 
+import pymimir as mi
 import torch
 from tensordict import NestedKey
 from torchrl.trainers import Trainer, TrainerHookBase
@@ -41,7 +42,7 @@ class ValueFunctionConverged(EarlyStoppingTrainerHook):
         self,
         value_operator,
         reset_func,
-        optimal_values_lookup,
+        optimal_values_lookup: Dict[mi.State, float],
         atol=0.1,
         state_value_key=ActorCritic.default_keys.state_value,
     ):
@@ -62,11 +63,12 @@ class ValueFunctionConverged(EarlyStoppingTrainerHook):
             )
             self.state_value_history.append(predicted_values.detach().cpu())
             self.value_operator.train()
-            true_values = torch.stack(
+            true_values = torch.tensor(
                 [
                     self.optimal_values_lookup[s]
                     for s in td[PlanningEnvironment.default_keys.state]
-                ]
+                ],
+                device=predicted_values.device,
             )
             return torch.allclose(true_values, predicted_values, atol=self.atol)
 

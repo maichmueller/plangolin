@@ -2,16 +2,15 @@ import argparse
 import itertools
 import logging
 import pathlib
-from collections import defaultdict
 from datetime import datetime
 from distutils.util import strtobool
 from pathlib import Path
-from typing import Any, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import pymimir as mi
 import torch
 import torchrl
-from tensordict import TensorDict, TensorDictBase
+from pymimir import State
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from torch.nn import Parameter
 from torch_geometric.nn import MLP
@@ -26,6 +25,8 @@ from rgnet.rl.agents import (
     EGreedyActorCriticHook,
     EGreedyModule,
     EpsilonAnnealing,
+    OptimalPolicy,
+    OptimalValueFunction,
     ValueModule,
 )
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
@@ -59,33 +60,13 @@ def transformed_environment(space, embedding_module, batch_size):
 
 def calc_optimal_values(
     states, space: mi.StateSpace, gamma: float, device=torch.device("cpu")
-):
+) -> torch.Tensor:
     distances = torch.tensor(
         [space.get_distance_to_goal_state(s) for s in states],
         dtype=torch.int,
         device=device,
     )
     return -(1 - gamma**distances) / (1 - gamma)
-
-
-class SupervisedLoss(torchrl.objectives.LossModule):
-
-    def __init__(self, value_op: ValueOperator, optimal_values: torch.Tensor):
-        super().__init__()
-        self.value_op = value_op
-        self.optimal_values = optimal_values
-
-    def forward(self, tensordict: TensorDictBase) -> TensorDictBase:
-        td = tensordict.clone(False)
-        self.value_op(td)
-        estimates = td[ActorCritic.default_keys.state_value].squeeze()
-        return TensorDict(
-            {
-                "loss_critic": torch.nn.functional.mse_loss(
-                    estimates, self.optimal_values, reduction="mean"
-                )
-            }
-        )
 
 
 def simple_linear_net(hidden_size: int):
@@ -107,20 +88,25 @@ def log_num_parameter(optimizer: torch.optim.Optimizer):
     logging.info(f"Training {num_params} parameter.")
 
 
-def validate(policy, value_op, env, space: mi.StateSpace, gamma, env_keys, atol=0.1):
+def validate(
+    policy, value_op, env, space: mi.StateSpace, optimal_values_dict, env_keys, atol=0.1
+):
     # --- Evaluate the agent --- #
     # NOTE that the embeddings are calculated with reset()
     #   Therefore, the eval_td should only be created after training!
-    non_goal_states = [s for s in space.get_states() if not space.is_goal_state(s)]
-    eval_td = env.reset(states=non_goal_states)
-    optimal_values = calc_optimal_values(non_goal_states, space, gamma)
-    predicted_values = (
+    eval_td = env.reset(states=space.get_states())
+    predicted_values: torch.Tensor = (
         value_op(eval_td).get(ActorCritic.default_keys.state_value).squeeze(-1)
+    )
+
+    optimal_values = torch.tensor(
+        [optimal_values_dict[s] for s in eval_td[env_keys.state]],
+        device=predicted_values.device,
     )
     logging.info(
         "--------------------------------Validation--------------------------------"
     )
-    logging.info(f"{torch.nn.functional.l1_loss(optimal_values, predicted_values)=}")
+    logging.info(f"{torch.nn.functional.mse_loss(optimal_values, predicted_values)=}")
     logging.info(f"{torch.allclose(optimal_values, predicted_values, atol=atol)=}")
 
     if policy is None:
@@ -231,11 +217,39 @@ def build_env(space, batch_size, embedding):
     states = space.get_states()
     logging.info(f"{len(states)=}")
     num_states = len(states)
-    non_goal_states = [s for s in states if not space.is_goal_state(s)]
-    batch_size = batch_size or (num_states - 1)
+    batch_size = batch_size or num_states
     env = transformed_environment(space, embedding, batch_size=batch_size)
 
-    return env, non_goal_states
+    return env
+
+
+def resolve_value_estimator(
+    parser_args,
+    loss: CriticLoss,
+    device: torch.device,
+    env_keys: PlanningEnvironment.AcceptedKeys,
+    optimal_values_dict: Dict[mi.State, float],
+):
+    # shifted = True ->  the value and next value are estimated with a single call to the value network.
+    # Also, important as otherwise torchrl uses vmap which breaks things.
+    if parser_args.supervised_loss:
+        ovf = OptimalValueFunction(optimal_values=optimal_values_dict, device=device)
+        value_operator = ovf.as_td_module(
+            state_key=env_keys.state,
+            state_value_key=ActorCritic.default_keys.state_value,
+        )
+        loss.make_value_estimator(
+            value_type=ValueEstimators.TD0,
+            optimal_targets=value_operator,
+            gamma=parser_args.gamma,
+            shifted=True,
+        )
+    else:
+        loss.make_value_estimator(
+            ValueEstimators.TD0,
+            gamma=parser_args.gamma,
+            shifted=True,
+        )
 
 
 def resolve_egreedy(parser_args, embedding, value_net, env_keys):
@@ -269,9 +283,7 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
 def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     agent = ActorCritic(embedding, value_net=value_net)
     policy = agent.as_td_module(
-        env_keys.state,
-        env_keys.transitions,
-        env_keys.action,
+        env_keys.state, env_keys.transitions, env_keys.action, add_probs=True
     )
     if parser_args.use_epsilon_for_actor_critic:
         epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
@@ -306,7 +318,6 @@ def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     loss = ActorCriticLoss(
         agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
     )
-    loss.make_value_estimator(ValueEstimators.TD0, gamma=parser_args.gamma)
 
     return policy, value_op, loss, optim_parameter
 
@@ -315,11 +326,16 @@ def resolve_algorithm(
     parser_args,
     space,
     embedding,
-    non_goal_states,
     env_keys,
-) -> tuple[TensorDictModule | None, ValueOperator, LossModule, Iterator[Parameter]]:
+) -> tuple[
+    TensorDictModule | None,
+    ValueOperator,
+    LossModule,
+    Iterator[Parameter] | list[dict[str, Any]],
+    dict[State, float],
+]:
     policy: TensorDictModule | None
-    loss: LossModule
+    loss: CriticLoss
     value_op: ValueOperator
     optim_parameter: Iterator[torch.nn.Parameter] | List[dict[str, Any]]
 
@@ -340,20 +356,38 @@ def resolve_algorithm(
         )
 
     elif parser_args.algorithm == "supervised":
-        policy = None
+        policy = OptimalPolicy(space=space).as_td_module(
+            state_key=env_keys.state, action_key=env_keys.action
+        )
         value_op = ValueOperator(
             value_net,
             in_keys=[ActorCritic.default_keys.current_embedding],
             out_keys=[ActorCritic.default_keys.state_value],
         )
-        loss = SupervisedLoss(
-            value_op, calc_optimal_values(non_goal_states, space, parser_args.gamma)
-        )
+        loss = CriticLoss(critic_network=value_op)
         optim_parameter = itertools.chain(value_op.parameters(), embedding.parameters())
+        parser_args.supervised_loss = True  # make sure we use optimal values as targets
     else:
         raise ValueError(f"Unknown algorithm name {parser_args.algorithm}")
 
-    return policy, value_op, loss, optim_parameter
+    optimal_values = calc_optimal_values(
+        states=space.get_states(),
+        space=space,
+        gamma=parser_args.gamma,
+        device=embedding.device,
+    )
+    optimal_values_lookup: Dict[mi.State, float] = {
+        s: v.item() for s, v in zip(space.get_states(), optimal_values)
+    }
+
+    resolve_value_estimator(
+        parser_args=parser_args,
+        loss=loss,
+        device=embedding.device,
+        env_keys=env_keys,
+        optimal_values_dict=optimal_values_lookup,
+    )
+    return policy, value_op, loss, optim_parameter, optimal_values_lookup
 
 
 def resolve_and_run(parser_args):
@@ -369,43 +403,42 @@ def resolve_and_run(parser_args):
         parser_args, space=space, domain=domain, device=device
     )
 
-    env, non_goal_states = build_env(space, batch_size=None, embedding=embedding_module)
+    env = build_env(space, batch_size=None, embedding=embedding_module)
     env_keys = env.base_env.keys
 
-    policy, value_operator, loss_module, optim_params = resolve_algorithm(
-        parser_args, space, embedding_module, non_goal_states, env_keys=env_keys
+    policy, value_operator, loss_module, optim_params, optimal_values_lookup = (
+        resolve_algorithm(parser_args, space, embedding_module, env_keys=env_keys)
     )
     optimizer = torch.optim.Adam(optim_params, lr=parser_args.learning_rate)
 
-    time_stamp = datetime.now().strftime("%d-%m_%H-%M-%S")
+    time_stamp: str = datetime.now().strftime("%d-%m_%H-%M-%S")
     out_dir_root = parser_args.out_dir
     out_dir = pathlib.Path(out_dir_root) / parser_args.problem_name / time_stamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run(
         space,
-        non_goal_states,
         policy,
         value_operator,
         loss_module,
         optimizer,
         env,
-        parser_args.gamma,
+        optimal_values_lookup,
         parser_args.iterations,
         parser_args.atol,
         out_dir,
     )
+    return time_stamp
 
 
 def run(
     space,
-    non_goal_states,
     policy,
     value_operator,
     loss_module,
     optimizer,
     env,
-    gamma: float,
+    optimal_values_lookup,
     iterations: int,
     atol: float,
     out_dir: pathlib.Path,
@@ -415,15 +448,15 @@ def run(
 
     log_num_parameter(optimizer=optimizer)
 
-    def all_non_goal_states_reset(curr_env):
-        return curr_env.reset(states=non_goal_states)
+    def all_states_reset(curr_env):
+        return curr_env.reset(states=space.get_states())
 
     trainer = torchrl.trainers.Trainer(
         collector=RolloutCollector(
             environment=env,
             policy=policy,
             rollout_length=1,
-            custom_reset_func=all_non_goal_states_reset,
+            custom_reset_func=all_states_reset,
         ),
         loss_module=loss_module,
         optimizer=optimizer,
@@ -433,15 +466,11 @@ def run(
         progress_bar=True,
         save_trainer_file=trainer_file,
     )
-    optimal_values = calc_optimal_values(
-        states=non_goal_states, space=space, gamma=gamma, device=torch.device("cpu")
-    )
-    optimal_values_lookup = {s: v for s, v in zip(non_goal_states, optimal_values)}
     stopping_hook = ConsecutiveStopping(
         5,
         ValueFunctionConverged(
             value_operator=value_operator,
-            reset_func=lambda: all_non_goal_states_reset(curr_env=env),
+            reset_func=lambda: all_states_reset(curr_env=env),
             optimal_values_lookup=optimal_values_lookup,
             atol=atol,
         ),
@@ -477,7 +506,7 @@ def run(
     actions: List[List[mi.Transition]] = logging_hook.logging_dict[
         PlanningEnvironment.default_keys.action
     ]
-    forward_transitions = [space.get_forward_transitions(s) for s in non_goal_states]
+    forward_transitions = [space.get_forward_transitions(s) for s in space.get_states()]
     indices_of_actions: List[List[int]] = [
         [ft.index(action[0]) for action, ft in zip(batch_actions, forward_transitions)]
         for batch_actions in actions
@@ -502,7 +531,7 @@ def run(
             out_dir / "epsilon.pt",
         )
 
-    validate(policy, value_operator, env, space, gamma, env.keys)
+    validate(policy, value_operator, env, space, optimal_values_lookup, env.keys)
 
 
 if __name__ == "__main__":
@@ -512,7 +541,7 @@ if __name__ == "__main__":
     DEFAULT_ITERATIONS = 2_000
     DEFAULT_ATOL = 0.1
     DEFAULT_GAMMA = 0.9
-    DEFAULT_LEARNING_RATE = 0.02
+    DEFAULT_LEARNING_RATE = 0.002
 
     parser = argparse.ArgumentParser(description="Process some modules.")
     parser.add_argument(
@@ -531,6 +560,12 @@ if __name__ == "__main__":
         help="Only applies if algorithm = ac (Actor Critic)."
         "If set the parameters of the actor_net will be updated with a different"
         "learning rate then the general learning rate (--lr).",
+    )
+    parser.add_argument(
+        "--supervised_loss",
+        type=lambda x: bool(strtobool(str(x))),
+        required=False,
+        default=False,
     )
     parser.add_argument(
         "--log_prob_clip_value",
@@ -622,4 +657,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    resolve_and_run(args)
+    time_stamp = resolve_and_run(args)

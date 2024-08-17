@@ -3,13 +3,9 @@ from typing import Optional
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
+from tensordict.nn import TensorDictModule
 from torchrl.modules import ValueOperator
-from torchrl.objectives import (
-    LossModule,
-    ValueEstimators,
-    default_value_kwargs,
-    distance_loss,
-)
+from torchrl.objectives import LossModule, ValueEstimators, distance_loss
 from torchrl.objectives.utils import _reduce
 from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
 
@@ -27,6 +23,7 @@ class CriticLoss(LossModule):
 
     default_keys = _AcceptedKeys()
     tensor_keys: _AcceptedKeys
+    default_value_estimator = ValueEstimators.TD0
 
     def __init__(
         self,
@@ -74,26 +71,34 @@ class CriticLoss(LossModule):
         batch_less_loss = _reduce(loss_critic, self.reduction)
         return TensorDict({self.loss_components[0]: batch_less_loss}, batch_size=[])
 
-    def make_value_estimator(self, value_type: ValueEstimators = None, **hyperparams):
+    def make_value_estimator(
+        self,
+        value_type: ValueEstimators = None,
+        optimal_targets: Optional[TensorDictModule] = None,
+        **hyperparams,
+    ):
         """Taken from ReinforceLoss.make_value_estimator."""
         if value_type is None:
             value_type = self.default_value_estimator
         self.value_type = value_type
-        hp = dict(default_value_kwargs(value_type))
-        hp.update(hyperparams)
+        value_network_for_target_values = self.critic_network
+        if optimal_targets:
+            value_network_for_target_values = optimal_targets
         if value_type == ValueEstimators.TD1:
             self._value_estimator = TD1Estimator(
-                value_network=self.critic_network, **hp
+                value_network=value_network_for_target_values, **hyperparams
             )
         elif value_type == ValueEstimators.TD0:
             self._value_estimator = TD0Estimator(
-                value_network=self.critic_network, **hp
+                value_network=value_network_for_target_values, **hyperparams
             )
         elif value_type == ValueEstimators.GAE:
-            self._value_estimator = GAE(value_network=self.critic_network, **hp)
+            self._value_estimator = GAE(
+                value_network=value_network_for_target_values, **hyperparams
+            )
         elif value_type == ValueEstimators.TDLambda:
             self._value_estimator = TDLambdaEstimator(
-                value_network=self.critic_network, **hp
+                value_network=value_network_for_target_values, **hyperparams
             )
         else:
             raise NotImplementedError(f"Unknown value type {value_type}")
