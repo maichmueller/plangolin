@@ -18,6 +18,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators
 
+from experiments.analyze_rl_run import RLExperiment
 from rgnet import HeteroGraphEncoder
 from rgnet.rl import EmbeddingModule
 from rgnet.rl.agents import (
@@ -472,7 +473,7 @@ def run(
             value_operator=value_operator,
             reset_func=lambda: all_states_reset(curr_env=env),
             optimal_values_lookup=optimal_values_lookup,
-            atol=atol,
+            atol=0.00000001,
         ),
     )
     stopping_hook.register(trainer, "value_converged")
@@ -532,6 +533,13 @@ def run(
         )
 
     validate(policy, value_operator, env, space, optimal_values_lookup, env.keys)
+
+
+def compute_animations(problem_name, run_name):
+    exp = RLExperiment(blocks_instance=problem_name, run_name=run_name)
+    exp.plot_graph_values_with_hist()
+    exp.plot_graph_with_probs()
+    logging.info("Saved plots under %s", exp.out_dir)
 
 
 if __name__ == "__main__":
@@ -658,3 +666,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     time_stamp = resolve_and_run(args)
+
+    compute_animations(args.problem_name, run_name=time_stamp)
