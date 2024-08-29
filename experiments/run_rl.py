@@ -17,6 +17,8 @@ from torch_geometric.nn import MLP
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators
+from torchrl.record import WandbLogger
+from torchrl.record.loggers import Logger as RLLogger
 
 from experiments.analyze_rl_run import RLExperiment
 from rgnet import HeteroGraphEncoder
@@ -391,6 +393,18 @@ def resolve_algorithm(
     return policy, value_op, loss, optim_parameter, optimal_values_lookup
 
 
+def resolve_logger(parser_args, time_stamp: str, out_dir: pathlib.Path):
+    experiment_name = f"{parser_args.problem_name}_{parser_args.algorithm}_{time_stamp}"
+    logger = WandbLogger(
+        exp_name=experiment_name,
+        log_dir=out_dir,
+        project="rgnet",
+        group="rl",
+    )
+    logger.log_hparams(vars(parser_args))
+    return logger
+
+
 def resolve_and_run(parser_args):
     logging.getLogger().setLevel(logging.INFO)
     space, domain, problem = resolve_problem(parser_args)
@@ -400,6 +414,8 @@ def resolve_and_run(parser_args):
         if parser_args.device is None or parser_args.device == "auto"
         else torch.device(parser_args.device)
     )
+    logging.info(f"Running on: {device}")
+
     embedding_module = resolve_embedding(
         parser_args, space=space, domain=domain, device=device
     )
@@ -416,6 +432,7 @@ def resolve_and_run(parser_args):
     out_dir_root = parser_args.out_dir
     out_dir = pathlib.Path(out_dir_root) / parser_args.problem_name / time_stamp
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger = resolve_logger(parser_args, time_stamp, out_dir)
 
     run(
         space,
@@ -428,8 +445,10 @@ def resolve_and_run(parser_args):
         parser_args.iterations,
         parser_args.atol,
         out_dir,
+        logger,
+        log_interval=parser_args.log_interval,
     )
-    return time_stamp
+    return logger
 
 
 def run(
@@ -443,6 +462,8 @@ def run(
     iterations: int,
     atol: float,
     out_dir: pathlib.Path,
+    logger: RLLogger,
+    log_interval: int,
 ):
     trainer_file = out_dir / "trainer.pt"
     values_file = out_dir / "values.pt"
@@ -466,6 +487,8 @@ def run(
         optim_steps_per_batch=1,
         progress_bar=True,
         save_trainer_file=trainer_file,
+        logger=logger,
+        log_interval=env.batch_size[0] * log_interval,
     )
     stopping_hook = ConsecutiveStopping(
         5,
@@ -473,7 +496,7 @@ def run(
             value_operator=value_operator,
             reset_func=lambda: all_states_reset(curr_env=env),
             optimal_values_lookup=optimal_values_lookup,
-            atol=0.00000001,
+            atol=atol,
         ),
     )
     stopping_hook.register(trainer, "value_converged")
@@ -535,8 +558,12 @@ def run(
     validate(policy, value_operator, env, space, optimal_values_lookup, env.keys)
 
 
-def compute_animations(problem_name, run_name):
-    exp = RLExperiment(blocks_instance=problem_name, run_name=run_name)
+def compute_animations(problem_name, exp_name, wlogger: Optional[WandbLogger] = None):
+    exp = RLExperiment(
+        blocks_instance=problem_name,
+        run_name=exp_name,
+        logger=wlogger,
+    )
     exp.plot_graph_values_with_hist()
     exp.plot_graph_with_probs()
     logging.info("Saved plots under %s", exp.out_dir)
@@ -550,6 +577,7 @@ if __name__ == "__main__":
     DEFAULT_ATOL = 0.1
     DEFAULT_GAMMA = 0.9
     DEFAULT_LEARNING_RATE = 0.002
+    DEFAULT_LOG_INTERVAL = 10
 
     parser = argparse.ArgumentParser(description="Process some modules.")
     parser.add_argument(
@@ -638,6 +666,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--log_interval",
+        default=DEFAULT_LOG_INTERVAL,
+        type=int,
+        help=f"Log interval in number of iterations,"
+        f" that is independent of the batch size (default: {DEFAULT_LOG_INTERVAL})",
+    )
+    parser.add_argument(
         "--embedding",
         action="store_true",
         help="Use the HeteroGNN for embedding states if set, default uses one-hot encoding",
@@ -665,6 +700,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    time_stamp = resolve_and_run(args)
+    logger_ = resolve_and_run(args)
 
-    compute_animations(args.problem_name, run_name=time_stamp)
+    compute_animations(args.problem_name, exp_name=logger_.exp_name, wlogger=logger_)

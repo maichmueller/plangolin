@@ -9,7 +9,9 @@ import networkx as nx
 import numpy as np
 import pymimir as mi
 import torch
+import wandb
 from matplotlib.animation import FFMpegWriter, FuncAnimation
+from torchrl.record import WandbLogger
 
 
 def entropy(tensor):
@@ -24,8 +26,10 @@ class RLExperiment:
         self,
         run_name: str | Path,
         blocks_instance: Literal["small", "medium", "large"] = "medium",
+        logger: Optional[WandbLogger] = None,
     ):
         plt.set_loglevel("warning")  # avoid info logging for animations
+        self.logger = logger
         self.blocks_instance = blocks_instance
         self.run_name = run_name
 
@@ -39,7 +43,11 @@ class RLExperiment:
             self.blocks_problem, mi.GroundedSuccessorGenerator(self.blocks_problem)
         )
 
-        self.out_dir = Path(f"../out/{blocks_instance}/{run_name}/")
+        self.out_dir = (
+            Path(f"../out/{blocks_instance}/{run_name}/")
+            if logger is None
+            else Path(logger.log_dir)
+        )
         self.values = torch.load(self.out_dir / "values.pt")
         self.total_iterations = len(self.values)
         self.distances = [
@@ -364,6 +372,12 @@ class RLExperiment:
         ani.save(
             self.out_dir / "graph_values_with_hist.mp4", writer=FFMpegWriter(fps=6)
         )
+        if self.logger is None:
+            return
+        wandb_video = wandb.Video(
+            str(self.out_dir / "graph_values_with_hist.mp4"), fps=6, format="mp4"
+        )
+        self.logger.experiment.log({"graph_values_with_hist": wandb_video})
 
     def plot_graph_with_probs(self):
         if not self.has_probs():
@@ -458,3 +472,10 @@ class RLExperiment:
         )
         # Save the animation as a GIF
         ani.save(self.out_dir / "graph_with_probs.mp4", writer=FFMpegWriter(fps=6))
+
+        if self.logger is None:
+            return
+        wandb_video = wandb.Video(
+            str(self.out_dir / "graph_with_probs.mp4"), fps=6, format="mp4"
+        )
+        self.logger.experiment.log({"graph_with_probs": wandb_video})
