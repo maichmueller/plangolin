@@ -133,8 +133,9 @@ def validate(
 
 def with_profiler(function, use_gpu=True):
     with torch.profiler.profile(use_cuda=use_gpu, profile_memory=True) as prof:
-        function()
+        result = function()
     logging.info(prof.key_averages())
+    return result
 
 
 def one_hot_embedding(states, hidden_size: Optional[int] = None, device=None):
@@ -270,14 +271,17 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
             log_epsilon_actions=True,
         ),
     )
+    policy.to(embedding.device)
 
     value_op = ValueOperator(
         value_net,
         in_keys=[ActorCritic.default_keys.current_embedding],
         out_keys=[ActorCritic.default_keys.state_value],
     )
+    value_op.to(embedding.device)
     loss = CriticLoss(critic_network=value_op)
     loss.make_value_estimator(value_type=ValueEstimators.TD0, gamma=parser_args.gamma)
+    loss.to(embedding.device)
     optim_parameter = agent.parameters()
 
     return policy, value_op, loss, optim_parameter
@@ -285,6 +289,7 @@ def resolve_egreedy(parser_args, embedding, value_net, env_keys):
 
 def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     agent = ActorCritic(embedding, value_net=value_net)
+    agent.to(embedding.device)
     policy = agent.as_td_module(
         env_keys.state, env_keys.transitions, env_keys.action, add_probs=True
     )
@@ -321,6 +326,7 @@ def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     loss = ActorCriticLoss(
         agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
     )
+    loss.to(embedding.device)
 
     return policy, value_op, loss, optim_parameter
 
@@ -370,6 +376,8 @@ def resolve_algorithm(
         loss = CriticLoss(critic_network=value_op)
         optim_parameter = itertools.chain(value_op.parameters(), embedding.parameters())
         parser_args.supervised_loss = True  # make sure we use optimal values as targets
+        value_op.to(embedding.device)
+        loss.to(embedding.device)
     else:
         raise ValueError(f"Unknown algorithm name {parser_args.algorithm}")
 

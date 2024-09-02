@@ -48,7 +48,9 @@ class RLExperiment:
             if logger is None
             else Path(logger.log_dir)
         )
-        self.values = torch.load(self.out_dir / "values.pt")
+        self.values = torch.load(
+            self.out_dir / "values.pt", map_location=torch.device("cpu")
+        )
         self.total_iterations = len(self.values)
         self.distances = [
             self.space.get_distance_to_goal_state(s) for s in self.space.get_states()
@@ -72,14 +74,15 @@ class RLExperiment:
         self.pos = nx.spring_layout(graph, seed=42, iterations=2000)
         if (self.out_dir / "probs.pt").exists():
             self.probs_list_of_nested: List[torch.nested.Tensor] = torch.load(
-                self.out_dir / "probs.pt"
+                self.out_dir / "probs.pt", map_location=torch.device("cpu")
             )
         else:
             self.probs_list_of_nested = None
 
         loss_files = self.out_dir.glob("loss_*")
         self.losses: dict[str, torch.Tensor] = {
-            file.stem: torch.load(file) for file in loss_files
+            file.stem: torch.load(file, map_location=torch.device("cpu"))
+            for file in loss_files
         }
         # The indices of the best actions for every state
         self.best_actions_indices: dict[mi.State, set[int]] = {
@@ -90,7 +93,9 @@ class RLExperiment:
             i: self.best_actions_indices[state]
             for (i, state) in enumerate(self.space.get_states())
         }
-        self.action_indices: list[list[int]] = torch.load(self.out_dir / "actions.pt")
+        self.action_indices: list[list[int]] = torch.load(
+            self.out_dir / "actions.pt", map_location=torch.device("cpu")
+        )
 
     def _state(self, idx: int) -> mi.State:
         return self.space.get_states()[idx]
@@ -188,7 +193,9 @@ class RLExperiment:
     def plot_epsilon(self, epsilon_file_name="epsilon.pt"):
         if not (self.out_dir / epsilon_file_name).exists():
             return
-        epsilon_steps: torch.Tensor = torch.load(self.out_dir / "epsilon.pt")
+        epsilon_steps: torch.Tensor = torch.load(
+            self.out_dir / "epsilon.pt", map_location=torch.device("cpu")
+        )
         epsilon_per_iteration_step = epsilon_steps.count_nonzero(dim=1).view(-1)
         # visualize the number of random steps over time as bar chart
         plt.bar(range(self.total_iterations), epsilon_per_iteration_step)
@@ -197,7 +204,9 @@ class RLExperiment:
         plt.show()
 
     def plot_done_sample(self):
-        done_samples = torch.load(self.out_dir / "done_samples.pt")
+        done_samples = torch.load(
+            self.out_dir / "done_samples.pt", map_location=torch.device("cpu")
+        )
         accumulated_done_samples = torch.tensor(done_samples, dtype=torch.int).cumsum(
             dim=0
         )
@@ -244,6 +253,7 @@ class RLExperiment:
                 for probs_at_t in self.probs_list_of_nested
             ],
             s=0.4,
+            label="Last state before goal",
         )
         plt.scatter(
             range(self.total_iterations),
@@ -253,10 +263,12 @@ class RLExperiment:
             ],
             s=0.4,
             c="tab:orange",
+            label="Initial state",
         )
         plt.title("Certainty of policy (0 is 100% certain, 1 is uniform distribution)")
         plt.xlabel("Time step")
         plt.ylabel("Entropy for initial state")
+        plt.legend(loc="upper right")
         plt.show()
 
     def plot_gradients(self, gradient_name, state_index: Optional[int] = None):
@@ -264,7 +276,7 @@ class RLExperiment:
         gradients_dir = self.out_dir / "gradients"
         for file in gradients_dir.iterdir():
             name = file.stem
-            gradients[name] = torch.load(file)
+            gradients[name] = torch.load(file, map_location=torch.device("cpu"))
         gradients.keys()
 
         if state_index is None:

@@ -1,6 +1,5 @@
 import abc
 import dataclasses
-import logging
 import warnings
 from itertools import cycle
 from typing import Generic, List, Optional, Tuple, TypeVar
@@ -9,6 +8,7 @@ import pymimir as mi
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
+from torch.nn import Parameter
 from torchrl.data import (
     BoundedTensorSpec,
     CompositeSpec,
@@ -89,11 +89,15 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         self._next_active_iterator = cycle(self._all_instances)
 
         # We return the unit cost of one (reward=-1) for every action.
-        self._default_reward_tensor = torch.full(
-            size=self.batch_size,
-            fill_value=self.default_reward,
-            dtype=torch.float,
-            device=self.device,
+        # We use Parameter such that device changes will move this tensor too.
+        self._default_reward_tensor = Parameter(
+            torch.full(
+                size=self.batch_size,
+                fill_value=self.default_reward,
+                dtype=torch.float,
+                device=self.device,
+            ),
+            requires_grad=False,
         )
         self._dead_end_reward: float = (
             custom_dead_end_reward or self.default_dead_end_reward
