@@ -73,8 +73,12 @@ def test_partial_reset(multi_instance_env, batch_size):
     initial_states = [spaces[idx].get_initial_state() for idx in batch_space_indices]
     initial_states[0] = goal_state
     td = environment.reset(states=initial_states)
-    td = environment.rand_action(td)
 
+    # Assert that the active instances are set correctly
+    assert td[keys.instance] == [spaces[idx] for idx in batch_space_indices]
+
+    # Execute a random action but make sure that the first entry is done
+    td = environment.rand_action(td)
     actions: List[mi.Transition] = td[keys.action]
     actions[0] = transition_from_goal
     td[keys.action] = as_non_tensor_stack(actions)
@@ -117,7 +121,10 @@ def test_partial_reset(multi_instance_env, batch_size):
     # 2: medium-space
 
     # This of course can only happen for a batch_size > 1
+    expected_active_instance: List[mi.StateSpace]
     if batch_size == 1:
+        # Small instance was replaced with next which is medium
+        assert next_tensordict[keys.instance] == [medium_space]
         return
 
     try:
@@ -126,11 +133,13 @@ def test_partial_reset(multi_instance_env, batch_size):
         pytest.fail("Internal state misconfiguration after partial reset")
 
     if batch_size == 2:
+        expected_active_instance = [small_space, medium_space]
         expected_transitions = [
             small_space.get_forward_transitions(expected_next_states[0]),
             medium_space.get_forward_transitions(expected_next_states[1]),
         ]
     else:
+        expected_active_instance = [medium_space, medium_space, small_space]
         expected_transitions = [
             medium_space.get_forward_transitions(expected_next_states[0]),
             medium_space.get_forward_transitions(expected_next_states[1]),
@@ -142,6 +151,9 @@ def test_partial_reset(multi_instance_env, batch_size):
     next_random_actions = next_tensordict[keys.action]
     for idx in range(batch_size):
         assert next_random_actions[idx] in expected_transitions[idx]
+
+    # Assert that the active instances are set correctly
+    assert next_tensordict[keys.instance] == expected_active_instance
 
     assert next_tensordict[("next", keys.state)] == [
         a.target for a in next_random_actions

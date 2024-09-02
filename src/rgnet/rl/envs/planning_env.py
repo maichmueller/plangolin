@@ -55,6 +55,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         state: NestedKey = "state"
         goals: NestedKey = "goals"
         transitions: NestedKey = "transitions"
+        instance: NestedKey = "instance"
         action: NestedKey = "action"
         reward: NestedKey = "reward"
         done: NestedKey = "done"
@@ -128,6 +129,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 self._keys.transitions: NonTensorSpec(shape=batch_size),
                 # a pymimir.LiteralList object
                 self._keys.goals: NonTensorSpec(shape=batch_size),
+                # an instance object, e.g. a StateSpace or a SuccessorGenerator
+                # The state, transitions and goals are all related to this instance.
+                self._keys.instance: NonTensorSpec(shape=batch_size),
             },
             shape=batch_size,
         )
@@ -333,6 +337,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 self._keys.state: as_non_tensor_stack(next_states),
                 self._keys.transitions: as_non_tensor_stack(applicable_transitions),
                 self._keys.goals: tensordict.get(self._keys.goals),
+                self._keys.instance: as_non_tensor_stack(self._active_instances),
                 self._keys.reward: reward,
                 self._keys.done: done,
                 self._keys.terminated: done,
@@ -389,6 +394,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 self._keys.state: as_non_tensor_stack(initial_states),
                 self._keys.transitions: as_non_tensor_stack(initial_transitions),
                 self._keys.goals: as_non_tensor_stack(initial_goals),
+                self._keys.instance: as_non_tensor_stack(self._active_instances),
             }
         )
 
