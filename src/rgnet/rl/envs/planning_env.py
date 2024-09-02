@@ -203,20 +203,28 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         return transition.action is None
 
     def get_reward_and_done(
-        self, actions: List[mi.Transition], current_states: List[mi.State]
+        self,
+        actions: List[mi.Transition],
+        current_states: List[mi.State],
+        instances: List[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the reward and done signal for the current state and actions taken.
-        The method is called from step, therefore current_states refers to the states
+        The method is typically called from step, therefore current_states refers to the states
         before the actions are taken.
+        The batch dimension can be over the environment batch size or the time.
         :param actions: The actions taken by the agent.
         :param current_states: Just for convenience, the states before the actions are taken.
             current_states == [transition.source for transition in actions]
+        :param instances the instances from which actions and current states stem from.
+            This parameter can be used to get the rewards and done signals after a rollout was already finished.
+            Defaults to self._active_instances.
         :return A tuple containing the rewards and done signal for the actions
         """
+        instances = instances or self._active_instances
         is_goal: torch.Tensor = torch.tensor(
             [
-                self.is_goal(self._active_instances[idx], current_states[idx])
+                self.is_goal(instances[idx], current_states[idx])
                 for idx in range(len(current_states))
             ],
             dtype=torch.bool,
@@ -228,11 +236,19 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             dtype=torch.bool,
             device=self.device,
         )
+        default_reward = self._default_reward_tensor
+        if len(current_states) != self.batch_size[0]:
+            default_reward = torch.full(
+                size=(len(current_states),),
+                fill_value=self.default_reward,
+                dtype=torch.float,
+                device=self.device,
+            )
         # Its important that we first compute dead end rewards and then the goal reward
         # as a goal state that is a dead end should primarily count as goal state.
         dead_end_rewards = torch.where(
             condition=~is_dead_end,
-            input=self._default_reward_tensor,
+            input=default_reward,
             other=self._dead_end_reward,
         )
         rewards = torch.where(
