@@ -1,120 +1,107 @@
-import dataclasses
-from typing import List
+from dataclasses import dataclass
+from typing import List, Literal, Optional
 
-import pymimir as mi
 import torch
-from tensordict import NestedKey, TensorDictBase
+from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
-from torch import Tensor
-from torchrl.objectives.value import TD0Estimator
+from torchrl.modules import ValueOperator
+from torchrl.objectives import ValueEstimators
+from torchrl.objectives.utils import _reduce
 
-from rgnet.rl import ActorCritic, EmbeddingModule
-from rgnet.rl.agents.actor_critic import embed_transition_targets
-from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.rl import ActorCritic
+from rgnet.rl.losses import CriticLoss
+from rgnet.rl.losses.all_actions_estimator import AllActionsValueEstimator
 
 
-class AllActionsValueEstimator(TD0Estimator):
+def _loss_actor(
+    advantages: torch.Tensor,
+    probs: torch.Tensor,
+):
+    if (*probs.shape, 1) == advantages.shape:
+        probs = probs.unsqueeze(dim=-1)
+
+    return (-probs * advantages.detach()).sum()
+
+
+class AllActionsLoss(CriticLoss):
+    @dataclass(frozen=True)
+    class _AcceptedKeys(CriticLoss._AcceptedKeys):
+        probs: NestedKey = ActorCritic.default_keys.probs
+
+    default_keys = _AcceptedKeys()
+    tensor_keys: _AcceptedKeys
+    # AllActionsLoss only works with AllActionsValueEstimator
+    # We need especially need the advantage values for each successor state from it.
+    value_estimator: AllActionsValueEstimator
+    default_value_estimator = "AllActionsValueEstimator"
 
     def __init__(
         self,
-        *,
-        env: PlanningEnvironment,
-        embedding_module: EmbeddingModule,
-        gamma: float | torch.Tensor,
-        value_network: TensorDictModule,
-        average_rewards: bool = False,
-        advantage_key: NestedKey = None,
-        value_target_key: NestedKey = None,
-        value_key: NestedKey = None,
-        skip_existing: bool | None = None,
-        device: torch.device | None = None
+        critic_network: ValueOperator,
+        reduction: Optional[str] = None,
+        loss_critic_type: str = "l2",
+        clone_tensordict: bool = True,
+        keys: _AcceptedKeys = default_keys,
     ):
         super().__init__(
-            gamma=gamma,
-            value_network=value_network,
-            shifted=True,
-            average_rewards=average_rewards,
-            differentiable=False,
-            advantage_key=advantage_key,
-            value_target_key=value_target_key,
-            value_key=value_key,
-            skip_existing=skip_existing,
-            device=device,
-        )
-        self._env = env
-        self._embedding_module = embedding_module
-
-    @dataclasses.dataclass
-    class _AcceptedKeys(TD0Estimator._AcceptedKeys):
-        transition_probabilities: NestedKey = ActorCritic.default_keys.probs
-        transitions: NestedKey = PlanningEnvironment.default_keys.transitions
-        state: NestedKey = PlanningEnvironment.default_keys.state
-        instance: NestedKey = PlanningEnvironment.default_keys.instance
-
-    def value_estimate_batch_entry(
-        self,
-        timed_transitions: List[List[mi.Transition]],
-        timed_current_states: List[mi.State],
-        timed_instances: List,
-        timed_transition_probability,
-    ) -> Tensor:
-        gamma = self.gamma.to(self._env.device)
-        time_steps = len(timed_transitions)
-        assert time_steps == len(timed_instances) == len(timed_transition_probability)
-        successor_embeddings: tuple[Tensor, ...] = embed_transition_targets(
-            timed_transitions, self._embedding_module
+            critic_network, reduction, loss_critic_type, clone_tensordict, keys
         )
 
-        # shape = [time_steps]
-        expected_value_targets: List[torch.Tensor] = []
-
-        for time in range(time_steps):
-            successor_values = self.value_network.module(successor_embeddings[time])
-
-            reward, done = self._env.get_reward_and_done(
-                timed_transitions[time],
-                # we can use the same state and instance for all outgoing transitions
-                timed_current_states[time : time + 1],
-                timed_instances[time : time + 1],
+    def forward(self, tensordict: TensorDictBase) -> TensorDict:
+        if self.clone_tensordict:
+            tensordict = tensordict.clone(False)
+        # Shape is batch x time x 1
+        individual_advantages: torch.Tensor = tensordict.get(
+            self.value_estimator.tensor_keys.individual_advantage, None
+        )
+        if individual_advantages is None:
+            self.value_estimator(tensordict)
+            individual_advantages = tensordict.get(
+                self.value_estimator.tensor_keys.individual_advantage
             )
-            # td0_return_estimate()
-            value_targets = reward + gamma * successor_values.squeeze() * ~done
-            expected_value = value_targets.dot(timed_transition_probability[time])
-            expected_value_targets.append(expected_value)
+        individual_advantages: List[List[torch.Tensor]] = individual_advantages.tolist()
+        # Shape is batch x time x num_successors
+        probs: List[List[torch.Tensor]] = tensordict.get(
+            self.tensor_keys.probs
+        ).tolist()
+        # Values for each successor state over the batch over each time step
+        # Shape is batch x time x num_successors x 1
+        batch_size = len(individual_advantages)
+        loss_actor: List[torch.Tensor] = []
 
-        return torch.stack(expected_value_targets)
+        for batch_entry in range(batch_size):
+            loss_over_time: List[torch.Tensor] = []
+            for time in range(len(individual_advantages[batch_entry])):
+                loss_over_time.append(
+                    _loss_actor(
+                        individual_advantages[batch_entry][time],
+                        probs[batch_entry][time],
+                    )
+                )
+            loss_actor.append(torch.stack(loss_over_time))
 
-    def value_estimate(
+        td_out = TensorDict({"loss_actor": torch.stack(loss_actor)}, batch_size=[])
+
+        loss_value = self._loss_critic(tensordict)
+        td_out.set("loss_critic", loss_value)
+        td_out = td_out.named_apply(
+            lambda name, value: (
+                _reduce(value, reduction=self.reduction).squeeze(-1)
+                if name.startswith("loss_")
+                else value
+            ),
+            batch_size=[],
+        )
+
+        return td_out
+
+    def make_value_estimator(
         self,
-        tensordict,
-        target_params: TensorDictBase | None = None,
-        next_value: torch.Tensor | None = None,
-        **kwargs
+        value_type: ValueEstimators | Literal["AllActionsValueEstimator"] = None,
+        optimal_targets: Optional[TensorDictModule] = None,
+        **hyperparams,
     ):
-        """
-        For every time step we do:
-            value_target = TD0 estimate weighted by transition probability of agent
-        1. Get next states from the transitions
-        2. Get the reward and done for each possible transition from the environment
-        3. Compute TD0 for single transition R + gamma * v(s') * not_terminated
-        #not_terminated = (~terminated).int()
-
-        #advantage = reward + gamma * not_terminated * next_state_value
-        """
-        batched_transitions = tensordict[self._tensor_keys.transitions]
-        batched_states = tensordict[self._tensor_keys.state]
-        batched_instances = tensordict[self._tensor_keys.instance]
-        batched_probs = tensordict[self._tensor_keys.transition_probabilities]
-
-        batched_targets = []
-        for batch_entry in range(len(batched_transitions)):
-            timed_value_targets = self.value_estimate_batch_entry(
-                batched_transitions[batch_entry],
-                batched_states[batch_entry],
-                batched_instances[batch_entry],
-                batched_probs[batch_entry],
-            )
-            batched_targets.append(timed_value_targets)
-
-        # value target is expected to be of shape batch x time x 1
-        return torch.stack(batched_targets).unsqueeze(dim=-1)
+        if value_type != "AllActionsValueEstimator":
+            raise ValueError("AllActionsLoss only works with AllActionsValueEstimator.")
+        hyperparams["compute_individual_advantages"] = True
+        return super().make_value_estimator(value_type, optimal_targets, **hyperparams)

@@ -36,6 +36,7 @@ from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import ActorCriticLoss, CriticLoss
+from rgnet.rl.losses.all_actions_ac_loss import AllActionsLoss
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer_hooks import (
@@ -233,6 +234,8 @@ def resolve_value_estimator(
     device: torch.device,
     env_keys: PlanningEnvironment.AcceptedKeys,
     optimal_values_dict: Dict[mi.State, float],
+    env: NonTensorTransformedEnv,
+    embedding: EmbeddingModule,
 ):
     # shifted = True ->  the value and next value are estimated with a single call to the value network.
     # Also, important as otherwise torchrl uses vmap which breaks things.
@@ -247,6 +250,13 @@ def resolve_value_estimator(
             optimal_targets=value_operator,
             gamma=parser_args.gamma,
             shifted=True,
+        )
+    elif parser_args.all_actions_estimate:
+        loss.make_value_estimator(
+            value_type="AllActionsValueEstimator",
+            env=env,
+            embedding_module=embedding,
+            gamma=parser_args.gamma,
         )
     else:
         loss.make_value_estimator(
@@ -323,9 +333,12 @@ def resolve_actor_critic(parser_args, embedding, value_net, env_keys):
     else:
         optim_parameter = agent.parameters()
 
-    loss = ActorCriticLoss(
-        agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
-    )
+    if parser_args.all_actions_estimate:
+        loss = AllActionsLoss(critic_network=agent.value_operator)
+    else:
+        loss = ActorCriticLoss(
+            agent.value_operator, log_prob_clip_value=parser_args.log_prob_clip_value
+        )
     loss.to(embedding.device)
 
     return policy, value_op, loss, optim_parameter
@@ -336,6 +349,7 @@ def resolve_algorithm(
     space,
     embedding,
     env_keys,
+    env,
 ) -> tuple[
     TensorDictModule | None,
     ValueOperator,
@@ -397,6 +411,8 @@ def resolve_algorithm(
         device=embedding.device,
         env_keys=env_keys,
         optimal_values_dict=optimal_values_lookup,
+        env=env,
+        embedding=embedding,
     )
     return policy, value_op, loss, optim_parameter, optimal_values_lookup
 
@@ -432,7 +448,9 @@ def resolve_and_run(parser_args):
     env_keys = env.base_env.keys
 
     policy, value_operator, loss_module, optim_params, optimal_values_lookup = (
-        resolve_algorithm(parser_args, space, embedding_module, env_keys=env_keys)
+        resolve_algorithm(
+            parser_args, space, embedding_module, env_keys=env_keys, env=env
+        )
     )
     optimizer = torch.optim.Adam(optim_params, lr=parser_args.learning_rate)
 
@@ -604,6 +622,13 @@ if __name__ == "__main__":
         help="Only applies if algorithm = ac (Actor Critic)."
         "If set the parameters of the actor_net will be updated with a different"
         "learning rate then the general learning rate (--lr).",
+    )
+    parser.add_argument(
+        "--all_actions_estimate",
+        type=lambda x: bool(strtobool(str(x))),
+        required=False,
+        default=False,
+        help="Whether to use the AllActionsValueEstimator for the actor critic algorithm.",
     )
     parser.add_argument(
         "--supervised_loss",

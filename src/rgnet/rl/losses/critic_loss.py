@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
@@ -8,6 +8,8 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators, distance_loss
 from torchrl.objectives.utils import _reduce
 from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
+
+from rgnet.rl.losses.all_actions_estimator import AllActionsValueEstimator
 
 
 class CriticLoss(LossModule):
@@ -73,7 +75,7 @@ class CriticLoss(LossModule):
 
     def make_value_estimator(
         self,
-        value_type: ValueEstimators = None,
+        value_type: ValueEstimators | Literal["AllActionsValueEstimator"] = None,
         optimal_targets: Optional[TensorDictModule] = None,
         **hyperparams,
     ):
@@ -98,6 +100,10 @@ class CriticLoss(LossModule):
             )
         elif value_type == ValueEstimators.TDLambda:
             self._value_estimator = TDLambdaEstimator(
+                value_network=value_network_for_target_values, **hyperparams
+            )
+        elif value_type == "AllActionsValueEstimator":
+            self._value_estimator = AllActionsValueEstimator(
                 value_network=value_network_for_target_values, **hyperparams
             )
         else:
