@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
-from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 
 
@@ -125,21 +125,40 @@ def embedding_mock(hidden_size):
 
 
 @pytest.fixture
-def transformed_env(request, blocks=None, embedding=None, batch_size=None):
-    if blocks is None or embedding is None or batch_size is None:
-        blocks_name, embedding_name, batch_size = request.param
+def multi_instance_env(request, spaces=None, batch_size=None):
+    if spaces is None or batch_size is None:
+        blocks_names, batch_size = request.param
+        blocks = [request.getfixturevalue(name) for name in blocks_names]
+        spaces = [space for space, _, _ in blocks]
+    return MultiInstanceStateSpaceEnv(
+        spaces=spaces,
+        batch_size=torch.Size((batch_size,)),
+        seed=42,
+    )
+
+
+@pytest.fixture
+def expanded_state_space_env(request, blocks=None, batch_size=None):
+    if blocks is None or batch_size is None:
+        blocks_name, batch_size = request.param
         blocks = request.getfixturevalue(blocks_name)
-        embedding = request.getfixturevalue(embedding_name)
 
     space, domain, _ = blocks
-    base_env = ExpandedStateSpaceEnv(
-        space, batch_size=torch.Size((batch_size,)), seed=42
-    )
+    return ExpandedStateSpaceEnv(space, batch_size=torch.Size((batch_size,)), seed=42)
+
+
+@pytest.fixture
+def transformed_env(request, environment=None, embedding=None):
+    if environment is None or embedding is None:
+        env_fixture, embedding_fixture = request.param
+        # environment has to be requested before with the correct arguments
+        environment = request.getfixturevalue(env_fixture)
+        embedding = request.getfixturevalue(embedding_fixture)
     return NonTensorTransformedEnv(
-        env=base_env,
+        env=environment,
         transform=EmbeddingTransform(
             current_embedding_key=ActorCritic.default_keys.current_embedding,
-            env=base_env,
+            env=environment,
             embedding_module=embedding,
         ),
     )

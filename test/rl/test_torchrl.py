@@ -1,4 +1,9 @@
-from test.fixtures import embedding_mock, small_blocks, transformed_env
+from test.fixtures import (
+    embedding_mock,
+    expanded_state_space_env,
+    small_blocks,
+    transformed_env,
+)
 from typing import Optional, Tuple
 
 import mockito
@@ -291,9 +296,13 @@ def test_environment_partial_reset():
 @pytest.mark.parametrize("hidden_size", [8])
 @pytest.mark.parametrize("rollout_length", [1, 2])
 @pytest.mark.parametrize(
-    "transformed_env", [["small_blocks", "embedding_mock", 2]], indirect=True
+    "expanded_state_space_env", [["small_blocks", 2]], indirect=True
+)
+@pytest.mark.parametrize(
+    "transformed_env", [["expanded_state_space_env", "embedding_mock"]], indirect=True
 )
 def test_trainer(
+    expanded_state_space_env,
     transformed_env: NonTensorTransformedEnv,
     total_iterations,
     hidden_size,
