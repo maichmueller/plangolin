@@ -1,8 +1,8 @@
-from typing import Union, List, Optional
+from typing import List, Optional, Union
 
 import torch.utils.data
 from torch import Tensor
-from torch_geometric.data import Dataset, Data, InMemoryDataset
+from torch_geometric.data import Data, Dataset, InMemoryDataset
 
 
 class OverSampler(torch.utils.data.WeightedRandomSampler):

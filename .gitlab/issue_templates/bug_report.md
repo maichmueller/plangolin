@@ -16,7 +16,7 @@ import rgnet
 
 ```bash
 Traceback (most recent call last):
-  File ... 
+  File ...
 ```
 
 ## Expected behavior
