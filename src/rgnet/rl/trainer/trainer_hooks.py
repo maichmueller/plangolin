@@ -1,10 +1,11 @@
 import logging
 from abc import ABC, ABCMeta, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import pymimir as mi
 import torch
-from tensordict import NestedKey
+from tensordict import NestedKey, TensorDict
+from torchrl.modules import ValueOperator
 from torchrl.trainers import Trainer, TrainerHookBase
 
 from rgnet.rl import ActorCritic
@@ -113,3 +114,34 @@ class LoggingHook(TrainerHookBase):
 
     def register(self, trainer: Trainer, name: str):
         trainer.register_op("post_steps_log", self)
+
+
+class ValueFunctionLoggingHook(TrainerHookBase):
+
+    def __init__(
+        self,
+        td_generator: Callable[[], TensorDict],
+        value_operator: ValueOperator,
+        interval: int,
+    ):
+        super().__init__()
+        self.value_operator = value_operator
+        self.td_generator = td_generator
+        self.prediction_history: List[torch.Tensor] = []
+        self.interval = interval
+        self.counter = 0
+
+    def state_dict(self) -> Dict[str, Any]:
+        pass
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        pass
+
+    def __call__(self):
+        if self.counter % self.interval == 0:
+            td = self.td_generator()
+            self.prediction_history.append(self.value_operator(td))
+        self.counter += 1
+
+    def register(self, trainer: Trainer, name: str):
+        trainer.register_op("post_steps_hook", self)
