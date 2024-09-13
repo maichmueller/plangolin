@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pymimir as mi
 import torch
+from torchrl.data.utils import DEVICE_TYPING
 
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
 
@@ -72,11 +73,18 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
         reset_strategy: ResetStrategy = InitialStateReset(),
         batch_size: torch.Size = torch.Size((1,)),
         seed: Optional[int] = None,
-        device: str = "cpu",
+        device: DEVICE_TYPING = "cpu",
+        keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
+        custom_dead_end_reward: Optional[float] = None,
     ):
         self.reset_strategy = reset_strategy
         super().__init__(
-            all_instances=spaces, batch_size=batch_size, seed=seed, device=device
+            all_instances=spaces,
+            batch_size=batch_size,
+            seed=seed,
+            device=device,
+            keys=keys,
+            custom_dead_end_reward=custom_dead_end_reward,
         )
 
     def transitions_for(

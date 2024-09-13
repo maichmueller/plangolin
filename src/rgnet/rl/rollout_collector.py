@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from math import ceil
-from typing import Callable, Iterator, List
+from typing import Callable, Iterator, List, Optional
 
 import pymimir as mi
 import torch
@@ -119,6 +119,7 @@ def build_from_spaces(
     batch_size: int,
     rollout_length: int = 1,
     num_batches: int | None = None,
+    env_kwargs: Optional[dict] = None,
     policy: Callable[[TensorDictBase], TensorDictBase | None] | TensorDictModule = None,
     exploration_type: ExplorationType = ExplorationType.RANDOM,
 ):
@@ -128,6 +129,8 @@ def build_from_spaces(
     Note that this only holds if rollout_length = 1 is passed and num_batches is None.
     The batch size of the environment is the batch size of each collected rollout.
     """
+    if env_kwargs is None:
+        env_kwargs = {}
     spaces = [spaces] if isinstance(spaces, mi.StateSpace) else spaces
 
     env: MultiInstanceStateSpaceEnv
@@ -137,12 +140,14 @@ def build_from_spaces(
             spaces[0],
             batch_size=torch.Size((batch_size,)),
             reset_strategy=IteratingReset(),
+            **env_kwargs,
         )
     else:
         env = MultiInstanceStateSpaceEnv(
             spaces,
             batch_size=torch.Size((batch_size,)),
             reset_strategy=IteratingReset(),
+            **env_kwargs,
         )
     env.make_replacement_strategy(WeightedRandomReset)
 
