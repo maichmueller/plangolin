@@ -36,4 +36,3 @@ precommit:
 #    - pytest test/
 #  only:
 #    - merge_requests
-
