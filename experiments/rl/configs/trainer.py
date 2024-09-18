@@ -4,14 +4,17 @@ from enum import StrEnum, auto
 from math import ceil
 from typing import Dict, List
 
+import pymimir as mi
+import torch
 from torch.optim import SGD, Adam
 from torchrl.envs import EnvBase
 from torchrl.record.loggers import Logger
 
 from experiments.rl.configs.agent import Agent
+from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE, discounted_value
 from experiments.rl.data_resolver import DataResolver
 from rgnet.rl import RolloutCollector
-from rgnet.rl.trainer import Trainer
+from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 
 
 class Parameter(StrEnum):
@@ -19,6 +22,7 @@ class Parameter(StrEnum):
     batches_per_epoch = auto()
     rollout_length = auto()
     validation_interval = auto()
+    validate_after_epoch = auto()
     log_interval = auto()
     save_trainer_interval = auto()
     clip_grad_norm = auto()
@@ -29,6 +33,16 @@ class Parameter(StrEnum):
     lr_actor = auto()
     lr_critic = auto()
     lr_embedding = auto()
+
+
+def optimal_values(space: mi.StateSpace, gamma: float):
+    return torch.tensor(
+        [
+            discounted_value(space.get_distance_to_goal_state(s), gamma=gamma)
+            for s in space.get_states()
+        ],
+        dtype=torch.float,
+    )
 
 
 def add_parser_args(parent_parser: ArgumentParser):
@@ -59,8 +73,15 @@ def add_parser_args(parent_parser: ArgumentParser):
         f"--{Parameter.validation_interval}",
         type=int,
         required=False,
-        default=10,
-        help="Interval for validation (default: 10)",
+        default=None,
+        help="Interval in batches for validation (default: None)",
+    )
+    parser.add_argument(
+        f"--{Parameter.validate_after_epoch}",
+        type=ARGS_BOOL_TYPE,
+        required=False,
+        default=False,
+        help="Whether to validate after each epoch (default: False)",
     )
     parser.add_argument(
         f"--{Parameter.log_interval}",
@@ -193,6 +214,30 @@ def from_parser_args(
 
     epochs = getattr(parser_args, Parameter.epochs)
 
+    gamma = parser_args.gamma
+
+    optimal_values_dict = {
+        space: optimal_values(space, gamma) for space in data_resolver.spaces
+    }
+
+    class ValueModule(torch.nn.Module):
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.embedding = agent.embedding
+            self.critic = agent.critic
+
+        def forward(self, states: List[mi.State]):
+            embedding = self.embedding(states)
+            return self.critic(embedding)
+
+    optimal_value_hook = SupervisedValueLoss(
+        optimal_values=optimal_values_dict,
+        value_module=ValueModule(),
+        device=agent.embedding.device,
+    )
+    policy_precision_hook = PolicyQuality(data_resolver.spaces, agent.actor)
+
     return Trainer(
         collector=collector,
         epochs=epochs,
@@ -204,4 +249,6 @@ def from_parser_args(
         save_trainer_interval=getattr(parser_args, Parameter.save_trainer_interval),
         log_interval=getattr(parser_args, Parameter.log_interval),
         eval_interval=getattr(parser_args, Parameter.validation_interval),
+        validate_after_epoch=getattr(parser_args, Parameter.validate_after_epoch),
+        eval_hooks=[optimal_value_hook, policy_precision_hook],
     )

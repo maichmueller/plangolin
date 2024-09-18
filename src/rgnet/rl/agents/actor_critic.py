@@ -122,6 +122,10 @@ class ActorCritic(torch.nn.Module):
     def keys(self):
         return self._keys
 
+    @property
+    def embedding_module(self):
+        return self._embedding_module
+
     @staticmethod
     def _select_action(
         action_idx: torch.Tensor, transitions: List[List[mi.Transition]]
