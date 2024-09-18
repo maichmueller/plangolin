@@ -21,10 +21,20 @@ class DataResolver:
         instances: List[str] | None = None,
     ):
         self.exp_id: str = exp_id
-
+        if not any(p.name == "rgnet" for p in input_dir.parent.parents):
+            warnings.warn(
+                "Input directory is not a sub-directory of rgnet.\n"
+                + str(input_dir.absolute())
+            )
         self.input_dir = input_dir / domain_name
+        if not self.input_dir.exists() or not self.input_dir.is_dir():
+            warnings.warn(
+                "Domain input directory does not exist or is not a directory.\n"
+                + str(self.input_dir.absolute())
+            )
         self._resolve_domain_and_instances(instances)
         output_dir_root = output_dir / domain_name
+        output_dir_root.mkdir(parents=False, exist_ok=True)
         self._resolve_out_dir(output_dir_root, exp_id)
 
         # We load state space lazily as it might be quite expensive
@@ -60,7 +70,15 @@ class DataResolver:
             mi.ProblemParser(str(instance)).parse(self.domain) for instance in instances
         ]
         if len(self.problems) == 0:
-            warnings.warn("No instances found in the directory.")
+            warnings.warn(
+                "No instances found in the directory.\n"
+                + (
+                    f"Using filter {instances_list}"
+                    if instances_list is not None
+                    else ""
+                )
+                + f"Found {list(i.name for i in all_instances)} before filtering."
+            )
 
     def _resolve_out_dir(self, out_dir_root: Path, exp_id: str):
         count = 0
@@ -68,4 +86,4 @@ class DataResolver:
         while self.output_dir.exists():
             count += 1
             self.output_dir = out_dir_root / f"{exp_id}_{count}"
-        self.output_dir.mkdir(parents=True)
+        self.output_dir.mkdir(parents=False, exist_ok=False)
