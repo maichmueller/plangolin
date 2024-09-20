@@ -11,6 +11,8 @@ from experiments.rl.configs import environment
 from experiments.rl.configs import logger as logger_module
 from experiments.rl.configs import trainer as trainer_module
 from experiments.rl.configs import value_estimator
+from experiments.rl.configs.agent import Agent
+from experiments.rl.data_resolver import DataResolver
 from rgnet.rl import (
     ActorCritic,
     EmbeddingModule,
@@ -64,6 +66,15 @@ def transformed_environment(
     return env
 
 
+def save_model(agent: Agent, data: DataResolver):
+    torch.save(agent.critic.state_dict(), data.output_dir / "critic_dict.pt")
+    torch.save(agent.actor.state_dict(), data.output_dir / "actor_dict.pt")
+    if len(list(agent.embedding.parameters())) > 1:
+        torch.save(agent.embedding.state_dict(), data.output_dir / "embedding_dict.pt")
+
+    logging.info("Saved models to " + str(data.output_dir.absolute()))
+
+
 def run():
     logging.getLogger().setLevel(logging.INFO)
     time_stamp: str = datetime.now().strftime("%d-%m_%H-%M-%S")
@@ -90,7 +101,7 @@ def run():
         agent_keys=ActorCritic.default_keys,
     )
 
-    agent = agent_module.from_parser_args(
+    agent: Agent = agent_module.from_parser_args(
         parser_args, data_resolver=data, embedding=embedding
     )
 
@@ -114,6 +125,8 @@ def run():
     logging.info(f"Starting training with {len(data.problems)} training problems")
     trainer.train()
     logging.info(f"Finished training. Saved under {data.output_dir}")
+
+    save_model(agent, data)
 
 
 if __name__ == "__main__":
