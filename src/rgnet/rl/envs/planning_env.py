@@ -2,7 +2,7 @@ import abc
 import dataclasses
 import warnings
 from itertools import cycle
-from typing import Generic, List, Optional, Tuple, TypeVar
+from typing import Generic, List, Optional, Tuple, Type, TypeVar
 
 import pymimir as mi
 import torch
@@ -21,6 +21,30 @@ from rgnet.rl.envs.manual_transition import MTransition
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
 
 InstanceType = TypeVar("InstanceType")
+
+
+class InstanceReplacementStrategy(metaclass=abc.ABCMeta):
+    """Strategies that determine which instance to use next.
+    This is called each time a batch entry is reset, either because a done signal was encountered or
+    .reset() was called on the environment to create a new rollout."""
+
+    def __init__(self, all_instances: List[InstanceType]):
+        super().__init__()
+
+    @abc.abstractmethod
+    def __call__(self, index: int) -> InstanceType:
+        """Gets the index of the batch_entry which is being reset as input."""
+        pass
+
+
+class RoundRobinReplacement(InstanceReplacementStrategy):
+
+    def __init__(self, all_instances: List[InstanceType]):
+        super().__init__(all_instances)
+        self._next_active_iterator = cycle(all_instances)
+
+    def __call__(self, index: int) -> InstanceType:
+        return next(self._next_active_iterator)
 
 
 class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta):
@@ -87,7 +111,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # will be initialized by the first call to _reset
         self._active_instances: List[InstanceType] = [None] * batch_size
         # We iterate over all instances with a cyclic iterator.
-        self._next_active_iterator = cycle(self._all_instances)
+        self._instance_replacement_strategy = RoundRobinReplacement(all_instances)
 
         # We return the unit cost of one (reward=-1) for every action.
         # We use Parameter such that device changes will move this tensor too.
@@ -274,9 +298,6 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             for (instance, state) in zip(self._active_instances, states)
         ]
 
-    def _replace_active_instance(self, index: int):
-        self._active_instances[index] = next(self._next_active_iterator)
-
     def rand_action(
         self, tensordict: Optional[TensorDictBase] = None
     ) -> TensorDictBase:
@@ -393,8 +414,8 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         else:
             to_be_reset_indices = list(range(batch_size))
 
-        for i in to_be_reset_indices:
-            self._replace_active_instance(i)
+        for index in to_be_reset_indices:
+            self._active_instances[index] = self._instance_replacement_strategy(index)
 
         initial_states, initial_goals = zip(
             *[self.initial_for(instance) for instance in self._active_instances]
@@ -415,3 +436,10 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
 
         return out
+
+    def make_replacement_strategy(
+        self, strategy_class: Type[InstanceReplacementStrategy], **kwargs
+    ):
+        self._instance_replacement_strategy = strategy_class(
+            all_instances=self._all_instances, **kwargs
+        )

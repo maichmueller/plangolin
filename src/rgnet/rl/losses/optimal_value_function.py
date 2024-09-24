@@ -4,7 +4,6 @@ import pymimir as mi
 import torch
 from tensordict import NestedKey
 from torchrl.modules import ValueOperator
-from torchrl.objectives.value import TD0Estimator
 
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 

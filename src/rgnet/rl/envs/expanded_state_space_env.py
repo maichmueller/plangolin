@@ -1,10 +1,12 @@
 import abc
-from typing import List, Optional, Tuple
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 import pymimir as mi
 import torch
+from torchrl.data.utils import DEVICE_TYPING
 
-from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):
@@ -25,6 +27,44 @@ class UniformRandomReset(ResetStrategy):
         return space.sample_state()
 
 
+class WeightedRandomReset(InstanceReplacementStrategy):
+
+    def __init__(
+        self,
+        all_instances: List[mi.StateSpace],
+        generator: Optional[torch.Generator] = None,
+    ):
+        total_states = sum(space.num_states() for space in all_instances)
+        self.weights = torch.tensor(
+            [space.num_states() / total_states for space in all_instances]
+        )
+        self.all_instances = all_instances
+        self.generator = generator
+        super().__init__(all_instances)
+
+    def __call__(self, index: int) -> mi.StateSpace:
+        index = torch.multinomial(
+            self.weights, 1, replacement=True, generator=self.generator
+        ).item()
+        return self.all_instances[index]
+
+
+class IteratingReset(ResetStrategy):
+    """
+    Iterate over each state in the space in cycles.
+    For each space separate counters are stores.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.idx_per_space: Dict[mi.StateSpace, int] = defaultdict(int)
+
+    def __call__(self, space: mi.StateSpace) -> mi.State:
+        idx = self.idx_per_space[space]
+        self.idx_per_space[space] = (idx + 1) % space.num_states()
+        return space.get_states()[idx]
+
+
 class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
 
     def __init__(
@@ -33,11 +73,18 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
         reset_strategy: ResetStrategy = InitialStateReset(),
         batch_size: torch.Size = torch.Size((1,)),
         seed: Optional[int] = None,
-        device: str = "cpu",
+        device: DEVICE_TYPING = "cpu",
+        keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
+        custom_dead_end_reward: Optional[float] = None,
     ):
         self.reset_strategy = reset_strategy
         super().__init__(
-            all_instances=spaces, batch_size=batch_size, seed=seed, device=device
+            all_instances=spaces,
+            batch_size=batch_size,
+            seed=seed,
+            device=device,
+            keys=keys,
+            custom_dead_end_reward=custom_dead_end_reward,
         )
 
     def transitions_for(

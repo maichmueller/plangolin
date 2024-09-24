@@ -1,3 +1,4 @@
+import itertools
 from typing import Dict, List
 
 import pymimir as mi
@@ -20,11 +21,13 @@ def optimal_action(space: mi.StateSpace, state: mi.State) -> mi.Transition:
 
 class OptimalPolicy:
 
-    def __init__(self, space: mi.StateSpace):
-        self.space = space
-        self.best_actions: Dict[mi.State, mi.Transition] = {
-            s: optimal_action(space, s) for s in space.get_states()
-        }
+    def __init__(self, spaces: mi.StateSpace | List[mi.StateSpace]):
+        spaces = [spaces] if isinstance(spaces, mi.StateSpace) else spaces
+        self.best_actions: Dict[mi.State, mi.Transition] = {}
+        for space in spaces:
+            self.best_actions.update(
+                {s: optimal_action(space, s) for s in space.get_states()}
+            )
 
     def __call__(
         self, batched_states: List[List[mi.State]] | NonTensorWrapper

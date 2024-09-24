@@ -1,0 +1,196 @@
+import itertools
+from math import ceil
+from test.fixtures import expanded_state_space_env, medium_blocks, small_blocks
+from typing import List
+
+import mockito
+import pymimir as mi
+import pytest
+import torch
+from tensordict import TensorDict, TensorDictBase
+from tensordict.nn import TensorDictModule
+
+from rgnet.rl.envs.expanded_state_space_env import (
+    ExpandedStateSpaceEnv,
+    InitialStateReset,
+    IteratingReset,
+    MultiInstanceStateSpaceEnv,
+    WeightedRandomReset,
+)
+from rgnet.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.rollout_collector import RolloutCollector, build_from_spaces
+
+
+def test_build_from_spaces_multiple(small_blocks, medium_blocks, batch_size=5):
+    s_space, _, _ = small_blocks
+    m_space, _, _ = medium_blocks
+    total_states = s_space.num_states() + m_space.num_states()
+    assert total_states == 130 or total_states % batch_size == 0
+    collector = build_from_spaces(
+        [s_space, m_space], batch_size=batch_size, rollout_length=1
+    )
+    assert isinstance(collector.env, MultiInstanceStateSpaceEnv)
+    assert isinstance(collector.env.reset_strategy, IteratingReset)
+    assert isinstance(collector.env._instance_replacement_strategy, WeightedRandomReset)
+
+    batch_counter = 0
+    for batch in collector:
+        batch_counter += 1
+        # We have a rollout length of 1
+        assert batch.batch_size == (batch_size, 1)
+        assert batch.names == [None, "time"]
+        if batch_counter == 0:
+            states = batch[PlanningEnvironment.default_keys.state]
+            instances: List[mi.StateSpace] = batch[
+                PlanningEnvironment.default_keys.instance
+            ]
+            assert len(states) == len(instances) == batch_size
+            assert states[0] == instances[0].get_states()[0]
+
+    assert batch_counter == ceil(total_states / batch_size)
+
+
+@pytest.mark.parametrize(
+    "blocks",
+    ["small_blocks", "medium_blocks"],
+)
+def test_build_from_spaces_single(request, blocks, batch_size=5):
+    space = request.getfixturevalue(blocks)[0]
+    collector = build_from_spaces(space, batch_size=batch_size, rollout_length=1)
+    assert (
+        space.num_states() % batch_size == 0
+    ), "Sanity check that test setup is correct."
+
+    assert isinstance(collector.env, ExpandedStateSpaceEnv)
+    assert isinstance(collector.env.reset_strategy, IteratingReset)
+    assert isinstance(collector.env._instance_replacement_strategy, WeightedRandomReset)
+
+    batch_counter = 0
+    batches = []
+    for batch in collector:
+        batch_counter += 1
+        batches.append(batch)
+    if space.num_states() == batch_size:
+        assert batch_counter == 1
+        # batch_size = s_space.num_states() + IteratingReset()
+        # As we have a rollout length of 1 each batch entry is a list of length one
+        states_flattened = list(
+            itertools.chain.from_iterable(
+                batches[-1][PlanningEnvironment.default_keys.state]
+            )
+        )
+        assert states_flattened == space.get_states()
+    else:
+        assert batch_counter == ceil(space.num_states() / batch_size)
+        all_states = space.get_states()
+        all_encountered_states = []
+        for batch in batches:
+            states = batch[PlanningEnvironment.default_keys.state]
+            all_encountered_states.extend(states)
+        all_encountered_states_flattened = list(
+            itertools.chain.from_iterable(all_encountered_states)
+        )
+        # As we only have one instance and use IteratingReset we should encounter all states as they are layed out in the space.
+        assert all_encountered_states_flattened == all_states
+
+
+@pytest.mark.parametrize(
+    "expanded_state_space_env", [["small_blocks", 5]], indirect=True
+)
+def test_with_policy(expanded_state_space_env):
+    """Test that the policy is actually used to collect the rollouts."""
+    env = expanded_state_space_env
+
+    def policy(transitions):
+        transitions: List[List[mi.Transition]] = transitions.tolist()
+        actions = [transitions[i][0] for i in range(len(transitions))]
+        return as_non_tensor_stack(actions)
+
+    tdm = TensorDictModule(
+        module=policy,
+        in_keys=[PlanningEnvironment.default_keys.transitions],
+        out_keys=[PlanningEnvironment.default_keys.action],
+    )
+    mockito.spy2(tdm.forward)
+
+    collector = RolloutCollector(
+        environment=env,
+        policy=tdm,
+        num_batches=3,
+        rollout_length=1,
+    )
+    list(collector)  # exhaust the collector
+
+    # The policy gets called once for each batch and time step
+    mockito.verify(tdm, times=3).forward(...)
+
+
+@pytest.mark.parametrize("rollout_length", [1, 2])
+def test_reset_after_each_batch(
+    medium_blocks, rollout_length, batch_size=5, num_batches=5
+):
+    """Test that all instances are replaced after each batch, when setting reset_after_each_batch."""
+    space = medium_blocks[0]
+    env = ExpandedStateSpaceEnv(
+        space,
+        batch_size=torch.Size((batch_size,)),
+        # It is important that we use initial state reset as we want to avoid reaching
+        # terminating states which would also trigger instance replacements.
+        reset_strategy=InitialStateReset(),
+    )
+
+    replacement_strategy_mock = mockito.mock(spec=RoundRobinReplacement)
+    mockito.when(replacement_strategy_mock).__call__(...).thenReturn(space)
+
+    env._instance_replacement_strategy = replacement_strategy_mock
+    assert isinstance(env._instance_replacement_strategy, RoundRobinReplacement)
+    collector = RolloutCollector(
+        environment=env,
+        policy=None,
+        num_batches=num_batches,
+        rollout_length=rollout_length,
+    )
+    # exhaust the collector
+    for _ in collector:
+        pass
+
+    # We expect that each instance is replaced for each batch
+    # we have batch_size * num_batches replacements
+    mockito.verify(replacement_strategy_mock, times=num_batches * batch_size).__call__(
+        ...
+    )
+    for batch_entry in range(batch_size):
+        mockito.verify(replacement_strategy_mock, times=num_batches).__call__(
+            batch_entry
+        )
+
+
+@pytest.mark.parametrize(
+    "expanded_state_space_env", [["small_blocks", 5]], indirect=True
+)
+def test_reset(expanded_state_space_env):
+    """Test that we can reiterate the collector after a reset."""
+    env = expanded_state_space_env
+    env.make_replacement_strategy(RoundRobinReplacement)
+
+    collector = RolloutCollector(
+        environment=env,
+        policy=None,
+        num_batches=1,
+        rollout_length=1,
+    )
+
+    batch = next(collector)
+    assert isinstance(batch, TensorDict)
+    try:
+        next(collector)
+        pytest.fail()
+    except StopIteration:
+        pass
+    except Exception as e:
+        pytest.fail(f"Unexpected exception {e}")
+
+    collector.reset()
+    batch_after_reset = next(collector)
+    assert isinstance(batch_after_reset, TensorDict)
