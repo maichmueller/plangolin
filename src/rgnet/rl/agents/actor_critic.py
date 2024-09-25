@@ -196,6 +196,17 @@ class ActorCritic(torch.nn.Module):
 
         return probabilities_batched
 
+    def embedded_forward(
+        self, current_embedding: torch.Tensor, successor_embeddings: Tuple[Tensor, ...]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # len(batched_probs) == batch_size, batched_probs[i].shape == len(transitions[i])
+        batched_probs: list[Tensor] = self._actor_probs(
+            current_embedding, successor_embeddings
+        )
+
+        action_indices, log_probs = self._sample_distribution(batched_probs)
+        return action_indices, log_probs
+
     def forward(
         self,
         state: NonTensorWrapper | List[mi.State],
@@ -214,12 +225,9 @@ class ActorCritic(torch.nn.Module):
         successor_embeddings: Tuple[Tensor, ...] = embed_transition_targets(
             transitions, self._embedding_module
         )
-        # len(batched_probs) == batch_size, batched_probs[i].shape == len(transitions[i])
-        batched_probs: list[Tensor] = self._actor_probs(
+        action_indices, log_probs = self.embedded_forward(
             current_embedding, successor_embeddings
         )
-
-        action_indices, log_probs = self._sample_distribution(batched_probs)
 
         actions = self._select_action(action_indices, transitions)
 

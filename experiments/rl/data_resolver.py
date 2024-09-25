@@ -11,6 +11,7 @@ class DataResolver:
     exp_id: str
     domain: mi.Domain
     problems: List[mi.Problem]
+    _instances: List[Path]
 
     def __init__(
         self,
@@ -49,10 +50,16 @@ class DataResolver:
             ]
         return self._spaces
 
+    @property
+    def domain_path(self) -> Path:
+        return self.input_dir / "domain.pddl"
+
+    @property
+    def problem_paths(self) -> List[Path]:
+        return self._instances
+
     def _resolve_domain_and_instances(self, instances_list: List[str] | None = None):
-        self.domain: mi.Domain = mi.DomainParser(
-            str(self.input_dir / "domain.pddl")
-        ).parse()
+        self.domain: mi.Domain = mi.DomainParser(str(self.domain_path)).parse()
 
         train_dir = self.input_dir / "train"
         all_instances = list(train_dir.glob("*.pddl"))
@@ -62,12 +69,13 @@ class DataResolver:
                 for instance in all_instances
                 if instance.stem in instances_list or instance.name in instances_list
             ]
-            instances = filtered_instances
+            self._instances = filtered_instances
         else:
-            instances = all_instances
+            self._instances = all_instances
 
         self.problems: List[mi.Problem] = [
-            mi.ProblemParser(str(instance)).parse(self.domain) for instance in instances
+            mi.ProblemParser(str(instance)).parse(self.domain)
+            for instance in self._instances
         ]
         if len(self.problems) == 0:
             warnings.warn(

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import List
 
 import mockito
@@ -13,6 +14,7 @@ from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
@@ -162,3 +164,19 @@ def transformed_env(request, environment=None, embedding=None):
             embedding_module=embedding,
         ),
     )
+
+
+@pytest.fixture
+def fresh_drive(tmp_path, force_reload=True):
+    source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
+    data_dir = source_dir / "pddl_instances" / "blocks"
+    problem_path = data_dir / "medium.pddl"
+    domain_path = data_dir / "domain.pddl"
+    drive = FlashDrive(
+        problem_path=problem_path,
+        domain_path=domain_path,
+        custom_dead_enc_reward=100.0,
+        root_dir=str(tmp_path.absolute()),
+        force_reload=force_reload,
+    )
+    return drive
