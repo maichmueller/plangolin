@@ -1,0 +1,38 @@
+
+# Image with git
+image: python:3.10
+
+# Change pip's cache directory to be inside the project directory since we can
+# only cache local items.
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+# https://pip.pypa.io/en/stable/topics/caching/
+cache:
+  paths:
+    - .cache/pip
+
+before_script:
+  - python --version ; pip --version  # For debugging
+  - pip install virtualenv
+  - virtualenv venv
+  - source venv/bin/activate
+
+precommit:
+    script:
+      - apt update && apt install -y --no-install-recommends git
+      - pip install isort black pre-commit
+      - pre-commit run --all-files
+    only:
+      - branches
+
+
+# TODO we have to install requirements
+#pytest:
+#  stage: test
+#  image: python:3.10
+#  script:
+#    - pip install -r requirements.txt
+#    - pytest test/
+#  only:
+#    - merge_requests
