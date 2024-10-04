@@ -4,6 +4,7 @@ import lightning
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 from tensordict import LazyStackedTensorDict, TensorDict
+from torch.nn import ModuleList
 from torch_geometric.data import Batch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.objectives import LossModule
@@ -33,14 +34,12 @@ class LightningAdapter(lightning.LightningModule):
         self.loss = loss
         self.optim = optim
 
-    def forward(
+    def _compute_embeddings(
         self,
         states_data: Batch,
         successors_flattened: Batch,
-        num_successors: torch.Tensor,
-    ):
-        # has to be on cpu for slicing
-        slices = num_successors.cumsum(dim=0).long()[:-1]
+        slices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
         slices_cpu = slices.cpu()
         # Shape batch_size x embedding_size
         state_embedding: torch.Tensor = self.gnn(
@@ -56,9 +55,16 @@ class LightningAdapter(lightning.LightningModule):
         batched_successor_embeddings: Tuple[torch.Tensor, ...] = (
             successor_embedding.tensor_split(slices_cpu)
         )
-        action_indices, log_probs = self.actor_critic.embedded_forward(
-            state_embedding, batched_successor_embeddings
-        )
+        return state_embedding, batched_successor_embeddings
+
+    @staticmethod
+    def _get_rewards_and_done(
+        action_indices: torch.Tensor, slices: torch.Tensor, states_data: Batch
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # reward and done are flattened 1D tensors
+        # We map the action_indices which are per state into the continuous 1D tensor.
+        # Slices are the indices where the flattened tensors have to be split.
+        # so slices[i] + actions_indices[i] is the element in the 1D space
         flattened_action_indices = torch.cat(
             [torch.tensor([0], device=slices.device), slices]
         )
@@ -68,6 +74,31 @@ class LightningAdapter(lightning.LightningModule):
         # unsqueeze to fit shape of value-operator output
         rewards = rewards.unsqueeze(dim=-1)
         terminated = terminated.unsqueeze(dim=-1)
+
+        return rewards, terminated
+
+    def forward(
+        self,
+        states_data: Batch,
+        successors_flattened: Batch,
+        num_successors: torch.Tensor,
+    ) -> TensorDict:
+        # Required to group the flattened tensors by each state
+        # E.g. group all the embeddings for each successor state
+        slices = num_successors.cumsum(dim=0).long()[:-1]
+
+        state_embedding, batched_successor_embeddings = self._compute_embeddings(
+            states_data, successors_flattened, slices
+        )
+
+        # Sample actions from the agent
+        action_indices, log_probs = self.actor_critic.embedded_forward(
+            state_embedding, batched_successor_embeddings
+        )
+        # Select the rewards for the chosen actions
+        rewards, terminated = self._get_rewards_and_done(
+            action_indices, slices, states_data
+        )
 
         # Select the next-states by the action index chosen for each batch entry
         next_states = torch.stack(
@@ -79,6 +110,7 @@ class LightningAdapter(lightning.LightningModule):
             ]
         )
 
+        # Data corresponding to the next state -> the result of applying the actions
         next_td = TensorDict(
             {
                 ActorCritic.default_keys.current_embedding: next_states,
