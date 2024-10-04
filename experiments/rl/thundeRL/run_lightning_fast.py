@@ -21,7 +21,7 @@ from experiments.rl.data_resolver import DataResolver
 from rgnet import HeteroGNN
 from rgnet.rl import ActorCritic, EmbeddingModule
 from rgnet.rl.losses import CriticLoss
-from rgnet.rl.thundeRL.collate import Collate
+from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 
@@ -56,9 +56,16 @@ def create_args():
 def _resolve_dataset(data_resolver: DataResolver, gamma: float):
     root_dir = (
         Path(__file__).parent.parent.parent.parent
-        / "dataset"
+        / "data"
+        / "flash_drives"
         / data_resolver.domain.name
+        / "train"
     )
+    if len(data_resolver.problem_paths) > 3:
+        logging.info(f"Using {len(data_resolver.problem_paths)} problems for training")
+    else:
+        join = "\n".join([p.stem for p in data_resolver.problem_paths])
+        logging.info(f"Using problems: {join}")
     driver_list = []
     for problem_path in data_resolver.problem_paths:
         driver = FlashDrive(
@@ -70,6 +77,7 @@ def _resolve_dataset(data_resolver: DataResolver, gamma: float):
         driver_list.append(driver)
 
     complete_dataset = torch.utils.data.ConcatDataset(driver_list)
+    logging.info(f"Total of {len(complete_dataset)} training data points")
     return complete_dataset
 
 
@@ -84,16 +92,17 @@ def train(
     loss: CriticLoss,
     optim: torch.optim.Optimizer,
 ):
-    torch.multiprocessing.set_sharing_strategy("file_system")
 
     dataset = _resolve_dataset(data, gamma=parser_args.gamma)
     loader = torch.utils.data.DataLoader(
         dataset,
-        collate_fn=Collate(),
+        collate_fn=collate_fn,
         batch_size=batch_size,
         shuffle=True,
+        num_workers=2,
+        persistent_workers=True,
     )
-    wlogger = WandbLogger(project="rgnet", name=data.exp_id, group="rl", offline=True)
+    wlogger = WandbLogger(project="rgnet", name=data.exp_id, group="rl")
 
     thunder_module = LightningAdapter(
         gnn=gnn, actor_critic=agent, loss=loss, optim=optim
@@ -113,10 +122,14 @@ def train(
     )
     logging.info("Starting training")
     trainer.fit(thunder_module, loader)
+    logging.info("Done")
 
 
 def run():
     logging.getLogger().setLevel(logging.INFO)
+    torch.set_float32_matmul_precision("medium")
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
     time_stamp: str = datetime.now().strftime("%d-%m_%H-%M-%S")
     parser = create_args()
     parser_args = parser.parse_args()
@@ -171,4 +184,6 @@ def run():
 
 
 if __name__ == "__main__":
+    # https://discuss.pytorch.org/t/training-fails-due-to-memory-exhaustion-when-running-in-a-python-multiprocessing-process/202773/2
+    torch.multiprocessing.set_start_method("fork", force=True)
     run()

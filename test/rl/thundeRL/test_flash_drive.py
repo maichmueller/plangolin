@@ -13,7 +13,7 @@ def validate_drive(drive, space):
     for i, state in enumerate(space.get_states()):
         num_transitions = len(space.get_forward_transitions(state))
         data: HeteroData = drive[i]
-        assert data.index == i
+        assert data.idx == i
         assert data.done.numel() == num_transitions
         assert data.reward.numel() == num_transitions
         assert len(data.targets) == num_transitions
@@ -24,7 +24,7 @@ def validate_drive(drive, space):
 
 
 def test_process(fresh_drive, medium_blocks):
-    validate_drive(fresh_drive, medium_blocks)
+    validate_drive(fresh_drive, medium_blocks[0])
 
 
 def test_save_and_load(fresh_drive, medium_blocks):

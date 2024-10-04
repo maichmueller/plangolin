@@ -225,9 +225,11 @@ class ActorCritic(torch.nn.Module):
         successor_embeddings: Tuple[Tensor, ...] = embed_transition_targets(
             transitions, self._embedding_module
         )
-        action_indices, log_probs = self.embedded_forward(
+        batched_probs: list[Tensor] = self._actor_probs(
             current_embedding, successor_embeddings
         )
+
+        action_indices, log_probs = self._sample_distribution(batched_probs)
 
         actions = self._select_action(action_indices, transitions)
 
