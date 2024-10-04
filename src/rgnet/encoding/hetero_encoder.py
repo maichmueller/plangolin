@@ -114,10 +114,11 @@ class HeteroGraphEncoder(StateEncoderBase):
         # Add dummy entry for node-types that don't appear in this state
         # https://github.com/pyg-team/pytorch_geometric/issues/9233
         for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
-            data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
+            arity = self.arity_dict[unused_node_type]
+            data[unused_node_type].x = torch.empty((0, arity), dtype=torch.float32)
         if self.obj_type_id not in nodes_dict:
             logging.warning(f"No object in graph ({graph})")
-            data[self.obj_type_id].x = torch.empty(0, dtype=torch.float32)
+            data[self.obj_type_id].x = torch.empty((0, 1), dtype=torch.float32)
 
         # Group edges by src, position, dst
         edge_dict: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
