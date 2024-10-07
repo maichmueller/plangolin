@@ -70,14 +70,8 @@ def _resolve_dataset(domain_path, problem_path, root_dir, gamma: float):
     )
 
 
-def _resolve_training_data(data: DataResolver, gamma: float):
-    root_dir = (
-        Path(__file__).parent.parent.parent.parent
-        / "data"
-        / "flash_drives"
-        / data.domain.name
-        / "train"
-    )
+def _resolve_training_data(dataset_dir: Path, data: DataResolver, gamma: float):
+
     if len(data.problem_paths) > 3:
         logging.info(f"Using {len(data.problem_paths)} problems for training")
     else:
@@ -86,7 +80,9 @@ def _resolve_training_data(data: DataResolver, gamma: float):
     driver_list = []
     for problem_path in data.problem_paths:
         driver_list.append(
-            _resolve_dataset(data.domain_path, problem_path, root_dir, gamma)
+            _resolve_dataset(
+                data.domain_path, problem_path, root_dir=dataset_dir, gamma=gamma
+            )
         )
 
     complete_dataset = torch.utils.data.ConcatDataset(driver_list)
@@ -95,21 +91,17 @@ def _resolve_training_data(data: DataResolver, gamma: float):
 
 
 def eval_setup(
+    dataset_dir: Path,
     data: DataResolver,
     batch_size: int,
     gamma: float,
     value_operator: ValueOperator,
 ):
-    root_dir = (
-        Path(__file__).parent.parent.parent.parent
-        / "data"
-        / "flash_drives"
-        / data.domain.name
-        / "train"
-    )
     loader_list = []
     for problem_path in data.validation_problem_paths:
-        dataset = _resolve_dataset(data.domain_path, problem_path, root_dir, gamma)
+        dataset = _resolve_dataset(
+            data.domain_path, problem_path, root_dir=dataset_dir, gamma=gamma
+        )
         loader = torch.utils.data.DataLoader(
             dataset,
             collate_fn=collate_fn,
@@ -149,7 +141,9 @@ def train(
     loss: CriticLoss,
     optim: torch.optim.Optimizer,
 ):
-    dataset = _resolve_training_data(data, gamma=parser_args.gamma)
+    domain_name = data.input_dir.name
+    dataset_dir = data.input_dir.parent.parent / "flash_drives" / domain_name
+    dataset = _resolve_training_data(dataset_dir, data, gamma=parser_args.gamma)
     loader = torch.utils.data.DataLoader(
         dataset,
         collate_fn=collate_fn,
@@ -160,7 +154,7 @@ def train(
     )
     if data.validation_problems:
         eval_loader, eval_hooks = eval_setup(
-            data, batch_size, gamma, agent.value_operator
+            dataset_dir, data, batch_size, gamma, agent.value_operator
         )
     else:
         eval_loader = None
