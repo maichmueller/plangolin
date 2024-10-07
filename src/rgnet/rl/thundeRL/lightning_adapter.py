@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Iterable, Optional, Tuple
 
 import lightning
 import torch
@@ -22,6 +22,7 @@ class LightningAdapter(lightning.LightningModule):
         actor_critic: ActorCritic,
         loss: LossModule,
         optim: torch.optim.Optimizer,
+        validation_hooks: Optional[Iterable[torch.nn.Module]] = None,
     ) -> None:
         super().__init__()
         # self.save_hyperparameters()
@@ -33,6 +34,7 @@ class LightningAdapter(lightning.LightningModule):
         self.actor_critic = actor_critic
         self.loss = loss
         self.optim = optim
+        self.validation_hooks = ModuleList(validation_hooks or [])
 
     def _compute_embeddings(
         self,
@@ -125,14 +127,15 @@ class LightningAdapter(lightning.LightningModule):
             {
                 PlanningEnvironment.default_keys.action: action_indices,
                 ActorCritic.default_keys.current_embedding: state_embedding,
+                "idx_in_space": states_data.idx,  # torch.Tensor int64
                 "log_probs": log_probs,
                 "next": next_td,
             },
             batch_size=(states_data.batch_size,),
         )
         # Most losses / value estimators expect a time dimension
-        # Therefore we create a "rollout" of shape 1 x batch_size
-        stacked = LazyStackedTensorDict.maybe_dense_stack([td])
+        # Therefore we create a "rollout" of shape batch_size x time a.k.a batch_size x 1
+        stacked = LazyStackedTensorDict.maybe_dense_stack([td], len(td.batch_size))
         stacked.refine_names(..., "time")
         return stacked
 
@@ -153,6 +156,16 @@ class LightningAdapter(lightning.LightningModule):
             loss = self._common_step(batch_tuple)
         self.log("train_loss", loss, batch_size=batch_tuple[0].batch_size)
         return loss
+
+    def validation_step(
+        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor], dataloader_idx=0
+    ):
+        with set_exploration_type(ExplorationType.DETERMINISTIC):
+            as_tensordict = self.forward(*batch_tuple)
+            for hook in self.validation_hooks:
+                metrics = hook(as_tensordict, dataloader_idx=dataloader_idx).items()
+                for key, value in metrics:
+                    self.log("val/" + key, value, batch_size=batch_tuple[0].batch_size)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim

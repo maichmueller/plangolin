@@ -2,11 +2,13 @@ import logging
 from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
 import lightning
 import torch
 import torch.nn
 from lightning.pytorch.loggers import WandbLogger
+from torchrl.modules import ValueOperator
 
 from experiments.rl.configs import agent as agent_module
 from experiments.rl.configs import data_resolver
@@ -17,6 +19,7 @@ from experiments.rl.configs import trainer as trainer_module
 from experiments.rl.configs import value_estimator
 from experiments.rl.configs.agent import Agent
 from experiments.rl.configs.trainer import Parameter as TrainerParameter
+from experiments.rl.configs.trainer import optimal_values
 from experiments.rl.data_resolver import DataResolver
 from rgnet import HeteroGNN
 from rgnet.rl import ActorCritic, EmbeddingModule
@@ -24,6 +27,11 @@ from rgnet.rl.losses import CriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
+from rgnet.rl.thundeRL.validation import (
+    CriticValidation,
+    PolicyValidation,
+    optimal_policy,
+)
 
 
 def create_args():
@@ -53,32 +61,80 @@ def create_args():
     return parser
 
 
-def _resolve_dataset(data_resolver: DataResolver, gamma: float):
+def _resolve_dataset(domain_path, problem_path, root_dir, gamma: float):
+    return FlashDrive(
+        root_dir=str(root_dir),
+        domain_path=domain_path,
+        problem_path=problem_path,
+        custom_dead_enc_reward=1.0 / (1.0 - gamma),
+    )
+
+
+def _resolve_training_data(data: DataResolver, gamma: float):
     root_dir = (
         Path(__file__).parent.parent.parent.parent
         / "data"
         / "flash_drives"
-        / data_resolver.domain.name
+        / data.domain.name
         / "train"
     )
-    if len(data_resolver.problem_paths) > 3:
-        logging.info(f"Using {len(data_resolver.problem_paths)} problems for training")
+    if len(data.problem_paths) > 3:
+        logging.info(f"Using {len(data.problem_paths)} problems for training")
     else:
-        join = "\n".join([p.stem for p in data_resolver.problem_paths])
+        join = "\n".join([p.stem for p in data.problem_paths])
         logging.info(f"Using problems: {join}")
     driver_list = []
-    for problem_path in data_resolver.problem_paths:
-        driver = FlashDrive(
-            root_dir=str(root_dir),
-            domain_path=data_resolver.domain_path,
-            problem_path=problem_path,
-            custom_dead_enc_reward=1.0 / (1.0 - gamma),
+    for problem_path in data.problem_paths:
+        driver_list.append(
+            _resolve_dataset(data.domain_path, problem_path, root_dir, gamma)
         )
-        driver_list.append(driver)
 
     complete_dataset = torch.utils.data.ConcatDataset(driver_list)
     logging.info(f"Total of {len(complete_dataset)} training data points")
     return complete_dataset
+
+
+def eval_setup(
+    data: DataResolver,
+    batch_size: int,
+    gamma: float,
+    value_operator: ValueOperator,
+):
+    root_dir = (
+        Path(__file__).parent.parent.parent.parent
+        / "data"
+        / "flash_drives"
+        / data.domain.name
+        / "train"
+    )
+    loader_list = []
+    for problem_path in data.validation_problem_paths:
+        dataset = _resolve_dataset(data.domain_path, problem_path, root_dir, gamma)
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            collate_fn=collate_fn,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=1,
+            persistent_workers=True,
+        )
+        loader_list.append(loader)
+
+    # Create the hooks
+    optimal_values_dict: Dict[int, torch.Tensor] = {
+        i: optimal_values(space, gamma)
+        for i, space in enumerate(data.validation_spaces)
+    }
+    critic_validation = CriticValidation(
+        optimal_values_dict=optimal_values_dict, value_operator=value_operator
+    )
+    policy_validation = PolicyValidation(
+        optimal={
+            i: optimal_policy(space) for i, space in enumerate(data.validation_spaces)
+        }
+    )
+
+    return loader_list, [critic_validation, policy_validation]
 
 
 def train(
@@ -87,13 +143,13 @@ def train(
     agent: ActorCritic,
     gnn: HeteroGNN,
     batch_size: int,
+    gamma: float,
     device: str,
     epochs: int,
     loss: CriticLoss,
     optim: torch.optim.Optimizer,
 ):
-
-    dataset = _resolve_dataset(data, gamma=parser_args.gamma)
+    dataset = _resolve_training_data(data, gamma=parser_args.gamma)
     loader = torch.utils.data.DataLoader(
         dataset,
         collate_fn=collate_fn,
@@ -102,10 +158,20 @@ def train(
         num_workers=2,
         persistent_workers=True,
     )
+    if data.validation_problems:
+        eval_loader, eval_hooks = eval_setup(
+            data, batch_size, gamma, agent.value_operator
+        )
+    else:
+        eval_loader = None
+        eval_hooks = None
+
     wlogger = WandbLogger(project="rgnet", name=data.exp_id, group="rl")
 
+    wlogger.log_hyperparams(vars(parser_args))
+
     thunder_module = LightningAdapter(
-        gnn=gnn, actor_critic=agent, loss=loss, optim=optim
+        gnn=gnn, actor_critic=agent, loss=loss, optim=optim, validation_hooks=eval_hooks
     )
     checkpoint_path = data.output_dir
     checkpoint_path.mkdir(parents=True, exist_ok=True)
@@ -121,8 +187,7 @@ def train(
         callbacks=[checkpoint_callback],
     )
     logging.info("Starting training")
-    trainer.fit(thunder_module, loader)
-    logging.info("Done")
+    trainer.fit(thunder_module, loader, val_dataloaders=eval_loader)
 
 
 def run():
@@ -174,6 +239,7 @@ def run():
         actor_critic,
         gnn,
         batch_size=batch_size,
+        gamma=gamma,
         device=requested_device,
         epochs=epochs,
         loss=agent.loss,

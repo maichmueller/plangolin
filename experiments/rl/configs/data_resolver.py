@@ -10,6 +10,7 @@ class Parameter(StrEnum):
     output_dir = auto()
     domain_name = auto()
     instances = auto()
+    validation_instances = auto()
 
 
 def from_parser_args(parser_args, exp_id: str):
@@ -47,5 +48,12 @@ def add_parser_args(
         nargs="*",
         help="List of instances to be used."
         "If none are provided all instances found in the directory will be used.",
+    )
+    parser.add_argument(
+        f"--{Parameter.validation_instances}",
+        type=str,
+        required=False,
+        help="List of instances to be used for validation."
+        "If none are provided validation will be skipped",
     )
     return parent_parser
