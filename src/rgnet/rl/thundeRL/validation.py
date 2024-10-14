@@ -16,7 +16,8 @@ from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
 def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
-    state_to_idx = {s: i for i, s in enumerate(space.get_states())}
+    # index of state to set of indices of optimal actions
+    # optimal[i] = {j},  0 <= j < len(space.get_forward_transitions(space.get_states()[i]))
     optimal: Dict[int, Set[int]] = dict()
     for i, state in enumerate(space.get_states()):
         best_distance = min(
@@ -24,8 +25,8 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
             for t in space.get_forward_transitions(state)
         )
         best_actions: Set[int] = set(
-            state_to_idx[t.target]
-            for t in space.get_forward_transitions(state)
+            idx
+            for idx, t in enumerate(space.get_forward_transitions(state))
             if space.get_distance_to_goal_state(t.target) == best_distance
         )
         optimal[i] = best_actions
@@ -67,7 +68,7 @@ class CriticValidation(torch.nn.Module, Callback):
             warnings.warn(
                 f"No optimal values found for dataloader_idx {dataloader_idx}"
             )
-            return {}
+            return
 
         prediction = self.value_op(tensordict).squeeze(dim=-1)
         state_value: torch.Tensor = prediction[ActorCritic.default_keys.state_value]
@@ -90,7 +91,7 @@ class PolicyValidation(torch.nn.Module, Callback):
         self,
         optimal: Dict[int, Dict[int, Set[int]]],
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
-        log_name: str = "policy_quality",
+        log_name: str = "policy_precision",
     ) -> None:
         super().__init__()
         # Outer dictionary maps datalaoder_idx to the respective StateSpace
@@ -136,7 +137,7 @@ class PolicyValidation(torch.nn.Module, Callback):
             warnings.warn(
                 f"No optimal actions found for dataloader_idx {dataloader_idx}"
             )
-            return {}
+            return
         optimal_actions = self.optimal_action_indices[dataloader_idx]
         correct_actions = 0
         for action_idx, state_idx in zip(action_indices, state_indices):
@@ -191,7 +192,7 @@ class MetricsHook(torch.nn.Module, Callback):
         state_indices = tensordict["idx_in_space"].squeeze()
         self.state_id_in_epoch.append(state_indices)
         self.probs_in_epoch.append(batched_probs)
-        return {}
+        return
 
     def on_validation_epoch_start(self, trainer, module) -> None:
         self.state_id_in_epoch.clear()
