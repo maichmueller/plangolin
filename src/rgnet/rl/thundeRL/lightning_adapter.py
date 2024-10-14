@@ -142,11 +142,13 @@ class LightningAdapter(lightning.LightningModule):
         stacked.refine_names(..., "time")
         return stacked
 
-    def _apply_loss(self, td: TensorDict) -> torch.Tensor:
+    def _apply_loss(self, td: TensorDict) -> tuple[TensorDict, torch.Tensor]:
+        # Apply the loss and return the loss components and combined loss
         losses_td = self.loss(td)
-        return losses_td.named_apply(
+        losses = losses_td.named_apply(
             lambda key, value: value if key.startswith("loss_") else None
-        ).sum(reduce=True)
+        )
+        return losses, losses.sum(reduce=True)
 
     def _common_step(self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]):
         out: TensorDict = self(*batch_tuple)
@@ -156,8 +158,9 @@ class LightningAdapter(lightning.LightningModule):
         self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]
     ) -> STEP_OUTPUT:
         with set_exploration_type(ExplorationType.RANDOM):
-            loss = self._common_step(batch_tuple)
-        self.log("train_loss", loss, batch_size=batch_tuple[0].batch_size)
+            losses_separate, loss = self._common_step(batch_tuple)
+            for key, value in losses_separate.items():
+                self.log("train/" + key, value, batch_size=batch_tuple[0].batch_size)
         return loss
 
     def validation_step(
