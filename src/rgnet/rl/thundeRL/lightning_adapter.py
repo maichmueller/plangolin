@@ -1,4 +1,4 @@
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import lightning
 import torch
@@ -12,6 +12,7 @@ from torchrl.objectives import LossModule
 from rgnet import HeteroGNN
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
 
 class LightningAdapter(lightning.LightningModule):
@@ -94,7 +95,8 @@ class LightningAdapter(lightning.LightningModule):
         )
 
         # Sample actions from the agent
-        action_indices, log_probs = self.actor_critic.embedded_forward(
+        batched_probs: List[torch.Tensor]  # probability for each transition
+        batched_probs, action_indices, log_probs = self.actor_critic.embedded_forward(
             state_embedding, batched_successor_embeddings
         )
         # Select the rewards for the chosen actions
@@ -127,8 +129,9 @@ class LightningAdapter(lightning.LightningModule):
             {
                 PlanningEnvironment.default_keys.action: action_indices,
                 ActorCritic.default_keys.current_embedding: state_embedding,
+                self.actor_critic.keys.log_probs: log_probs,
+                self.actor_critic.keys.probs: as_non_tensor_stack(batched_probs),
                 "idx_in_space": states_data.idx,  # torch.Tensor int64
-                "log_probs": log_probs,
                 "next": next_td,
             },
             batch_size=(states_data.batch_size,),
@@ -158,13 +161,18 @@ class LightningAdapter(lightning.LightningModule):
         return loss
 
     def validation_step(
-        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor], dataloader_idx=0
+        self,
+        batch_tuple: Tuple[Batch, Batch, torch.Tensor],
+        batch_idx=None,
+        dataloader_idx=0,
     ):
         with set_exploration_type(ExplorationType.DETERMINISTIC):
             as_tensordict = self.forward(*batch_tuple)
             for hook in self.validation_hooks:
-                metrics = hook(as_tensordict, dataloader_idx=dataloader_idx).items()
-                for key, value in metrics:
+                optional_metrics = hook(as_tensordict, dataloader_idx=dataloader_idx)
+                if optional_metrics is None:
+                    continue
+                for key, value in optional_metrics.items():
                     self.log("val/" + key, value, batch_size=batch_tuple[0].batch_size)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:

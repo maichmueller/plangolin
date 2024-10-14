@@ -1,10 +1,12 @@
 import itertools
 import warnings
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 import pymimir as mi
 import torch
+from lightning import Callback
 from lightning.pytorch.core.hooks import ModelHooks
 from tensordict import NestedKey, TensorDict
 from torchrl.modules import ValueOperator
@@ -30,7 +32,7 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
     return optimal
 
 
-class CriticValidation(torch.nn.Module):
+class CriticValidation(torch.nn.Module, Callback):
 
     def __init__(
         self,
@@ -45,10 +47,27 @@ class CriticValidation(torch.nn.Module):
         self.value_op = value_operator
         self.loss_function = loss_function
         self.log_name: str = log_name
+        self.epoch_values = defaultdict(list)
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self.epoch_values.clear()
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for dataloader_idx, values in self.epoch_values.items():
+            epoch_mean = sum(values) / len(values)
+            pl_module.log(
+                f"val/{self.log_name}_{dataloader_idx}", epoch_mean, on_epoch=True
+            )
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
 
-        optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
+        try:
+            optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
+        except AttributeError:
+            warnings.warn(
+                f"No optimal values found for dataloader_idx {dataloader_idx}"
+            )
+            return {}
 
         prediction = self.value_op(tensordict).squeeze(dim=-1)
         state_value: torch.Tensor = prediction[ActorCritic.default_keys.state_value]
@@ -62,10 +81,10 @@ class CriticValidation(torch.nn.Module):
         target = optimal_values[indices]
 
         loss = self.loss_function(state_value, target)
-        return {f"{self.log_name}_{dataloader_idx}": loss}
+        self.epoch_values[dataloader_idx].append(loss.item())
 
 
-class PolicyValidation(torch.nn.Module):
+class PolicyValidation(torch.nn.Module, Callback):
 
     def __init__(
         self,
@@ -79,6 +98,18 @@ class PolicyValidation(torch.nn.Module):
         self.optimal_action_indices: Dict[int, Dict[int, Set[int]]] = optimal
         self.keys = keys
         self.log_name = log_name
+
+        self.epoch_values = defaultdict(list)
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self.epoch_values.clear()
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for dataloader_idx, values in self.epoch_values.items():
+            epoch_mean = sum(values) / len(values)
+            pl_module.log(
+                f"val/{self.log_name}_{dataloader_idx}", epoch_mean, on_epoch=True
+            )
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         """
@@ -101,19 +132,20 @@ class PolicyValidation(torch.nn.Module):
         # len() = batch_size
         state_indices: List[int] = tensordict["idx_in_space"].squeeze().tolist()
         action_indices: List[int] = tensordict[self.keys.action].squeeze().tolist()
-
+        if dataloader_idx not in self.optimal_action_indices:
+            warnings.warn(
+                f"No optimal actions found for dataloader_idx {dataloader_idx}"
+            )
+            return {}
         optimal_actions = self.optimal_action_indices[dataloader_idx]
         correct_actions = 0
         for action_idx, state_idx in zip(action_indices, state_indices):
             if action_idx in optimal_actions[state_idx]:
                 correct_actions += 1
-        return {
-            f"{self.log_name}_{dataloader_idx}": correct_actions
-            / float(len(state_indices))
-        }
+        self.epoch_values[dataloader_idx].append(correct_actions / len(state_indices))
 
 
-class MetricsHook(ModelHooks):
+class MetricsHook(torch.nn.Module, Callback):
 
     def __init__(
         self,
@@ -135,14 +167,37 @@ class MetricsHook(ModelHooks):
         # Each state can have various number of successor therefore we have a list of list
         self.probs_in_epoch: List[List[torch.Tensor]] = list()
 
-    def __call__(self, tensordict: TensorDict, dataloader_idx, **kwargs):
-        assert dataloader_idx == 0
-        probs: List[torch.Tensor] = tensordict[self.probs_key].detach()
+    def get_extra_state(self) -> Any:
+        return {
+            "env_keys": self.env_keys,
+            "probs_key": self.probs_key,
+            "save_file": self.save_file,
+            "epoch": self.epoch,
+        }
+
+    def set_extra_state(self, state: Any) -> None:
+        self.env_keys = state["env_keys"]
+        self.probs_key = state["probs_key"]
+        self.save_file = state["save_file"]
+        self.epoch = state["epoch"]
+
+    def forward(self, tensordict: TensorDict, dataloader_idx=0, **kwargs):
+        if dataloader_idx != 0:
+            warnings.warn(f"Only implemented for single dataloader {dataloader_idx}")
+            return {}
+        # We have the additional time dimension (also for now only one step)
+        batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
+        batched_probs: List[torch.Tensor] = [ls[0].detach() for ls in batched_probs]
         state_indices = tensordict["idx_in_space"].squeeze()
         self.state_id_in_epoch.append(state_indices)
-        self.probs_in_epoch.append(probs)
+        self.probs_in_epoch.append(batched_probs)
+        return {}
 
-    def on_validation_epoch_end(self) -> None:
+    def on_validation_epoch_start(self, trainer, module) -> None:
+        self.state_id_in_epoch.clear()
+        self.probs_in_epoch.clear()
+
+    def on_validation_epoch_end(self, trainer, module) -> None:
         flattened_indices = torch.cat(self.state_id_in_epoch)
         sorted_ids, new_indices = torch.sort(flattened_indices)
         new_indices_list = new_indices.tolist()
@@ -154,11 +209,7 @@ class MetricsHook(ModelHooks):
             sorted_probs.append(flattened_probs[i])
 
         file_name = self.save_file.parent / (
-            self.save_file.name + str(self.epoch) + ".pt"
+            self.save_file.stem + str(self.epoch) + ".pt"
         )
         torch.save(sorted_probs, file_name)
         self.epoch += 1
-
-    def on_validation_start(self) -> None:
-        self.state_id_in_epoch.clear()
-        self.probs_in_epoch.clear()

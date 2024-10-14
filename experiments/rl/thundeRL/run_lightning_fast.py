@@ -2,7 +2,7 @@ import logging
 from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import lightning
 import torch
@@ -23,12 +23,14 @@ from experiments.rl.configs.trainer import optimal_values
 from experiments.rl.data_resolver import DataResolver
 from rgnet import HeteroGNN
 from rgnet.rl import ActorCritic, EmbeddingModule
+from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.validation import (
     CriticValidation,
+    MetricsHook,
     PolicyValidation,
     optimal_policy,
 )
@@ -96,7 +98,7 @@ def eval_setup(
     batch_size: int,
     gamma: float,
     value_operator: ValueOperator,
-):
+) -> Tuple[List[torch.utils.data.DataLoader], List[torch.nn.Module]]:
     loader_list = []
     for problem_path in data.validation_problem_paths:
         dataset = _resolve_dataset(
@@ -158,11 +160,20 @@ def train(
         )
     else:
         eval_loader = None
-        eval_hooks = None
+        eval_hooks = []
 
     wlogger = WandbLogger(project="rgnet", name=data.exp_id, group="rl")
 
     wlogger.log_hyperparams(vars(parser_args))
+
+    probs_file = data.output_dir / "metrics" / "probs.pt"
+    probs_file.parent.mkdir(exist_ok=True)
+    metrics = MetricsHook(
+        env_keys=PlanningEnvironment.default_keys,
+        probs_key=agent.keys.probs,
+        save_file=probs_file,
+    )
+    eval_hooks.append(metrics)
 
     thunder_module = LightningAdapter(
         gnn=gnn, actor_critic=agent, loss=loss, optim=optim, validation_hooks=eval_hooks
@@ -177,8 +188,9 @@ def train(
         accelerator=device,
         devices=1,
         max_epochs=epochs,
+        check_val_every_n_epoch=1,
         logger=wlogger,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback] + eval_hooks,
     )
     logging.info("Starting training")
     trainer.fit(thunder_module, loader, val_dataloaders=eval_loader)
