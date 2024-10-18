@@ -23,10 +23,8 @@ class EmbeddingModule(torch.nn.Module):
         num_layer: int,
         aggr: str | Aggregation | None = None,
         device: torch.device = torch.device("cpu"),
-        *args,
-        **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.hidden_size = hidden_size
         self.device = device
         self.gnn = HeteroGNN(

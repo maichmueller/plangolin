@@ -59,7 +59,8 @@ class ActorCritic(torch.nn.Module):
 
     def __init__(
         self,
-        embedding_module: EmbeddingModule,
+        hidden_size: int,
+        embedding_module: Optional[EmbeddingModule] = None,
         value_net: torch.nn.Module | None = None,
         keys: AcceptedKeys = default_keys,
     ):
@@ -76,7 +77,7 @@ class ActorCritic(torch.nn.Module):
 
         self._keys: ActorCritic.Acceptedkeys = keys
 
-        self._hidden_size = embedding_module.hidden_size
+        self._hidden_size = hidden_size
 
         self._embedding_module = embedding_module
 

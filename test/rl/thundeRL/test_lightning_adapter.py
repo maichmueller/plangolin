@@ -51,12 +51,16 @@ def test_training_step(fresh_drive):
 
     log_probs = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5], dtype=torch.float).log()
 
+    # return batched_probs, action_indices and log_probs
     actor_critic_mock = mockito.mock(
         {
             "embedded_forward": lambda x, y: (
+                [torch.rand((4,), dtype=torch.float, requires_grad=True).softmax(dim=0)]
+                * 5,
                 torch.zeros((5,), dtype=torch.long),
                 log_probs,
-            )
+            ),
+            "keys": ActorCritic.default_keys,
         },
         spec=ActorCritic,
     )

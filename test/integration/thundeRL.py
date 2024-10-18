@@ -55,10 +55,13 @@ class LightningAdapterMock:
         return torch.rand((1,), requires_grad=True)
 
 
-def launch_thundeRL(args: List[str], training_step_mock, input_dir, output_dir):
+def launch_thundeRL(
+    args: List[str], training_step_mock, input_dir, dataset_dir, output_dir
+):
     # split arguments that contain spaces
-    args.append(f"--input_dir {input_dir}")
-    args.append(f"--output_dir {output_dir}")
+    args.append(f"--data_layout.input_data.pddl_domains {input_dir}")
+    args.append(f"--data_layout.input_data.dataset_dir {dataset_dir}")
+    args.append(f"--data_layout.output_data.out_dir {output_dir}")
     args: List[str] = list(
         itertools.chain.from_iterable([arg.split(" ") for arg in args])
     )
@@ -72,7 +75,7 @@ def launch_thundeRL(args: List[str], training_step_mock, input_dir, output_dir):
         training_step_mock,
     )
 
-    run_lightning_fast.run()
+    run_lightning_fast.cli_main()
 
 
 def _create_data_setup(tmp_path):
@@ -146,7 +149,7 @@ def validate_successor_batch(
             )
 
 
-def _validate_don_reward_num_transitions(
+def _validate_done_reward_num_transitions(
     small_space: mi.StateSpace, medium_space: mi.StateSpace, mock: LightningAdapterMock
 ):
     assert len(mock.batched_list) == 5
@@ -205,27 +208,23 @@ def test_full_epoch(tmp_path, small_blocks, medium_blocks):
         FlashDrive(
             domain_path=domain_path,
             problem_path=problem,
-            custom_dead_enc_reward=(1.0 / 1.0 - 0.9),
+            custom_dead_end_reward=-(1.0 / 1.0 - 0.9),
             root_dir=str(dataset_dir),
         )
         for problem in problem_dir.iterdir()
     ]
 
     assert small_space.num_states() + medium_space.num_states() == 130
-    args = [
-        "--domain blocks "
-        "--epochs 1 "
-        "--batch_size 26 "  # small + medium are 130 states -> 5 batche s
-        "--algorithm actor_critic "
-        "--gamma 0.9 "
-        "--learning_rate 0.02 "
-        "--lr_actor 0.0002 "
-        "--embedding_type gnn "
-        "--gnn_hidden_size 8 "
-        "--gnn_num_layer 3"
-    ]
     mock = LightningAdapterMock()
-    launch_thundeRL(args, mock.training_step_mock, input_dir, output_dir)
+    # args are specified in config.yaml
+    config_file = Path(__file__).parent / "config.yaml"
+    launch_thundeRL(
+        ["fit", f"--config {config_file}"],
+        mock.training_step_mock,
+        input_dir,
+        dataset_dir,
+        output_dir,
+    )
 
     # _validate_don_reward_num_transitions(small_space, medium_space, mock)
 

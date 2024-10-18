@@ -3,7 +3,7 @@ from enum import StrEnum, auto
 
 import torch
 
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData
 from rgnet.rl.envs import MultiInstanceStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset, WeightedRandomReset
 
@@ -14,10 +14,10 @@ class Parameter(StrEnum):
 
 
 def from_parser_args(
-    parser_args, data_resolver: DataResolver, device: torch.device, gamma: float
+    parser_args, data_resolver: InputData, device: torch.device, gamma: float
 ) -> MultiInstanceStateSpaceEnv:
     spaces = data_resolver.spaces
-    dead_end_reward = 1.0 / (1.0 - gamma)
+    dead_end_reward = -1.0 / (1.0 - gamma)
     batch_size = getattr(parser_args, Parameter.batch_size)
     seed = getattr(parser_args, Parameter.batch_size)
     # test if all spaces in the list are the same object

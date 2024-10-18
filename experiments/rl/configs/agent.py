@@ -10,7 +10,7 @@ from torchrl.modules import ValueOperator
 
 from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
 from experiments.rl.configs.value_estimator import Parameter as ValueEstimatorParameter
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData
 from rgnet.rl import (
     ActorCritic,
     ActorCriticLoss,
@@ -104,7 +104,7 @@ def add_parser_args(parent_parser: ArgumentParser):
 
 def from_parser_args(
     parser_args,
-    data_resolver: DataResolver,
+    data_resolver: InputData,
     embedding: EmbeddingModule,
     env_keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
     agent_keys: ActorCritic.AcceptedKeys = ActorCritic.default_keys,
@@ -136,7 +136,7 @@ class AgentAndLossConfig:
     def __init__(
         self,
         parser_args,
-        data_resolver: DataResolver,
+        data_resolver: InputData,
         embedding: EmbeddingModule,
         env_keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
         agent_keys: ActorCritic.AcceptedKeys = ActorCritic.default_keys,
@@ -226,7 +226,11 @@ class AgentAndLossConfig:
         )
 
     def _resolve_actor_critic(self):
-        agent = ActorCritic(self.embedding, value_net=self.value_net)
+        agent = ActorCritic(
+            hidden_size=self.embedding.hidden_size,
+            embedding_module=self.embedding,
+            value_net=self.value_net,
+        )
         policy = agent.as_td_module(
             self.env_keys.state,
             self.env_keys.transitions,

@@ -316,7 +316,9 @@ def test_trainer(
     embedding_mock: EmbeddingModule = env.transform.embedding_module
     env_keys = ExpandedStateSpaceEnv.default_keys
 
-    agent = ActorCritic(embedding_mock)
+    agent = ActorCritic(
+        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+    )
     policy = agent.as_td_module(env_keys.state, env_keys.transitions, env_keys.action)
     loss = ActorCriticLoss(agent.value_operator)
     loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9, shifted=True)

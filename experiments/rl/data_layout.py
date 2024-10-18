@@ -1,14 +1,48 @@
+import dataclasses
+import datetime
+import logging
 import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pymimir as mi
 
 
-class DataResolver:
-    input_dir: Path
-    output_dir: Path
-    exp_id: str
+@dataclasses.dataclass
+class OutputData:
+    out_dir: Path
+    experiment_name: str
+
+    def __init__(
+        self,
+        out_dir: Path = Path("out"),
+        experiment_name: str | None = None,
+        root_dir: Path | None = None,
+        domain_name: str | None = None,
+    ):
+        super().__init__()
+        if root_dir:
+            out_dir = root_dir / out_dir
+        elif out_dir == Path("out"):
+            warnings.warn(
+                "If the root directory is not specified an absolut path for"
+                " 'directory' should be specified."
+            )
+        if experiment_name is None:
+            experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
+
+        if domain_name is not None:
+            self.out_dir = out_dir / domain_name / experiment_name
+        else:
+            self.out_dir = out_dir / experiment_name
+        self.out_dir.mkdir(exist_ok=True, parents=True)
+        logging.info("Using " + str(self.out_dir) + " for output data.")
+        self.experiment_name = experiment_name
+
+
+class InputData:
+    pddl_domains_dir: Path
+    dataset_dir: Path
     domain: mi.Domain
     problems: List[mi.Problem]
     _instances: List[Path]
@@ -17,24 +51,34 @@ class DataResolver:
 
     def __init__(
         self,
-        input_dir: Path,
-        output_dir: Path,
-        exp_id: str,
         domain_name: str,
-        instances: List[str] | None = None,
+        pddl_domains_dir: Path = Path("data/pddl_domains"),
+        dataset_dir: Path = Path("data/flash_drives"),
+        instances: Sequence[str] | None = None,
         validation_instances: List[str] | None = None,
+        # if specified pddl_domains_dir and dataset_dir will be relative to root_dir
+        root_dir: Optional[Path] = None,
     ):
-        self.exp_id: str = exp_id
-        if not any(p.name == "rgnet" for p in input_dir.parent.parents):
-            warnings.warn(
-                "Input directory is not a sub-directory of rgnet.\n"
-                + str(input_dir.absolute())
+        if root_dir:
+            pddl_domains_dir = root_dir / pddl_domains_dir
+            dataset_dir = root_dir / dataset_dir
+        else:
+            if pddl_domains_dir.parts[0] == "data" or dataset_dir.parts[0] == "data":
+                warnings.warn(
+                    "If the root directory is not specified absolute paths for"
+                    " 'pddl_domains_dir' and 'dataset_dir' should be specified."
+                )
+        self.dataset_dir = dataset_dir
+        if not self.dataset_dir.exists():
+            logging.info(
+                "Creating missing dataset dir at " + str(self.dataset_dir.absolute())
             )
-        self.input_dir = input_dir / domain_name
-        if not self.input_dir.exists() or not self.input_dir.is_dir():
+            self.dataset_dir.mkdir(parents=True)
+        self.pddl_domains_dir = pddl_domains_dir / domain_name
+        if not self.pddl_domains_dir.exists() or not self.pddl_domains_dir.is_dir():
             warnings.warn(
                 "Domain input directory does not exist or is not a directory.\n"
-                + str(self.input_dir.absolute())
+                + str(self.pddl_domains_dir.absolute())
             )
         self._resolve_domain_and_instances(instances)
         if validation_instances is not None:
@@ -42,10 +86,6 @@ class DataResolver:
         else:
             self.validation_problems = None
             self._validation_instances = None
-
-        output_dir_root = output_dir / domain_name
-        output_dir_root.mkdir(parents=False, exist_ok=True)
-        self._resolve_out_dir(output_dir_root, exp_id)
 
         # We load state space lazily as it might be quite expensive
         self._spaces: Optional[List[mi.StateSpace]] = None
@@ -81,7 +121,7 @@ class DataResolver:
 
     @property
     def domain_path(self) -> Path:
-        return self.input_dir / "domain.pddl"
+        return self.pddl_domains_dir / "domain.pddl"
 
     @property
     def problem_paths(self) -> List[Path]:
@@ -124,7 +164,7 @@ class DataResolver:
     def _resolve_domain_and_instances(self, instances: List[str] | None = None):
         self.domain: mi.Domain = mi.DomainParser(str(self.domain_path)).parse()
 
-        train_dir = self.input_dir / "train"
+        train_dir = self.pddl_domains_dir / "train"
         instances, problems = self._resolve_instances(train_dir, instances)
         self._instances = instances
         self.problems = problems
@@ -134,15 +174,7 @@ class DataResolver:
     ):
 
         directory = "train" if use_train_dir else "eval"
-        input_dir = self.input_dir / directory
+        input_dir = self.pddl_domains_dir / directory
         instances, problems = self._resolve_instances(input_dir, eval_instances)
         self.validation_problems = problems
         self._validation_instances = instances
-
-    def _resolve_out_dir(self, out_dir_root: Path, exp_id: str):
-        count = 0
-        self.output_dir = out_dir_root / exp_id
-        while self.output_dir.exists():
-            count += 1
-            self.output_dir = out_dir_root / f"{exp_id}_{count}"
-        self.output_dir.mkdir(parents=False, exist_ok=False)

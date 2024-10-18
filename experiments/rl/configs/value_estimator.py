@@ -6,7 +6,7 @@ from typing import Optional
 import torch
 from torchrl.objectives import ValueEstimators
 
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData
 from rgnet.rl import ActorCritic, EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
@@ -26,7 +26,7 @@ class Parameter(StrEnum):
 
 def from_parser_args(
     parser_args,
-    data_resolver: DataResolver,
+    data_resolver: InputData,
     device: torch.device,
     loss: CriticLoss,
     gamma: float,

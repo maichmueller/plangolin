@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from torchrl.modules import ValueOperator
@@ -22,8 +22,8 @@ class ActorCriticLoss(CriticLoss):
     def __init__(
         self,
         critic_network: ValueOperator,
-        reduction: Optional[str] = None,
-        loss_critic_type: str = "l2",
+        reduction: Optional[Literal["mean", "sum", "max"]] = None,
+        loss_critic_type: Literal["l1", "l2"] = "l2",
         log_prob_clip_value: Optional[float] = None,
         clone_tensordict: bool = True,
         keys: _AcceptedKeys = default_keys,

@@ -2,11 +2,12 @@ from argparse import ArgumentParser
 from enum import StrEnum, auto
 from pathlib import Path
 
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData, OutputData
 
 
 class Parameter(StrEnum):
-    input_dir = auto()
+    pddl_domains_dir = auto()
+    dataset_dir = auto()
     output_dir = auto()
     domain_name = auto()
     instances = auto()
@@ -15,7 +16,12 @@ class Parameter(StrEnum):
 
 def from_parser_args(parser_args, exp_id: str):
     kwargs = {p.value: getattr(parser_args, p.value) for p in Parameter}
-    return DataResolver(**kwargs, exp_id=exp_id)
+    output_dir = kwargs.pop(Parameter.output_dir)
+    return InputData(**kwargs), OutputData(
+        out_dir=output_dir,
+        experiment_name=exp_id,
+        domain_name=kwargs[Parameter.domain_name.value],
+    )
 
 
 def add_parser_args(
@@ -23,11 +29,18 @@ def add_parser_args(
 ):
     parser = parent_parser.add_argument_group("Data Resolver")
     parser.add_argument(
-        f"--{Parameter.input_dir.value}",
+        f"--{Parameter.pddl_domains_dir.value}",
         type=Path,
         required=False,
         help="Root directory of the input data.",
         default="../../data/pddl_domains",
+    )
+    parser.add_argument(
+        f"--{Parameter.dataset_dir.value}",
+        type=Path,
+        required=False,
+        help="Directory where to store/load datasets.",
+        default="../../data/flash_drives",
     )
     parser.add_argument(
         f"--{Parameter.output_dir.value}",

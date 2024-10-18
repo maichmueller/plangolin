@@ -17,7 +17,9 @@ from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 
 @pytest.fixture
 def agent(embedding_mock):
-    return ActorCritic(embedding_mock)
+    return ActorCritic(
+        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+    )
 
 
 @pytest.fixture
@@ -106,7 +108,9 @@ def test_policy_preparation(embedding_mock, hidden_size):
         _batch_size = tensor.shape[0]
         return torch.ones(size=(_batch_size, 1), dtype=tensor.dtype)
 
-    agent = ActorCritic(embedding_mock)
+    agent = ActorCritic(
+        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+    )
 
     mockito.when(agent.actor_net).forward(...).thenAnswer(actor_mock)
 

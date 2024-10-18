@@ -12,7 +12,7 @@ from torchrl.record.loggers import Logger
 
 from experiments.rl.configs.agent import Agent
 from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE, discounted_value
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData
 from rgnet.rl import RolloutCollector
 from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 
@@ -188,7 +188,7 @@ def _resolve_optim(parser_args, agent: Agent):
 
 
 def _resolve_collector(
-    parser_args, data_resolver: DataResolver, agent: Agent, env: EnvBase
+    parser_args, data_resolver: InputData, agent: Agent, env: EnvBase
 ):
     batches_per_epoch = getattr(parser_args, Parameter.batches_per_epoch)
     if batches_per_epoch is None:
@@ -204,7 +204,7 @@ def _resolve_collector(
 
 
 def from_parser_args(
-    parser_args, data_resolver: DataResolver, logger: Logger, agent: Agent, env: EnvBase
+    parser_args, data_resolver: InputData, logger: Logger, agent: Agent, env: EnvBase
 ):
     optimizer = _resolve_optim(parser_args, agent)
 

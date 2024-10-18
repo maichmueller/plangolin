@@ -59,7 +59,7 @@ class FlashDrive(InMemoryDataset):
         self,
         domain_path: Path,
         problem_path: Path,
-        custom_dead_enc_reward: float,
+        custom_dead_end_reward: float,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = True,
@@ -69,7 +69,7 @@ class FlashDrive(InMemoryDataset):
         assert problem_path.exists() and problem_path.is_file()
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
-        self.custom_dead_enc_reward = custom_dead_enc_reward
+        self.custom_dead_enc_reward = custom_dead_end_reward
         self.max_expanded = max_expanded
         super().__init__(
             root=root_dir,

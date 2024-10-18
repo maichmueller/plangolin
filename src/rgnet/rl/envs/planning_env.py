@@ -124,6 +124,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             ),
             requires_grad=False,
         )
+        if custom_dead_end_reward is not None and custom_dead_end_reward > 0:
+            warnings.warn("Custom dead-end reward should be negative. Auto correcting.")
+            custom_dead_end_reward = -custom_dead_end_reward
         self._dead_end_reward: float = (
             custom_dead_end_reward or self.default_dead_end_reward
         )

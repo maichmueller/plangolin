@@ -37,7 +37,7 @@ def test_save_and_load(fresh_drive, medium_blocks):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_enc_reward=100.0,
+        custom_dead_end_reward=100.0,
         root_dir=fresh_drive.root,
         force_reload=False,
     )

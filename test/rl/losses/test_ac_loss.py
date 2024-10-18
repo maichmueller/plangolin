@@ -165,7 +165,7 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
         cache_specs=True,
     )
 
-    agent = ActorCritic(embedding)
+    agent = ActorCritic(hidden_size=embedding.hidden_size, embedding_module=embedding)
     agent_policy = agent.as_td_module(
         env.keys.state, env.keys.transitions, env.keys.action
     )

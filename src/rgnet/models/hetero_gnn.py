@@ -3,6 +3,7 @@ from typing import Dict, Optional
 import torch
 import torch_geometric as pyg
 from torch import Tensor
+from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.typing import Adj
 
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
@@ -32,6 +33,9 @@ class HeteroGNN(torch.nn.Module):
         self.hidden_size: int = hidden_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
+        if aggr == "softmax":
+            aggr = SoftmaxAggregation()
+
         mlp_dict = {
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object

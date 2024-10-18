@@ -1,5 +1,4 @@
 from argparse import ArgumentParser
-from datetime import datetime
 from enum import StrEnum, auto
 
 import wandb
@@ -7,7 +6,7 @@ from torchrl.record.loggers import Logger
 
 from experiments.rl.configs.agent import Agent
 from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import OutputData
 
 
 class Parameter(StrEnum):
@@ -43,20 +42,20 @@ def add_parser_args(parent_parser: ArgumentParser):
     return parent_parser
 
 
-def from_parser_args(parser_args, data_resolver: DataResolver, agent: Agent) -> Logger:
+def from_parser_args(parser_args, data_resolver: OutputData, agent: Agent) -> Logger:
     backend = getattr(parser_args, Parameter.logger_backend)
 
-    exp_name = f"{data_resolver.domain.name}_{data_resolver.exp_id}"
+    exp_name = data_resolver.experiment_name
 
     if backend == "csv":
         from torchrl.record.loggers import CSVLogger
 
-        logger = CSVLogger(exp_name=exp_name, log_dir=data_resolver.output_dir)
+        logger = CSVLogger(exp_name=exp_name, log_dir=data_resolver.out_dir)
 
     elif backend == "tensorboard":
         from torchrl.record.loggers import TensorboardLogger
 
-        logger = TensorboardLogger(exp_name=exp_name, log_dir=data_resolver.output_dir)
+        logger = TensorboardLogger(exp_name=exp_name, log_dir=data_resolver.out_dir)
 
     elif backend == "wandb":
         from torchrl.record.loggers import WandbLogger
@@ -64,7 +63,7 @@ def from_parser_args(parser_args, data_resolver: DataResolver, agent: Agent) -> 
         logger = WandbLogger(
             exp_name=exp_name,
             offline=getattr(parser_args, Parameter.offline),
-            save_dir=data_resolver.output_dir,
+            save_dir=data_resolver.out_dir,
             project="rgnet",
             group="rl",
         )

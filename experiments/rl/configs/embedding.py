@@ -6,7 +6,7 @@ from typing import Optional
 import torch
 import torch_geometric.nn.aggr
 
-from experiments.rl.data_resolver import DataResolver
+from experiments.rl.data_layout import InputData
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
@@ -53,7 +53,7 @@ class Parameter(StrEnum):
 
 
 def from_parser_args(
-    parser_args, device: torch.device, data_resolver: DataResolver
+    parser_args, device: torch.device, data_resolver: InputData
 ) -> EmbeddingModule:
     if getattr(parser_args, Parameter.embedding_type) == "one_hot":
         return one_hot_embedding(

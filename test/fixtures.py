@@ -175,7 +175,7 @@ def fresh_drive(tmp_path, force_reload=True):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_enc_reward=100.0,
+        custom_dead_end_reward=100.0,
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
     )
