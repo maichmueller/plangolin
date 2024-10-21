@@ -1,7 +1,8 @@
+import functools
 from os import PathLike
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
-import jsonargparse
+import torch
 from lightning import Trainer
 from lightning.pytorch.cli import (
     ArgsType,
@@ -10,13 +11,20 @@ from lightning.pytorch.cli import (
     OptimizerCallable,
     SaveConfigCallback,
 )
+from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
+from experiments.rl.configs.trainer import optimal_values
 from experiments.rl.data_layout import InputData, OutputData
 from rgnet import HeteroGNN, HeteroGraphEncoder
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
+from rgnet.rl.thundeRL.validation import (
+    CriticValidation,
+    PolicyValidation,
+    optimal_policy,
+)
 
 
 class resolve_optim:
@@ -71,6 +79,29 @@ def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
     return loss
 
 
+@functools.cache
+def configure_eval_callbacks(
+    input_data: InputData, gamma: float, value_operator: ValueOperator
+):
+    if len(input_data.validation_problems) == 0:
+        return []
+    # Create the hooks
+    optimal_values_dict: Dict[int, torch.Tensor] = {
+        i: optimal_values(space, gamma)
+        for i, space in enumerate(input_data.validation_spaces)
+    }
+    critic_validation = CriticValidation(
+        optimal_values_dict=optimal_values_dict, value_operator=value_operator
+    )
+    policy_validation = PolicyValidation(
+        optimal={
+            i: optimal_policy(space)
+            for i, space in enumerate(input_data.validation_spaces)
+        }
+    )
+    return [critic_validation, policy_validation]
+
+
 class ThundeRLCLI(LightningCLI):
 
     def __init__(
@@ -105,7 +136,6 @@ class ThundeRLCLI(LightningCLI):
         )
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        parser: jsonargparse.ArgumentParser
         # parser = value_estimator_module.add_parser_args(parser)
         parser.add_class_arguments(HeteroGNN, "hetero_gnn", as_positional=True)
         parser.add_class_arguments(
@@ -164,6 +194,7 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "agent.value_operator", "ac_loss.critic_network", apply_on="instantiate"
         )
+        # Model links
         parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
 
         parser.link_arguments(
@@ -177,3 +208,27 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "optimizer.optimizer", "model.optim", apply_on="instantiate"
         )
+        # Validation hook links
+        parser.link_arguments(
+            source=(
+                "data_layout.input_data",
+                "value_estimator.gamma",
+                "agent.value_operator",
+            ),
+            target="model.validation_hooks",
+            compute_fn=configure_eval_callbacks,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source=(
+                "data_layout.input_data",
+                "value_estimator.gamma",
+                "agent.value_operator",
+            ),
+            target="trainer.callbacks",
+            compute_fn=configure_eval_callbacks,
+            apply_on="instantiate",
+        )
+
+    def before_fit(self):
+        self.trainer.logger.log_hyperparams(self.config)

@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Set
 import pymimir as mi
 import torch
 from lightning import Callback
-from lightning.pytorch.core.hooks import ModelHooks
 from tensordict import NestedKey, TensorDict
 from torchrl.modules import ValueOperator
 
