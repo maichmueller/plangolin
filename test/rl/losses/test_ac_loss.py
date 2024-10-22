@@ -1,6 +1,6 @@
 import copy
 import itertools
-from test.fixtures import small_blocks
+from test.fixtures import embedding_mock, small_blocks  # noqa: F401
 
 import mockito
 import pytest
