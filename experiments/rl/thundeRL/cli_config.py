@@ -83,7 +83,7 @@ def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
 def configure_eval_callbacks(
     input_data: InputData, gamma: float, value_operator: ValueOperator
 ):
-    if len(input_data.validation_problems) == 0:
+    if not input_data.validation_problems:
         return []
     # Create the hooks
     optimal_values_dict: Dict[int, torch.Tensor] = {
@@ -122,7 +122,7 @@ class ThundeRLCLI(LightningCLI):
         super().__init__(
             LightningAdapter,
             ThundeRLDataModule,
-            None,
+            save_config_callback,
             save_config_kwargs,
             trainer_class,
             trainer_defaults,
@@ -143,6 +143,11 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
+        )
+        parser.add_argument(
+            "--test_max_steps",
+            type=int,
+            default=100,
         )
         parser.add_class_arguments(
             InputData, "data_layout.input_data", as_positional=True
@@ -227,6 +232,16 @@ class ThundeRLCLI(LightningCLI):
             ),
             target="trainer.callbacks",
             compute_fn=configure_eval_callbacks,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.output_data.out_dir",
+            target="trainer.default_root_dir",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.output_data.out_dir",
+            target="trainer.logger.init_args.save_dir",
             apply_on="instantiate",
         )
 
