@@ -22,18 +22,18 @@ class SuccessorEnvironment(
         super().__init__(list(zip(generators, problems)), batch_size, seed, device)
 
     def transitions_for(
-        self, active_instance: int, state: mi.State
+        self, active_instance: Tuple[mi.SuccessorGenerator, mi.Problem], state: mi.State
     ) -> List[mi.Transition]:
-        generator, _ = self._active_instances[active_instance]
+        generator, _ = active_instance
 
         actions = generator.get_applicable_actions(state)
         return [MTransition(state, action, action.apply(state)) for action in actions]
 
     def initial_for(
-        self, active_instances: Tuple[mi.SuccessorGenerator, mi.Problem]
+        self, active_instance: Tuple[mi.SuccessorGenerator, mi.Problem]
     ) -> Tuple[mi.State, List[mi.Literal]]:
-        problem = active_instances[1]
+        _, problem = active_instance
         return problem.create_state(problem.initial), problem.goal
 
     def is_goal(self, active_instance: Tuple, state: mi.State) -> bool:
-        return state.matches_all(active_instance[1].goal)
+        return state.literals_hold(active_instance[1].goal)
