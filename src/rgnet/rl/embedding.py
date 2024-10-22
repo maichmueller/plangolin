@@ -10,8 +10,25 @@ from torchrl.envs import Transform, TransformedEnv
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
-from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+
+
+def build_embedding_and_gnn(
+    hidden_size: int,
+    num_layer: int,
+    encoder: HeteroGraphEncoder,
+    aggr: str | Aggregation | None = None,
+    **kwargs,
+):
+    gnn = HeteroGNN(
+        hidden_size=hidden_size,
+        num_layer=num_layer,
+        aggr=aggr,
+        obj_type_id=encoder.obj_type_id,
+        arity_dict=encoder.arity_dict,
+    )
+    return EmbeddingModule(encoder, gnn=gnn, **kwargs)
 
 
 class EmbeddingModule(torch.nn.Module):
@@ -19,21 +36,13 @@ class EmbeddingModule(torch.nn.Module):
     def __init__(
         self,
         encoder: HeteroGraphEncoder,
-        hidden_size: int,
-        num_layer: int,
-        aggr: str | Aggregation | None = None,
+        gnn: HeteroGNN | None = None,
         device: torch.device = torch.device("cpu"),
     ):
         super().__init__()
-        self.hidden_size = hidden_size
+        self.hidden_size = gnn.hidden_size
         self.device = device
-        self.gnn = HeteroGNN(
-            hidden_size=hidden_size,
-            num_layer=num_layer,
-            aggr=aggr,
-            obj_type_id=encoder.obj_type_id,
-            arity_dict=encoder.arity_dict,
-        )
+        self.gnn = gnn
         self.encoder: HeteroGraphEncoder = encoder
 
     def forward(self, states: List[mi.State] | NonTensorWrapper) -> torch.Tensor:
@@ -52,7 +61,7 @@ class EmbeddingTransform(Transform):
     def __init__(
         self,
         current_embedding_key: NestedKey,
-        env: ExpandedStateSpaceEnv,
+        env: PlanningEnvironment,
         embedding_module: EmbeddingModule,
         **kwargs,
     ):

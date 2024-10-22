@@ -9,6 +9,7 @@ import torch_geometric.nn.aggr
 from experiments.rl.data_layout import InputData
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import EmbeddingModule
+from rgnet.rl.embedding import build_embedding_and_gnn
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 
 
@@ -70,7 +71,7 @@ def from_parser_args(
     if aggr == "softmax":
         aggr = torch_geometric.nn.aggr.SoftmaxAggregation()
 
-    return EmbeddingModule(
+    return build_embedding_and_gnn(
         encoder=encoder,
         hidden_size=getattr(parser_args, Parameter.gnn_hidden_size),
         num_layer=getattr(parser_args, Parameter.gnn_num_layer),

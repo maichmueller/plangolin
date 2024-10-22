@@ -1,6 +1,6 @@
 import copy
 import itertools
-from test.fixtures import embedding_mock, small_blocks
+from test.fixtures import small_blocks
 
 import mockito
 import pytest
@@ -13,8 +13,12 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, ActorCriticLoss, EmbeddingModule
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl.embedding import (
+    EmbeddingTransform,
+    NonTensorTransformedEnv,
+    build_embedding_and_gnn,
+)
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 
 
@@ -148,7 +152,12 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
     space, domain, _ = small_blocks
     uses_gnn = embedding_mode == "gnn"
     embedding = (
-        EmbeddingModule(HeteroGraphEncoder(domain), hidden_size, 1, "sum")
+        build_embedding_and_gnn(
+            hidden_size=hidden_size,
+            num_layer=1,
+            encoder=HeteroGraphEncoder(domain),
+            aggr="sum",
+        )
         if uses_gnn
         else request.getfixturevalue(embedding_mode)
     )
