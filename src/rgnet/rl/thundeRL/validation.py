@@ -2,7 +2,7 @@ import itertools
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 import pymimir as mi
 import torch
@@ -39,14 +39,33 @@ class CriticValidation(torch.nn.Module, Callback):
         optimal_values_dict: Dict[int, torch.Tensor],
         value_operator: ValueOperator,
         loss_function=torch.nn.functional.mse_loss,
+        state_value_key: NestedKey = ActorCritic.default_keys.state_value,
         log_name: str = "value_loss",
+        dataloader_names: Optional[Dict[int, str]] = None,
     ):
+        """
+        Used to assess the quality of a value-operator that learns the distance to the goal state.
+        Computes the current prediction of state values for current states and compares them
+        to the optimal values using the loss function.
+        This is a torch module in order to simplify moving the optimal values to the device.
+        :param optimal_values_dict: Dictionary mapping the dataloader index to a flat tensor.
+            optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
+        :param value_operator: The value operator currently learned. Each in-key has to be contained in the tensordicts.
+        :param loss_function: Which loss function to use. (default: torch.nn.functional.mse_loss)
+        :param state_value_key: The output key of the value_operator.
+        :param log_name: How should be logged. (default: value_loss)
+        :param dataloader_names: Mapping each data loader to a string. Will be used in the full logg-key.
+            The full key will be val/{log_name}_{dataloader_names[idx]. If not specified the index
+            of the dataloader will be used instead.
+        """
         super().__init__()
         for space_idx, optimal_values in optimal_values_dict.items():
             self.register_buffer(str(space_idx), optimal_values)
         self.value_op = value_operator
         self.loss_function = loss_function
         self.log_name: str = log_name
+        self.state_value_key = state_value_key
+        self.dataloader_names = dataloader_names
         self.epoch_values = defaultdict(list)
 
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
@@ -55,9 +74,12 @@ class CriticValidation(torch.nn.Module, Callback):
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         for dataloader_idx, values in self.epoch_values.items():
             epoch_mean = sum(values) / len(values)
-            pl_module.log(
-                f"val/{self.log_name}_{dataloader_idx}", epoch_mean, on_epoch=True
+            key = (
+                f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
+                if self.dataloader_names
+                else str(dataloader_idx)
             )
+            pl_module.log(key, epoch_mean, on_epoch=True)
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
 
@@ -69,15 +91,16 @@ class CriticValidation(torch.nn.Module, Callback):
             )
             return
 
-        prediction = self.value_op(tensordict).squeeze(dim=-1)
-        state_value: torch.Tensor = prediction[ActorCritic.default_keys.state_value]
+        # select(...) makes sure that the state_value is not written in the original.
+        prediction: TensorDict = self.value_op(tensordict.select(self.value_op.in_keys))
+        state_value: torch.Tensor = prediction[self.state_value_key].squeeze(dim=-1)
 
         if optimal_values.device != state_value.device:
             warnings.warn(
-                f"Found missmatching devices: {optimal_values.device=} and { state_value.device=}"
+                f"Found mismatching devices: {optimal_values.device=} and { state_value.device=}"
             )
         # shape is batch_size
-        indices: torch.Tensor = tensordict["idx_in_space"]
+        indices: torch.Tensor = tensordict["idx_in_space"].squeeze(dim=-1)
         target = optimal_values[indices]
 
         loss = self.loss_function(state_value, target)
@@ -91,6 +114,7 @@ class PolicyValidation(torch.nn.Module, Callback):
         optimal: Dict[int, Dict[int, Set[int]]],
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
         log_name: str = "policy_precision",
+        dataloader_names: Optional[Dict[int, str]] = None,
     ) -> None:
         super().__init__()
         # Outer dictionary maps datalaoder_idx to the respective StateSpace
@@ -98,7 +122,7 @@ class PolicyValidation(torch.nn.Module, Callback):
         self.optimal_action_indices: Dict[int, Dict[int, Set[int]]] = optimal
         self.keys = keys
         self.log_name = log_name
-
+        self.dataloader_names = dataloader_names
         self.epoch_values = defaultdict(list)
 
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
@@ -107,9 +131,13 @@ class PolicyValidation(torch.nn.Module, Callback):
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         for dataloader_idx, values in self.epoch_values.items():
             epoch_mean = sum(values) / len(values)
-            pl_module.log(
-                f"val/{self.log_name}_{dataloader_idx}", epoch_mean, on_epoch=True
+            key = (
+                f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
+                if self.dataloader_names
+                else str(dataloader_idx)
             )
+
+            pl_module.log(key, epoch_mean, on_epoch=True)
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         """
