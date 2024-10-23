@@ -221,9 +221,15 @@ class ThundeRLCLI(LightningCLI):
             "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
         )
 
+        # Trainer / logger links
         parser.link_arguments(
             source="data_layout.output_data.out_dir",
             target="trainer.logger.init_args.save_dir",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.output_data.experiment_name",
+            target="trainer.logger.init_args.name",
             apply_on="instantiate",
         )
 

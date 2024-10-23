@@ -19,6 +19,7 @@ class OutputData:
         self,
         out_dir: Path = Path("out"),
         experiment_name: str | None = None,
+        ensure_new_out_dir: bool = False,
         root_dir: Path | None = None,
         domain_name: str | None = None,
     ):
@@ -37,6 +38,15 @@ class OutputData:
             self.out_dir = out_dir / domain_name / experiment_name
         else:
             self.out_dir = out_dir / experiment_name
+
+        if ensure_new_out_dir:
+            suffix = 0
+            new_out_dir = self.out_dir
+            while new_out_dir.exists():
+                new_out_dir = Path(str(self.out_dir.absolute()) + "_" + str(suffix))
+                suffix += 1
+            self.out_dir = new_out_dir
+
         self.out_dir.mkdir(exist_ok=True, parents=True)
         logging.info("Using " + str(self.out_dir) + " for output data.")
         self.experiment_name = experiment_name
