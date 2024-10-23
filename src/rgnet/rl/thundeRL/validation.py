@@ -1,8 +1,9 @@
 import itertools
+import statistics
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
 import pymimir as mi
 import torch
@@ -32,16 +33,63 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
     return optimal
 
 
-class CriticValidation(torch.nn.Module, Callback):
+class ValidationCallback(torch.nn.Module, Callback):
+
+    def __init__(
+        self,
+        log_name: str,
+        dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
+        epoch_reduction: Literal["mean", "max", "min"] = "mean",
+    ) -> None:
+        """
+
+        :param log_name: Under which name the metrics should be logged.
+        :param dataloader_names: Mapping each data loader to a string. Will be used in the full logg-key.
+            The full key will be val/{log_name}_{dataloader_names[idx]. If not specified the index
+            of the dataloader will be used instead.
+        :param only_run_for_dataloader: Optional parameter to limit the callback to a specific set of dataloader.
+        :param epoch_reduction: How to reduce the values of one epoch for one dataloader.
+            (default: mean)
+        """
+        super().__init__()
+        self.log_name = log_name
+        self.dataloader_names = dataloader_names
+        self.only_run_for_dataloader = only_run_for_dataloader
+        if epoch_reduction == "mean":
+            self.epoch_reduction = statistics.fmean
+        elif epoch_reduction == "max":
+            self.epoch_reduction = max
+        elif epoch_reduction == "min":
+            self.epoch_reduction = min
+
+    def log_key(self, dataloader_idx: int):
+        return (
+            f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
+            if self.dataloader_names
+            else str(dataloader_idx)
+        )
+
+    def skip_dataloader(self, dataloader_index):
+        return (
+            self.only_run_for_dataloader is not None
+            and dataloader_index not in self.only_run_for_dataloader
+        )
+
+
+class CriticValidation(ValidationCallback):
 
     def __init__(
         self,
         optimal_values_dict: Dict[int, torch.Tensor],
         value_operator: ValueOperator,
-        loss_function=torch.nn.functional.mse_loss,
+        loss_function: Optional[
+            Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+        ] = None,
         state_value_key: NestedKey = ActorCritic.default_keys.state_value,
         log_name: str = "value_loss",
         dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
     ):
         """
         Used to assess the quality of a value-operator that learns the distance to the goal state.
@@ -54,15 +102,16 @@ class CriticValidation(torch.nn.Module, Callback):
         :param loss_function: Which loss function to use. (default: torch.nn.functional.mse_loss)
         :param state_value_key: The output key of the value_operator.
         :param log_name: How should be logged. (default: value_loss)
-        :param dataloader_names: Mapping each data loader to a string. Will be used in the full logg-key.
-            The full key will be val/{log_name}_{dataloader_names[idx]. If not specified the index
-            of the dataloader will be used instead.
         """
-        super().__init__()
+        super().__init__(
+            log_name=log_name,
+            dataloader_names=dataloader_names,
+            only_run_for_dataloader=only_run_for_dataloader,
+        )
         for space_idx, optimal_values in optimal_values_dict.items():
             self.register_buffer(str(space_idx), optimal_values)
         self.value_op = value_operator
-        self.loss_function = loss_function
+        self.loss_function = loss_function or torch.nn.functional.mse_loss
         self.log_name: str = log_name
         self.state_value_key = state_value_key
         self.dataloader_names = dataloader_names
@@ -73,16 +122,15 @@ class CriticValidation(torch.nn.Module, Callback):
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         for dataloader_idx, values in self.epoch_values.items():
-            epoch_mean = sum(values) / len(values)
-            key = (
-                f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
-                if self.dataloader_names
-                else str(dataloader_idx)
+            pl_module.log(
+                self.log_key(dataloader_idx),
+                self.epoch_reduction(values),
+                on_epoch=True,
             )
-            pl_module.log(key, epoch_mean, on_epoch=True)
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
-
+        if self.skip_dataloader(dataloader_idx):
+            return
         try:
             optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
         except AttributeError:
@@ -92,8 +140,12 @@ class CriticValidation(torch.nn.Module, Callback):
             return
 
         # select(...) makes sure that the state_value is not written in the original.
-        prediction: TensorDict = self.value_op(tensordict.select(self.value_op.in_keys))
-        state_value: torch.Tensor = prediction[self.state_value_key].squeeze(dim=-1)
+        prediction: TensorDict = self.value_op(
+            tensordict.select(*self.value_op.in_keys)
+        )
+        # tensordict has shape [batch_size, 1] and tensordict[current_embedding] is [batch_size, 1, hidden_size]
+        # therefore, prediction has shape [batch_size, 1, 1] and we have to squeeze two dimension.
+        state_value: torch.Tensor = prediction[self.state_value_key].squeeze()
 
         if optimal_values.device != state_value.device:
             warnings.warn(
@@ -107,19 +159,28 @@ class CriticValidation(torch.nn.Module, Callback):
         self.epoch_values[dataloader_idx].append(loss.item())
 
 
-class PolicyValidation(torch.nn.Module, Callback):
+class PolicyValidation(ValidationCallback):
 
     def __init__(
         self,
-        optimal: Dict[int, Dict[int, Set[int]]],
+        optimal_policy_dict: Dict[int, Dict[int, Set[int]]],
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
         log_name: str = "policy_precision",
         dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
+        epoch_reduction: Literal["mean", "max", "min"] = "mean",
     ) -> None:
-        super().__init__()
-        # Outer dictionary maps datalaoder_idx to the respective StateSpace
+        super().__init__(
+            log_name=log_name,
+            dataloader_names=dataloader_names,
+            only_run_for_dataloader=only_run_for_dataloader,
+            epoch_reduction=epoch_reduction,
+        )
+        # Outer dictionary maps dataloader_idx to the respective StateSpace
         # Inner dict maps from state index to index of best target states
-        self.optimal_action_indices: Dict[int, Dict[int, Set[int]]] = optimal
+        self.optimal_action_indices: Dict[int, Dict[int, Set[int]]] = (
+            optimal_policy_dict
+        )
         self.keys = keys
         self.log_name = log_name
         self.dataloader_names = dataloader_names
@@ -130,14 +191,11 @@ class PolicyValidation(torch.nn.Module, Callback):
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         for dataloader_idx, values in self.epoch_values.items():
-            epoch_mean = sum(values) / len(values)
-            key = (
-                f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
-                if self.dataloader_names
-                else str(dataloader_idx)
+            pl_module.log(
+                self.log_key(dataloader_idx),
+                self.epoch_reduction(values),
+                on_epoch=True,
             )
-
-            pl_module.log(key, epoch_mean, on_epoch=True)
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         """
@@ -150,9 +208,11 @@ class PolicyValidation(torch.nn.Module, Callback):
             - "idx_in_space" identifying the current state in the respective StateSpace
             - PlanningEnvironment.keys.action the idx of the transition which the agent chose
         :param dataloader_idx: Each dataloader is associated with a specific StateSpace.
-        :return: Dictionary of metric_name: policy_precision
         """
         # TODO use cross entropy loss between all optimal actions and policy probs
+
+        if self.skip_dataloader(dataloader_idx):
+            return
 
         # Trigger cpu synchronisation by tolist()
         # Tensordict has additional time dimension
@@ -173,71 +233,88 @@ class PolicyValidation(torch.nn.Module, Callback):
         self.epoch_values[dataloader_idx].append(correct_actions / len(state_indices))
 
 
-class MetricsHook(torch.nn.Module, Callback):
+class ProbsStoreCallback(ValidationCallback):
 
     def __init__(
         self,
-        env_keys: PlanningEnvironment.AcceptedKeys,
-        probs_key: NestedKey,
-        save_file: Path,
+        save_dir: Path,
+        probs_key: NestedKey = ActorCritic.default_keys.probs,
+        log_name: str = "actor_probs",
+        dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
     ):
-        super().__init__()
-        self.env_keys = env_keys
+        """
+        Save the probability for all successors for every state.
+        The combined probabilities over one epoch are saved to a .pt file.
+        The saved file is of the form List[torch.Tensor]. save_file[i][j] is the probability
+        in state i for moving to the j-th successor.
+
+        :param probs_key: Under which key the agent stores its probabilities. The
+            probabilities are assumed to be of the form List[torch.Tensor]
+        :param save_dir: Where to store the .pt files.
+        :param log_name: Start of the file-names. (default: actor_probs)
+        """
+        super().__init__(
+            log_name=log_name,
+            dataloader_names=dataloader_names,
+            only_run_for_dataloader=only_run_for_dataloader,
+        )
         self.probs_key: NestedKey = probs_key
-        assert isinstance(save_file, Path)
-        self.save_file: Path = save_file
-        self.epoch = 0
-        # TODO Extend to multiple dataloader
+        assert isinstance(save_dir, Path)
+        self.save_dir: Path = save_dir / self.log_name
+        self.save_dir.mkdir(exist_ok=True)
+        self.epoch: int = 0
         # Collected over one validation epoch
         # The index of the current states in their StateSpaces collected over one epoch
-        self.state_id_in_epoch: List[torch.Tensor] = list()
+        self.state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
         # The probability for each outgoing transition over one epoch
         # Each state can have various number of successor therefore we have a list of list
-        self.probs_in_epoch: List[List[torch.Tensor]] = list()
+        self.probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
 
     def get_extra_state(self) -> Any:
         return {
-            "env_keys": self.env_keys,
             "probs_key": self.probs_key,
-            "save_file": self.save_file,
+            "save_dir": self.save_dir,
             "epoch": self.epoch,
         }
 
     def set_extra_state(self, state: Any) -> None:
-        self.env_keys = state["env_keys"]
         self.probs_key = state["probs_key"]
-        self.save_file = state["save_file"]
+        self.save_dir = state["save_dir"]
         self.epoch = state["epoch"]
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0, **kwargs):
-        if dataloader_idx != 0:
-            warnings.warn(f"Only implemented for single dataloader {dataloader_idx}")
-            return {}
+        if self.skip_dataloader(dataloader_idx):
+            return
         # We have the additional time dimension (also for now only one step)
         batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
         batched_probs: List[torch.Tensor] = [ls[0].detach() for ls in batched_probs]
         state_indices = tensordict["idx_in_space"].squeeze()
-        self.state_id_in_epoch.append(state_indices)
-        self.probs_in_epoch.append(batched_probs)
-        return
+        self.state_id_in_epoch[dataloader_idx].append(state_indices)
+        self.probs_in_epoch[dataloader_idx].append(batched_probs)
 
     def on_validation_epoch_start(self, trainer, module) -> None:
         self.state_id_in_epoch.clear()
         self.probs_in_epoch.clear()
 
     def on_validation_epoch_end(self, trainer, module) -> None:
-        flattened_indices = torch.cat(self.state_id_in_epoch)
-        sorted_ids, new_indices = torch.sort(flattened_indices)
-        new_indices_list = new_indices.tolist()
-        flattened_probs: List[torch.Tensor] = list(
-            itertools.chain.from_iterable(self.probs_in_epoch)
-        )
-        sorted_probs: List[torch.Tensor] = []
-        for i in new_indices_list:
-            sorted_probs.append(flattened_probs[i])
+        for dataloader_idx, state_id_in_epoch in self.state_id_in_epoch.items():
+            probs_in_epoch = self.probs_in_epoch[dataloader_idx]
+            flattened_indices: torch.Tensor = torch.cat(state_id_in_epoch)
+            sorted_ids, new_indices = torch.sort(flattened_indices)
+            new_indices_list: List[int] = new_indices.tolist()
+            flattened_probs: List[torch.Tensor] = list(
+                itertools.chain.from_iterable(probs_in_epoch)
+            )
+            sorted_probs: List[torch.Tensor] = []
+            for i in new_indices_list:
+                sorted_probs.append(flattened_probs[i])
 
-        file_name = self.save_file.parent / (
-            self.save_file.stem + str(self.epoch) + ".pt"
-        )
-        torch.save(sorted_probs, file_name)
-        self.epoch += 1
+            dataloader_name = self.dataloader_names.get(dataloader_idx) or str(
+                dataloader_idx
+            )
+            file_name = (
+                self.save_dir / f"{self.log_name}_{dataloader_name}_{self.epoch}.pt"
+            )
+            torch.save(sorted_probs, file_name)
+            self.epoch += 1

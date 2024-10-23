@@ -1,4 +1,4 @@
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import lightning
 import torch
@@ -13,6 +13,7 @@ from rgnet import HeteroGNN
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.thundeRL.validation import ValidationCallback
 
 
 class LightningAdapter(lightning.LightningModule):
@@ -23,10 +24,9 @@ class LightningAdapter(lightning.LightningModule):
         actor_critic: ActorCritic,
         loss: LossModule,
         optim: torch.optim.Optimizer,
-        validation_hooks: Optional[Iterable[torch.nn.Module]] = None,
+        validation_hooks: Optional[List[ValidationCallback]] = None,
     ) -> None:
         super().__init__()
-        # self.save_hyperparameters()
         assert isinstance(gnn, HeteroGNN)
         assert isinstance(actor_critic, ActorCritic)
         assert isinstance(loss, LossModule)

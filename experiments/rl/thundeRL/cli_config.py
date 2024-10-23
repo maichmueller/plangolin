@@ -1,5 +1,4 @@
 import dataclasses
-import functools
 from argparse import Namespace
 from os import PathLike
 from typing import Any, Callable, Dict, List, Optional, Type, Union
@@ -14,7 +13,6 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
-from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from experiments.rl.configs.trainer import optimal_values
@@ -23,11 +21,7 @@ from rgnet import HeteroGNN, HeteroGraphEncoder
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
-from rgnet.rl.thundeRL.validation import (
-    CriticValidation,
-    PolicyValidation,
-    optimal_policy,
-)
+from rgnet.rl.thundeRL.validation import CriticValidation, optimal_policy  # noqa: F401
 
 
 class resolve_optim:
@@ -88,27 +82,24 @@ def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
     return loss
 
 
-@functools.cache
-def configure_eval_callbacks(
-    input_data: InputData, gamma: float, value_operator: ValueOperator
-):
-    if not input_data.validation_problems:
-        return []
-    # Create the hooks
-    optimal_values_dict: Dict[int, torch.Tensor] = {
+def optimal_policy_dict(input_data: InputData):
+    return {
+        i: optimal_policy(space) for i, space in enumerate(input_data.validation_spaces)
+    }
+
+
+def optimal_values_dict(input_data: InputData, gamma: float) -> Dict[int, torch.Tensor]:
+    return {
         i: optimal_values(space, gamma)
         for i, space in enumerate(input_data.validation_spaces)
     }
-    critic_validation = CriticValidation(
-        optimal_values_dict=optimal_values_dict, value_operator=value_operator
-    )
-    policy_validation = PolicyValidation(
-        optimal={
-            i: optimal_policy(space)
-            for i, space in enumerate(input_data.validation_spaces)
-        }
-    )
-    return [critic_validation, policy_validation]
+
+
+def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str]]:
+    if input_data.validation_problems is None:
+        return None
+
+    return {i: p.name for i, p in enumerate(input_data.validation_problems)}
 
 
 class ThundeRLCLI(LightningCLI):
@@ -176,7 +167,6 @@ class ThundeRLCLI(LightningCLI):
             ValueEstimatorConfig, "value_estimator", as_positional=True
         )
         parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
-
         # Link arguments
         parser.link_arguments(
             "data_layout.root_dir", "data_layout.input_data.root_dir", apply_on="parse"
@@ -223,25 +213,43 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "optimizer.optimizer", "model.optim", apply_on="instantiate"
         )
-        # Validation hook links
+
         parser.link_arguments(
-            source=(
-                "data_layout.input_data",
-                "value_estimator.gamma",
-                "agent.value_operator",
-            ),
-            target="model.validation_hooks",
-            compute_fn=configure_eval_callbacks,
+            source="data_layout.output_data.out_dir",
+            target="trainer.logger.init_args.save_dir",
+            apply_on="instantiate",
+        )
+
+        # Validation callback links
+        # NOTE it seems like you can't have two callbacks which have different parameter
+        # of the same name.
+        # Not a problem for dataloader_names as it is the same for all of them.
+        parser.link_arguments(
+            source="agent.value_operator",
+            target="model.validation_hooks.init_args.value_operator",
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source=(
-                "data_layout.input_data",
-                "value_estimator.gamma",
-                "agent.value_operator",
-            ),
-            target="trainer.callbacks",
-            compute_fn=configure_eval_callbacks,
+            source=("data_layout.input_data", "value_estimator.gamma"),
+            target="model.validation_hooks.init_args.optimal_values_dict",
+            compute_fn=optimal_values_dict,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.input_data",
+            target="model.validation_hooks.init_args.optimal_policy_dict",
+            compute_fn=optimal_policy_dict,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.output_data.out_dir",
+            target="model.validation_hooks.init_args.save_dir",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            source="data_layout.input_data",
+            target="model.validation_hooks.init_args.dataloader_names",
+            compute_fn=validation_dataloader_names,
             apply_on="instantiate",
         )
         parser.link_arguments(
@@ -249,11 +257,29 @@ class ThundeRLCLI(LightningCLI):
             target="trainer.default_root_dir",
             apply_on="instantiate",
         )
-        parser.link_arguments(
-            source="data_layout.output_data.out_dir",
-            target="trainer.logger.init_args.save_dir",
-            apply_on="instantiate",
-        )
+
+    def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
+        """
+        We need to add the validation callbacks of the model to the trainer.
+        The problem is that we have a list of callbacks, and we can't extend
+        the list of callbacks provided via the config using jsonargparse.
+        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists too.
+        Therefore, we manually add our model callbacks to the extra callbacks.
+        """
+        if isinstance(self.model, LightningAdapter) and self.model.validation_hooks:
+            model_callbacks = self.model.validation_hooks
+            extra_callbacks = [
+                self._get(self.config_init, c)
+                for c in self._parser(self.subcommand).callback_keys
+            ]
+            extra_callbacks.extend(model_callbacks)
+            trainer_config = {
+                **self._get(self.config_init, "trainer", default={}),
+                **kwargs,
+            }
+            return self._instantiate_trainer(trainer_config, extra_callbacks)
+
+        return super().instantiate_trainer(**kwargs)
 
     def convert_to_nested_dict(self, config: Namespace):
         """Lightning converts nested namespaces to strings"""
