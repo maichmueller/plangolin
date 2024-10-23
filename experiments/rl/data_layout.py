@@ -195,11 +195,18 @@ class InputData:
             )
             return [], []
         if filter_list is not None:
-            filtered_instances = [
-                instance
-                for instance in all_instances
-                if instance.stem in filter_list or instance.name in filter_list
-            ]
+            # Ensure that the resolved paths are in the same order as filter_list
+            filtered_instances = []
+            for file_name in filter_list:
+                if not file_name.endswith(".pddl"):
+                    file_name += ".pddl"
+                instance_path = directory / file_name
+                if not instance_path.exists():
+                    warnings.warn(
+                        f"Could not find {(directory / file_name).absolute()}"
+                    )
+                else:
+                    filtered_instances.append(instance_path)
             if len(filtered_instances) == 0:
                 warnings.warn(
                     "Filter matched no instances."
