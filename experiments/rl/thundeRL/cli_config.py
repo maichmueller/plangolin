@@ -1,4 +1,6 @@
+import dataclasses
 import functools
+from argparse import Namespace
 from os import PathLike
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
@@ -11,6 +13,7 @@ from lightning.pytorch.cli import (
     OptimizerCallable,
     SaveConfigCallback,
 )
+from lightning.pytorch.loggers import WandbLogger
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
@@ -72,6 +75,12 @@ class ValueEstimatorConfig:
     ):
         self.gamma = gamma
         self.estimator = estimator_type
+
+
+@dataclasses.dataclass
+class WandbExtraParameter:
+    watch_model: Optional[bool] = True  # whether to watch the model gradients
+    log_frequency: int = 100  # the frequency for watch
 
 
 def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
@@ -166,6 +175,7 @@ class ThundeRLCLI(LightningCLI):
         parser.add_class_arguments(
             ValueEstimatorConfig, "value_estimator", as_positional=True
         )
+        parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
 
         # Link arguments
         parser.link_arguments(
@@ -245,5 +255,18 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
 
+    def convert_to_nested_dict(self, config: Namespace):
+        """Lightning converts nested namespaces to strings"""
+        mapping: Dict = vars(config).copy()
+        for key, item in mapping.items():
+            if isinstance(item, Namespace):
+                mapping[key] = self.convert_to_nested_dict(item)
+        return mapping
+
     def before_fit(self):
-        self.trainer.logger.log_hyperparams(self.config)
+        self.trainer.logger.log_hyperparams(
+            self.convert_to_nested_dict(self.config["fit"])
+        )
+        wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
+        if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
+            self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
