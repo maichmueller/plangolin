@@ -62,6 +62,13 @@ class ValidationCallback(torch.nn.Module, Callback):
             self.epoch_reduction = max
         elif epoch_reduction == "min":
             self.epoch_reduction = min
+        self.is_sanity_check: bool = False
+
+    def on_sanity_check_start(self, trainer, pl_module) -> None:
+        self.is_sanity_check = True
+
+    def on_sanity_check_end(self, trainer, pl_module) -> None:
+        self.is_sanity_check = False
 
     def log_key(self, dataloader_idx: int):
         return (
@@ -129,7 +136,7 @@ class CriticValidation(ValidationCallback):
             )
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
-        if self.skip_dataloader(dataloader_idx):
+        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
         try:
             optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
@@ -211,7 +218,7 @@ class PolicyValidation(ValidationCallback):
         """
         # TODO use cross entropy loss between all optimal actions and policy probs
 
-        if self.skip_dataloader(dataloader_idx):
+        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
 
         # Trigger cpu synchronisation by tolist()
@@ -284,7 +291,7 @@ class ProbsStoreCallback(ValidationCallback):
         self.epoch = state["epoch"]
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0, **kwargs):
-        if self.skip_dataloader(dataloader_idx):
+        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
         # We have the additional time dimension (also for now only one step)
         batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]

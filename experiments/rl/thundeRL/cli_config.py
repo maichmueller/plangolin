@@ -1,7 +1,8 @@
 import dataclasses
+import warnings
 from argparse import Namespace
 from os import PathLike
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
 import torch
 from lightning import Trainer
@@ -24,29 +25,30 @@ from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.validation import CriticValidation, optimal_policy  # noqa: F401
 
 
-class resolve_optim:
+class OptimizerSetup:
 
     def __init__(
         self,
         agent: ActorCritic,
         optimizer: OptimizerCallable,  # already partly initialized from cli
+        gnn: Optional[HeteroGNN] = None,
         lr_actor: Optional[float] = None,
         lr_critic: Optional[float] = None,
         lr_embedding: Optional[float] = None,
     ):
         lr_parameters: List[Dict] = []  # parameter specific learning rate
         plain_parameter: List = []  # no specific learning rate
+        if agent.embedding_module is None and gnn is None:
+            warnings.warn("No parameter for the embedding found.")
+            gnn_params = []
+        elif agent.embedding_module is not None:
+            gnn_params = agent.embedding_module.gnn.parameters()
+        else:
+            gnn_params = gnn.parameters()
         for specific_lr, params in [
             (lr_actor, agent.actor_net.parameters()),
-            (lr_critic, agent.value_operator.module.parameters()),
-            (
-                lr_embedding,
-                (
-                    agent.embedding_module.gnn.parameters()
-                    if agent.embedding_module
-                    else []
-                ),
-            ),
+            (lr_critic, agent.value_operator.parameters()),
+            (lr_embedding, gnn_params),
         ]:
             if specific_lr and params:
                 lr_parameters.append(
@@ -162,7 +164,9 @@ class ThundeRLCLI(LightningCLI):
         parser.add_class_arguments(
             ActorCritic, "agent", as_positional=True, skip={"keys"}
         )
-        parser.add_class_arguments(resolve_optim, "optimizer", as_positional=True)
+        parser.add_class_arguments(
+            OptimizerSetup, "optimizer_setup", as_positional=True
+        )
         parser.add_class_arguments(
             ValueEstimatorConfig, "value_estimator", as_positional=True
         )
@@ -209,9 +213,12 @@ class ThundeRLCLI(LightningCLI):
             compute_fn=configure_loss,
         )
 
-        parser.link_arguments("agent", "optimizer.agent", apply_on="instantiate")
+        parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
         parser.link_arguments(
-            "optimizer.optimizer", "model.optim", apply_on="instantiate"
+            "hetero_gnn", "optimizer_setup.gnn", apply_on="instantiate"
+        )
+        parser.link_arguments(
+            "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
         )
 
         parser.link_arguments(
@@ -287,6 +294,16 @@ class ThundeRLCLI(LightningCLI):
         for key, item in mapping.items():
             if isinstance(item, Namespace):
                 mapping[key] = self.convert_to_nested_dict(item)
+            if isinstance(item, Sequence) and not isinstance(item, str):
+                mapping[key] = [
+                    (
+                        sequence_item
+                        if not isinstance(sequence_item, Namespace)
+                        else self.convert_to_nested_dict(sequence_item)
+                    )
+                    for sequence_item in item
+                ]
+
         return mapping
 
     def before_fit(self):

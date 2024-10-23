@@ -3,7 +3,7 @@ seed_everything: true
 value_estimator:
   gamma: 0.9
 
-optimizer:
+optimizer_setup:
   optimizer:
     class_path: torch.optim.Adam
     init_args:
