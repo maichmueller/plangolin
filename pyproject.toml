@@ -6,23 +6,25 @@ build-backend = "setuptools.build_meta"
 name = 'rgnet'
 version = '0.1'
 authors = [
-    { name = 'Michael Aichmueller', email = 'm.aichmueller@gmail.com' },
-    { name = 'Jakob Krude', email = 'jakob.krude@gmail.com' }
+    { name = 'Michael Aichmueller', email = 'michael.aichmueller@ml.rwth-aachen.de' },
+    { name = 'Jakob Krude', email = 'jakob.krude@ml.rwth-aachen.de' }
 ]
 license = { file = "LICENSE.md" }
-description = 'Relational Graph Neural Networks'
+description = 'Reinforcement learning for Planning using Heterogenous Graph Neural Networks'
 readme = "README.md"
 keywords = [
     "graph-neural-network",
     "gnn",
-    "relational",
+    "reinforcement-learning",
+    "rl",
+    "planning"
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Natural Language :: English",
-    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.10",
     "Operating System :: MacOS :: MacOS X",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
