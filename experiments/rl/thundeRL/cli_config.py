@@ -14,6 +14,7 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
+from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
 from experiments.rl.configs.trainer import optimal_values
@@ -104,6 +105,22 @@ def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str
     return {i: p.name for i, p in enumerate(input_data.validation_problems)}
 
 
+@dataclasses.dataclass
+class TestSetup:
+    """
+    Define additional parameter used for testing the agent.
+    Args:
+        max_steps: The maximum number of steps the agent is allowed to take to solve any problem.
+            (default: 100)
+        exploration_type: How the actions should be sampled. RANDOM means the probability
+            distribution over successor states is sampled and MODE will take the arg-max.
+            (default: ExplorationType.MODE)
+    """
+
+    max_steps: int = 100
+    exploration_type: ExplorationType = ExplorationType.MODE
+
+
 class ThundeRLCLI(LightningCLI):
 
     def __init__(
@@ -146,10 +163,9 @@ class ThundeRLCLI(LightningCLI):
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
         )
-        parser.add_argument(
-            "--test_max_steps",
-            type=int,
-            default=100,
+        parser.add_dataclass_arguments(
+            TestSetup,
+            "test_setup",
         )
         parser.add_class_arguments(
             InputData, "data_layout.input_data", as_positional=True
