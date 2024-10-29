@@ -146,12 +146,16 @@ class CriticValidation(ValidationCallback):
             )
             return
 
+        # tensordict should be of the shape [batch_size, time, feature size]
+        assert tensordict.batch_dims == 2
+        assert tensordict.names[-1] == "time"
+
         # select(...) makes sure that the state_value is not written in the original.
         prediction: TensorDict = self.value_op(
             tensordict.select(*self.value_op.in_keys)
         )
         # tensordict has shape [batch_size, 1] and tensordict[current_embedding] is [batch_size, 1, hidden_size]
-        # therefore, prediction has shape [batch_size, 1, 1] and we have to squeeze two dimension.
+        # therefore, prediction has shape [batch_size, 1, 1] and we have to squeeze two dimensions.
         state_value: torch.Tensor = prediction[self.state_value_key].squeeze()
 
         if optimal_values.device != state_value.device:

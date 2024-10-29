@@ -87,8 +87,7 @@ class PolicyQuality(torch.nn.Module):
         # TODO use cross entropy loss between all optimal actions and policy probs
         losses = dict()
         with torch.no_grad():
-            # FIXME implement Deterministic for torch.distributions.Categorical in torchrl
-            with set_exploration_type(ExplorationType.DETERMINISTIC):
+            with set_exploration_type(ExplorationType.MODE):
                 self.policy.eval()
 
                 for space in self.test_data.keys():

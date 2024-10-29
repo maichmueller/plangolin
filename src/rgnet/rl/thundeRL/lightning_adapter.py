@@ -169,7 +169,7 @@ class LightningAdapter(lightning.LightningModule):
         batch_idx=None,
         dataloader_idx=0,
     ):
-        with set_exploration_type(ExplorationType.DETERMINISTIC):
+        with set_exploration_type(ExplorationType.MODE):
             as_tensordict = self.forward(*batch_tuple)
             for hook in self.validation_hooks:
                 optional_metrics = hook(as_tensordict, dataloader_idx=dataloader_idx)
