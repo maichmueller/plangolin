@@ -23,7 +23,16 @@ from rgnet import HeteroGNN, HeteroGraphEncoder
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
-from rgnet.rl.thundeRL.validation import CriticValidation, optimal_policy  # noqa: F401
+
+# Import before the cli makes it possible to specify only the class and not the
+# full class path in the cli config.
+from rgnet.rl.thundeRL.validation import (  # noqa: F401
+    CriticValidation,
+    PolicyEntropy,
+    PolicyValidation,
+    ProbsStoreCallback,
+    optimal_policy,
+)
 
 
 class OptimizerSetup:

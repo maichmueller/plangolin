@@ -63,6 +63,18 @@ class ValidationCallback(torch.nn.Module, Callback):
         elif epoch_reduction == "min":
             self.epoch_reduction = min
         self.is_sanity_check: bool = False
+        self.epoch_values = defaultdict(list)
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self.epoch_values.clear()
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for dataloader_idx, values in self.epoch_values.items():
+            pl_module.log(
+                self.log_key(dataloader_idx),
+                self.epoch_reduction(values),
+                on_epoch=True,
+            )
 
     def on_sanity_check_start(self, trainer, pl_module) -> None:
         self.is_sanity_check = True
@@ -119,21 +131,7 @@ class CriticValidation(ValidationCallback):
             self.register_buffer(str(space_idx), optimal_values)
         self.value_op = value_operator
         self.loss_function = loss_function or torch.nn.functional.mse_loss
-        self.log_name: str = log_name
         self.state_value_key = state_value_key
-        self.dataloader_names = dataloader_names
-        self.epoch_values = defaultdict(list)
-
-    def on_validation_epoch_start(self, trainer, pl_module) -> None:
-        self.epoch_values.clear()
-
-    def on_validation_epoch_end(self, trainer, pl_module) -> None:
-        for dataloader_idx, values in self.epoch_values.items():
-            pl_module.log(
-                self.log_key(dataloader_idx),
-                self.epoch_reduction(values),
-                on_epoch=True,
-            )
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
@@ -193,20 +191,6 @@ class PolicyValidation(ValidationCallback):
             optimal_policy_dict
         )
         self.keys = keys
-        self.log_name = log_name
-        self.dataloader_names = dataloader_names
-        self.epoch_values = defaultdict(list)
-
-    def on_validation_epoch_start(self, trainer, pl_module) -> None:
-        self.epoch_values.clear()
-
-    def on_validation_epoch_end(self, trainer, pl_module) -> None:
-        for dataloader_idx, values in self.epoch_values.items():
-            pl_module.log(
-                self.log_key(dataloader_idx),
-                self.epoch_reduction(values),
-                on_epoch=True,
-            )
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         """
@@ -242,6 +226,62 @@ class PolicyValidation(ValidationCallback):
             if action_idx in optimal_actions[state_idx]:
                 correct_actions += 1
         self.epoch_values[dataloader_idx].append(correct_actions / len(state_indices))
+
+
+class PolicyEntropy(ValidationCallback):
+    """
+    Compute the entropy of the actor and aggregate over one validation epoch.
+    The entropy is only computed for states with more than one successor, which
+    is referred to as "non-trivial".
+    Additionally, the entropy is normalized to be between 0 and 1. A learning actor will
+    typically start with an entropy of 0 (close to a uniform distribution).
+    This callback is especially useful to monitor the convergence of the actor.
+    """
+
+    def __init__(
+        self,
+        probs_key: NestedKey = ActorCritic.default_keys.probs,
+        log_name: str = "non_trivial_policy_entropy",
+        dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
+        epoch_reduction: Literal["mean", "max", "min"] = "mean",
+    ) -> None:
+        super().__init__(
+            log_name, dataloader_names, only_run_for_dataloader, epoch_reduction
+        )
+        self.probs_key = probs_key
+        self.epoch_values = defaultdict(list)
+
+    @staticmethod
+    def normalized_entropy(probs_tensor: torch.Tensor):
+        """
+        Entropy over a tensor of a probability distribution.
+        Normalized to [0,1], where 0 corresponds to a uniform distribution.
+        :param probs_tensor: Tensor with sum = 1 and values between 0 and 1
+        :return: Tensor of shape (1,) on the same device as the input tensor.
+        """
+        if probs_tensor.numel() == 1:
+            return torch.zeros((1,), dtype=torch.float, device=probs_tensor.device)
+        entropy = torch.distributions.Categorical(probs=probs_tensor).entropy()
+        return entropy / torch.tensor(
+            (probs_tensor.numel(),), device=probs_tensor.device
+        )
+
+    def forward(self, tensordict: TensorDict, dataloader_idx=0):
+        if self.skip_dataloader(dataloader_idx):
+            return
+        batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
+        batched_nontrivial_entropies = [
+            PolicyEntropy.normalized_entropy(tensor_list[0])
+            for tensor_list in batched_probs
+            if tensor_list[0].numel() > 1
+        ]
+        if (
+            len(batched_nontrivial_entropies) == 0
+        ):  # All states in a batch could be filtered out
+            return
+        mean_entropy = torch.stack(batched_nontrivial_entropies).mean()
+        self.epoch_values[dataloader_idx].append(mean_entropy)
 
 
 class ProbsStoreCallback(ValidationCallback):
