@@ -109,7 +109,7 @@ def _analyze_rollouts(
         out_data.append(
             ProbabilisticPlanResult(
                 problem=problem,
-                solved=rollout["terminated"].any().item(),
+                solved=rollout[("next", "terminated")].any().item(),
                 average_probability=round(action_probs.mean().item(), 4),
                 min_probability=round(action_probs.min().item(), 4),
                 action_sequence=[
