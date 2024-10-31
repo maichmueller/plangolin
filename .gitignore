@@ -198,3 +198,6 @@ cython_debug/
 
 
 .idea/
+
+data/pddl_domains/*
+!data/pddl_domains/example
