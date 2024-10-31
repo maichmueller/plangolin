@@ -1,60 +1,18 @@
-import itertools
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pymimir as mi
 import torch
 from torch_geometric.data import Batch, HeteroData, InMemoryDataset
+from tqdm import tqdm
 
 from rgnet import HeteroGraphEncoder
-from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 
 
-def build_from_env(
-    env: MultiInstanceStateSpaceEnv, num_batches: int, encoder: HeteroGraphEncoder
-) -> List[HeteroData]:
-    state_to_idx: Dict[mi.StateSpace, Dict[mi.State, int]] = dict()
-
-    def query():
-        out = env.reset()
-        instances: List[mi.StateSpace] = out[env.keys.instance]
-        for space in instances:
-            if space not in state_to_idx:
-                state_to_idx[space] = {s: i for i, s in enumerate(space.get_states())}
-
-        states: List[mi.State] = out[env.keys.state]
-        batched_transitions: List[List[mi.Transition]] = out[env.keys.transitions]
-        batched_data: List[HeteroData] = [
-            encoder.to_pyg_data(encoder.encode(state)) for state in states
-        ]
-
-        # Each data object represents one state
-        # It the index of all neighboring states, the done and reward signals
-        for i, data in enumerate(batched_data):
-            reward, done = env.get_reward_and_done(
-                actions=batched_transitions[i],
-                current_states=[t.source for t in batched_transitions[i]],
-                instances=[instances[i]] * len(batched_transitions[i]),
-            )
-            data.reward = reward
-            # Save the index of the state
-            # NOTE: No element should contain index
-            # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
-            data.idx = state_to_idx[instances[i]][states[i]]
-            data.done = done
-            # List[HData] the encoded targets of the transitions
-            data.targets = [
-                encoder.to_pyg_data(encoder.encode(transition.target))
-                for transition in batched_transitions[i]
-            ]
-        return batched_data
-
-    return list(itertools.chain.from_iterable(query() for _ in range(num_batches)))
-
-
 class FlashDrive(InMemoryDataset):
-
     def __init__(
         self,
         domain_path: Path,
@@ -64,16 +22,18 @@ class FlashDrive(InMemoryDataset):
         root_dir: Optional[str] = None,
         log: bool = True,
         force_reload: bool = False,
+        show_progress: bool = True,
     ) -> None:
         assert domain_path.exists() and domain_path.is_file()
         assert problem_path.exists() and problem_path.is_file()
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
-        self.custom_dead_enc_reward = custom_dead_end_reward
+        self.custom_dead_end_reward = custom_dead_end_reward
         self.max_expanded = max_expanded
+        self.show_progress = show_progress
         super().__init__(
             root=root_dir,
-            transform=None,
+            transform=self.target_idx_to_data_transform,
             pre_transform=None,
             pre_filter=None,
             log=log,
@@ -101,13 +61,81 @@ class FlashDrive(InMemoryDataset):
             space,
             batch_size=torch.Size((space.num_states(),)),
             reset_strategy=IteratingReset(),
-            custom_dead_end_reward=self.custom_dead_enc_reward,
+            custom_dead_end_reward=self.custom_dead_end_reward,
         )
-        data_list = build_from_env(env, 1, HeteroGraphEncoder(domain))
+        data_list = self.build_from_env(env, HeteroGraphEncoder(domain))
         self.save(data_list, self.processed_paths[0])
 
+    def build_from_env(
+        self,
+        env: ExpandedStateSpaceEnv,
+        encoder: HeteroGraphEncoder,
+    ) -> List[HeteroData]:
+
+        out = env.reset()
+        space = out[env.keys.instance][0]
+        state_to_idx: Dict[mi.State, int] = {
+            state: i for i, state in enumerate(space.get_states())
+        }
+        logging.info(
+            f"Building {self.__class__.__name__} dataset for instance: {space.problem.name}, #States: {space.num_states()}"
+        )
+        # Each data object represents one state
+        # It the index of all neighboring states, the done and reward signals
+        batched_data: List[HeteroData] = [None] * len(out)
+        zipped_state_transitions = zip(
+            out[env.keys.state],
+            out[env.keys.transitions],
+        )
+        if self.show_progress:
+            zipped_state_transitions = tqdm(zipped_state_transitions, total=len(out))
+        for i, (state, transitions) in enumerate(zipped_state_transitions):
+            data = encoder.to_pyg_data(encoder.encode(state))
+            reward, done = env.get_reward_and_done(
+                actions=transitions,
+                current_states=[t.source for t in transitions],
+                instances=[space] * len(transitions),
+            )
+            data.reward = reward
+            # Save the index of the state
+            # NOTE: No element should contain index
+            # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
+            data.idx = state_to_idx[state]
+            data.done = done
+            data.targets = [
+                state_to_idx[transition.target] for transition in transitions
+            ]
+            batched_data[i] = data
+
+        return batched_data
+
+    def target_idx_to_data_transform(self, data: HeteroData) -> HeteroData:
+        """
+        Convert transition target state indices to actual hetero-data objects.
+
+        In order to be able to pickle the dataset, we cannot store the actual
+        hetero-data objects as targets (circular refs leading to infinite recursion).
+        Instead, we store the indices of the target states and convert them back
+        to hetero-data objects during the data loading process (here).
+        Parameters
+        ----------
+        data: HeteroData,
+            The hetero-data object to transform.
+        Returns
+        -------
+        HeteroData
+            The transformed hetero-data object.
+        """
+        data.targets = [
+            self.get(target) if isinstance(target, int) else target
+            for target in data.targets
+        ]
+        return data
+
     def __getattr__(self, key: str) -> Any:
-        """InMemoryDataset forgot the poor HeteroData objects, logic is equivalent."""
+        """
+        InMemoryDataset forgot the poor HeteroData objects, logic is equivalent.
+        """
         data = self.__dict__.get("_data")
         if isinstance(data, HeteroData) and key in data:
             if self._indices is None and data.__inc__(key, data[key]) == 0:
