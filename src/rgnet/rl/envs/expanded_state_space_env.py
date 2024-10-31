@@ -66,7 +66,6 @@ class IteratingReset(ResetStrategy):
 
 
 class MultiInstanceStateSpaceEnv(PlanningEnvironment[mi.StateSpace]):
-
     def __init__(
         self,
         spaces: List[mi.StateSpace],

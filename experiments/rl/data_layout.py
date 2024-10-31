@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import datetime
 import logging
@@ -192,7 +194,7 @@ class InputData:
         :param filter_list: The list of instances to filter for, can be the full file name or only the stem. If None then all files will be used.
         :return: The collected pddl files as paths and the respective parsed problems.
         """
-        assert directory.is_dir()
+        assert directory.is_dir(), f"Given directory {directory} is not a directory."
         all_instances = list(directory.glob("*.pddl"))
         if any(instance_path.name == "domain.pddl" for instance_path in all_instances):
             warnings.warn(

@@ -1,8 +1,11 @@
 import itertools
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+project_root_dir = Path(__file__).parent.parent.parent
 
 
 def launch_rl(tmp_path: Path, args: List[str], input_dir: Optional[Path] = None):
@@ -16,7 +19,7 @@ def launch_rl(tmp_path: Path, args: List[str], input_dir: Optional[Path] = None)
     run_py_file = project_root / "experiments" / "rl" / "run.py"
     assert run_py_file.exists() and run_py_file.is_file()
     if input_dir is None:
-        input_dir = project_root / "data" / "pddl_domains"
+        input_dir = project_root / "data" / "pddl_domains" / "example "
 
     # split arguments that contain spaces
     args: List[str] = list(
@@ -51,7 +54,7 @@ def launch_rl(tmp_path: Path, args: List[str], input_dir: Optional[Path] = None)
 
 
 def test_data_dirs(tmp_path: Path):
-    input_dir = "/work/rleap1/jakob.krude/projects/remote/rgnet/data/pddl_domains"
+    input_dir = os.path.join(project_root_dir, "data", "pddl_domains")
     args = [
         "--instances probBLOCKS-4-0.pddl",
         "--algorithm actor_critic",
