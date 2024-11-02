@@ -68,6 +68,7 @@ class InputData:
     _validation_instances: Optional[List[Path]]
     test_problems: Optional[List[mi.Problem]]
     _test_instances: Optional[List[Path]]
+    parallel: bool
 
     def __init__(
         self,
@@ -82,6 +83,7 @@ class InputData:
         test_instances: Optional[List[str]] | Literal["all"] = None,
         # if specified pddl_domains_dir and dataset_dir will be relative to root_dir
         root_dir: Optional[Path] = ROOT_DIR,
+        parallel: bool = False,
     ):
         """
         Manages the data layout for input data to RL experiments.
@@ -108,6 +110,7 @@ class InputData:
         :param root_dir: Optional parent directory for both pddl_domains_dir and dataset_dir.
             If specified the parameter pddl_domains_dir and dataset_dir will be interpreted as relative to root_dir.
             (default: the project source directory)
+        :param parallel: Whether to use parallel processing to load the data. (default: False)
         """
         self.train_subdir = train_subdir
         self.eval_subdir = eval_subdir or self.train_subdir
@@ -141,6 +144,7 @@ class InputData:
         self._spaces: Optional[List[mi.StateSpace]] = None
         self._validation_spaces: Optional[List[mi.StateSpace]] = None
         self.space_by_problem: dict[mi.Problem, mi.StateSpace] = dict()
+        self.parallel = parallel
 
     def _get_or_load_space(self, problem: mi.Problem) -> mi.StateSpace:
         if problem not in self.space_by_problem:
