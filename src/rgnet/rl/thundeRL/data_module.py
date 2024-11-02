@@ -3,6 +3,7 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import List
 
+import spdlog
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
@@ -15,7 +16,6 @@ _newline = "\n"
 
 
 class ThundeRLDataModule(LightningDataModule):
-
     def __init__(
         self,
         input_data: InputData,
