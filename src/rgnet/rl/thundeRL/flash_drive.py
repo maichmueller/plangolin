@@ -1,14 +1,16 @@
+import logging
 import warnings
+from logging import handlers
+from multiprocessing import Lock
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import pymimir as mi
-import spdlog
 import torch
 from torch_geometric.data import Batch, HeteroData, InMemoryDataset
 from tqdm import tqdm
 
-from rgnet import HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 
@@ -25,8 +27,9 @@ class FlashDrive(InMemoryDataset):
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
-        force_reload: bool = False,
+        force_reload: bool = True,
         show_progress: bool = True,
+        logging_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> None:
         assert domain_path.exists() and domain_path.is_file()
         assert problem_path.exists() and problem_path.is_file()
@@ -35,6 +38,7 @@ class FlashDrive(InMemoryDataset):
         self.custom_dead_end_reward = custom_dead_end_reward
         self.max_expanded = max_expanded
         self.show_progress = show_progress
+        self.logging_kwargs = logging_kwargs  # will be removed after process()
         super().__init__(
             root=root_dir,
             transform=self.target_idx_to_data_transform,
@@ -78,12 +82,7 @@ class FlashDrive(InMemoryDataset):
         out = env.reset()
         space = out[env.keys.instance][0]
         nr_states = space.num_states()
-        logger = spdlog.get("default")
-        logger.info(
-            f"Building {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #states: {nr_states})"
-        )
-        logger.flush()
+        self._log_build_start(space)
         # Each data object represents one state
         batched_data: List[HeteroData] = [None] * nr_states
         state_to_idx = {state: i for i, state in enumerate(space.get_states())}
@@ -109,6 +108,18 @@ class FlashDrive(InMemoryDataset):
             )
             batched_data[i] = data
         return batched_data
+
+    def _log_build_start(self, space):
+        if self.logging_kwargs is not None:
+            logger = logging.getLogger(f"thread-{self.logging_kwargs['thread_id']}")
+        else:
+            logger = logging.getLogger("root")
+        logger.setLevel(self.logging_kwargs["log_level"])
+        logger.info(
+            f"Building {self.__class__.__name__} "
+            f"(problem: {space.problem.name}, #states: {space.num_states()})"
+        )
+        del self.logging_kwargs
 
     def target_idx_to_data_transform(self, data: HeteroData) -> HeteroData:
         """

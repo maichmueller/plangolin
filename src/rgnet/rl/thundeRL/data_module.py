@@ -3,7 +3,6 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import List
 
-import spdlog
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
@@ -31,23 +30,23 @@ class ThundeRLDataModule(LightningDataModule):
         self.validation_sets: List[Dataset] = []
 
     def load_datasets(self, problem_paths: List[Path]) -> List[Dataset]:
-        logger = spdlog.get("default")
 
+        def update(dataset):
+            logging.info(
+                f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
+            )
+
+        process_parallely = self.data.parallel and len(problem_paths) > 1
         dataset_list = []
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,
             custom_dead_end_reward=-1 / (1 - self.gamma),
             root_dir=str(self.data.dataset_dir),
+            logging_kwargs=None,
         )
-        if self.data.parallel and len(problem_paths) > 1:
+        if process_parallely:
             with Pool(min(cpu_count(), len(problem_paths))) as pool:
-                logger.info(f"Loading #{len(problem_paths)} problems in parallel.")
-
-                def update(dataset):
-                    logger.info(
-                        f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
-                    )
-
+                logging.info(f"Loading #{len(problem_paths)} problems in parallel.")
                 results = [
                     pool.apply_async(
                         FlashDrive,
@@ -55,10 +54,13 @@ class ThundeRLDataModule(LightningDataModule):
                         | dict(
                             problem_path=problem_path,
                             show_progress=False,
+                            logging_kwargs=dict(
+                                log_level=logging.getLogger().level, thread_id=i
+                            ),
                         ),
                         callback=update,
                     )
-                    for problem_path in problem_paths
+                    for i, problem_path in enumerate(problem_paths)
                 ]
                 for result in results:
                     drive = result.get()
@@ -72,17 +74,16 @@ class ThundeRLDataModule(LightningDataModule):
                         **flashdrive_kwargs,
                     )
                 )
-
+                update(dataset_list[-1])
         return dataset_list
 
     def prepare_data(self) -> None:
         problem_paths = self.data.problem_paths + self.data.validation_problem_paths
-        logger = spdlog.get("default")
-        logger.info(f"Using #{len(problem_paths)} problems in total.")
-        logger.info(
+        logging.info(f"Using #{len(problem_paths)} problems in total.")
+        logging.info(
             f"Problems used for TRAINING:\n{_newline.join(p.stem for p in self.data.problem_paths)}"
         )
-        logger.info(
+        logging.info(
             f"Problems used for VALIDATION:\n{_newline.join(p.stem for p in self.data.validation_problem_paths)}"
         )
         datasets = self.load_datasets(problem_paths)
