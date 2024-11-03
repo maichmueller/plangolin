@@ -8,7 +8,7 @@ import torch_geometric as pyg
 from pymimir import State
 
 
-class StateEncoderBase(ABC):
+class GraphEncoderBase(ABC):
     """
     The state-graph encoder base class into an associated state-graph.
     """

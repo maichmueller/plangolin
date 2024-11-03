@@ -14,7 +14,7 @@ import torch_geometric as pyg
 from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
+from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import NodeFactory
 
 ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
@@ -29,7 +29,7 @@ class FeatureMode(Enum):
     combinatorial = 2
 
 
-class ColorGraphEncoder(StateEncoderBase):
+class ColorGraphEncoder(GraphEncoderBase):
     """
     A state encoder into an associated colored state-graph for a specified domain.
 

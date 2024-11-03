@@ -11,7 +11,7 @@ from pymimir import Atom, Domain, Literal, Predicate, State
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
+from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import Node, NodeFactory
 
 
@@ -21,7 +21,7 @@ class PredicateEdgeType(NamedTuple):
     dst_type: str
 
 
-class HeteroGraphEncoder(StateEncoderBase):
+class HeteroGraphEncoder(GraphEncoderBase):
     def __init__(
         self,
         domain: Domain,

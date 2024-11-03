@@ -10,11 +10,11 @@ import torch_geometric as pyg
 from pymimir import Atom, Domain, Literal, State
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
+from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import Node, NodeFactory
 
 
-class DirectGraphEncoder(StateEncoderBase):
+class DirectGraphEncoder(GraphEncoderBase):
     """
     An encoder to represent states as directed graphs with objects as vertices
     and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.
