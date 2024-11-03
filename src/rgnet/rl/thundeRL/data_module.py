@@ -106,7 +106,7 @@ class ThundeRLDataModule(LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=2,
+            num_workers=6,
             persistent_workers=True,
         )
 
@@ -117,7 +117,7 @@ class ThundeRLDataModule(LightningDataModule):
                 collate_fn=collate_fn,
                 batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=2,
+                num_workers=6,
                 persistent_workers=True,
             )
             for dataset in self.validation_sets

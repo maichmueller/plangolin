@@ -1,8 +1,9 @@
-import logging
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pymimir as mi
+import spdlog
 import torch
 from torch_geometric.data import Batch, HeteroData, InMemoryDataset
 from tqdm import tqdm
@@ -10,6 +11,9 @@ from tqdm import tqdm
 from rgnet import HeteroGraphEncoder
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
+
+# TODO: Remove this once the issue is resolved in pytorch-geometric
+warnings.filterwarnings("ignore")
 
 
 class FlashDrive(InMemoryDataset):
@@ -20,7 +24,7 @@ class FlashDrive(InMemoryDataset):
         custom_dead_end_reward: float,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
-        log: bool = True,
+        log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
     ) -> None:
@@ -59,38 +63,36 @@ class FlashDrive(InMemoryDataset):
         )
         env = ExpandedStateSpaceEnv(
             space,
-            batch_size=torch.Size((space.num_states(),)),
+            batch_size=torch.Size((1,)),
             reset_strategy=IteratingReset(),
             custom_dead_end_reward=self.custom_dead_end_reward,
         )
-        data_list = self.build_from_env(env, HeteroGraphEncoder(domain))
+        data_list = self._build(env, HeteroGraphEncoder(domain))
         self.save(data_list, self.processed_paths[0])
 
-    def build_from_env(
+    def _build(
         self,
         env: ExpandedStateSpaceEnv,
         encoder: HeteroGraphEncoder,
     ) -> List[HeteroData]:
-
         out = env.reset()
         space = out[env.keys.instance][0]
-        state_to_idx: Dict[mi.State, int] = {
-            state: i for i, state in enumerate(space.get_states())
-        }
-        logging.info(
-            f"Building {self.__class__.__name__} dataset for instance: {space.problem.name}, #States: {space.num_states()}"
+        nr_states = space.num_states()
+        logger = spdlog.get("default")
+        logger.info(
+            f"Building {self.__class__.__name__} "
+            f"(problem: {space.problem.name}, #states: {nr_states})"
         )
+        logger.flush()
         # Each data object represents one state
-        # It the index of all neighboring states, the done and reward signals
-        batched_data: List[HeteroData] = [None] * len(out)
-        zipped_state_transitions = zip(
-            out[env.keys.state],
-            out[env.keys.transitions],
-        )
+        batched_data: List[HeteroData] = [None] * nr_states
+        state_to_idx = {state: i for i, state in enumerate(space.get_states())}
+        state_iter = state_to_idx.items()
         if self.show_progress:
-            zipped_state_transitions = tqdm(zipped_state_transitions, total=len(out))
-        for i, (state, transitions) in enumerate(zipped_state_transitions):
+            state_iter = tqdm(state_iter, total=nr_states, desc="Encoding states")
+        for state, i in state_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
+            transitions = space.get_forward_transitions(state)
             reward, done = env.get_reward_and_done(
                 actions=transitions,
                 current_states=[t.source for t in transitions],
@@ -100,23 +102,18 @@ class FlashDrive(InMemoryDataset):
             # Save the index of the state
             # NOTE: No element should contain index
             # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
-            data.idx = state_to_idx[state]
+            data.idx = i
             data.done = done
-            data.targets = [
+            data.targets = tuple(
                 state_to_idx[transition.target] for transition in transitions
-            ]
+            )
             batched_data[i] = data
-
         return batched_data
 
     def target_idx_to_data_transform(self, data: HeteroData) -> HeteroData:
         """
         Convert transition target state indices to actual hetero-data objects.
 
-        In order to be able to pickle the dataset, we cannot store the actual
-        hetero-data objects as targets (circular refs leading to infinite recursion).
-        Instead, we store the indices of the target states and convert them back
-        to hetero-data objects during the data loading process (here).
         Parameters
         ----------
         data: HeteroData,
@@ -126,10 +123,10 @@ class FlashDrive(InMemoryDataset):
         HeteroData
             The transformed hetero-data object.
         """
-        data.targets = [
+        data.targets = tuple(
             self.get(target) if isinstance(target, int) else target
             for target in data.targets
-        ]
+        )
         return data
 
     def __getattr__(self, key: str) -> Any:

@@ -2,7 +2,7 @@ import logging
 import pathlib
 import time
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import networkx as nx
 import pymimir as mi
@@ -79,3 +79,17 @@ def import_problems(
         except (ValueError, AssertionError) as e:
             logging.warning(f"Skipped {file} while parsing problems: " + str(e))
     return problems
+
+
+class KeyAwareDefaultDict(dict):
+    def __init__(self, default_factory: Callable[[Any], Any], *args, **kwargs):
+        if not callable(default_factory):
+            raise TypeError("default_factory must be a callable")
+        self.default_factory = default_factory
+        super().__init__(*args, **kwargs)
+
+    def __missing__(self, key):
+        # Generate the default value using the key
+        value = self.default_factory(key)
+        self[key] = value  # Store the value in the dictionary
+        return value
