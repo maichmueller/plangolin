@@ -5,7 +5,7 @@ import torch.optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet import HeteroGNN
+from rgnet.models import HeteroGNN
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter

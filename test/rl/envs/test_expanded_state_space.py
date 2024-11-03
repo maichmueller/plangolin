@@ -4,11 +4,12 @@ from typing import List, Tuple
 import pymimir as mi
 import pytest
 import torch
-from rl.envs.test_state_space_env import get_expected_root_keys
 from tensordict import TensorDict
 
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+
+from .test_state_space_env import get_expected_root_keys
 
 
 @pytest.fixture

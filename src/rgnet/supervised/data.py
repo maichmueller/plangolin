@@ -7,7 +7,7 @@ from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.data import BaseData
 
-from rgnet.encoding import StateEncoderBase
+from rgnet.encoding import GraphEncoderBase
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
@@ -19,7 +19,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     def __init__(
         self,
         problems: List[Problem] | None,
-        state_encoder: StateEncoderBase | None,
+        state_encoder: GraphEncoderBase | None,
         max_expanded: Optional[int] = None,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,

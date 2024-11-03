@@ -1,7 +1,7 @@
 import itertools
+from test.fixtures import fresh_drive, medium_blocks
 
 import torch.utils.data
-from fixtures import fresh_drive, medium_blocks
 
 from rgnet.rl.thundeRL.collate import collate_fn
 

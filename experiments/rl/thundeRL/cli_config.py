@@ -19,7 +19,8 @@ from torchrl.objectives import ValueEstimators
 
 from experiments.rl.configs.trainer import optimal_values
 from experiments.rl.data_layout import InputData, OutputData
-from rgnet import HeteroGNN, HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
+from rgnet.models import HeteroGNN
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter

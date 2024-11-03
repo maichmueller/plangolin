@@ -13,14 +13,13 @@ from torch_geometric.loader import ImbalancedSampler
 from experiments import PlanResult
 from experiments.analyze_run import CompletedExperiment
 from experiments.data_layout import DataLayout, DatasetType
-from rgnet import (
+from rgnet.encoding import (
     ColorGraphEncoder,
     DirectGraphEncoder,
+    GraphEncoderBase,
     HeteroGraphEncoder,
-    LightningHetero,
-    PureGNN,
-    StateEncoderBase,
 )
+from rgnet.models import LightningHetero, PureGNN
 from rgnet.supervised.over_sampler import OverSampler
 from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.utils import import_problems, time_delta_now
@@ -28,7 +27,7 @@ from rgnet.utils import import_problems, time_delta_now
 
 def load_serialized(
     domain: mi.Domain,
-    encoder: StateEncoderBase,
+    encoder: GraphEncoderBase,
     dataset_type: DatasetType,
     data_layout: DataLayout,
 ):
@@ -61,7 +60,7 @@ def load_serialized(
     return dataset
 
 
-def _dataset_of(problems, root, encoder: StateEncoderBase):
+def _dataset_of(problems, root, encoder: GraphEncoderBase):
     return MultiInstanceSupervisedSet(problems, encoder, root=root, log=True)
 
 
@@ -112,7 +111,7 @@ def _setup_datasets(
     return train_loader, eval_loader, test_loader, encoder
 
 
-def _create_encoder(domain: mi.Domain, encoder_type: str) -> StateEncoderBase:
+def _create_encoder(domain: mi.Domain, encoder_type: str) -> GraphEncoderBase:
     if encoder_type == "color":
         encoder = ColorGraphEncoder(domain)
     elif encoder_type == "direct":

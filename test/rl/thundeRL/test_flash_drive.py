@@ -1,8 +1,8 @@
 from pathlib import Path
+from test.fixtures import fresh_drive, medium_blocks
 
 import mockito
 import pytest
-from fixtures import fresh_drive, medium_blocks
 from torch_geometric.data import HeteroData
 
 from rgnet.rl.thundeRL.flash_drive import FlashDrive

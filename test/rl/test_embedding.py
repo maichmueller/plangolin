@@ -3,10 +3,11 @@ from test.fixtures import embedding_mock, small_blocks
 import mockito
 import pytest
 import torch
-from rl.envs.test_state_space_env import get_expected_next_keys, get_expected_root_keys
 
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
+
+from .envs.test_state_space_env import get_expected_next_keys, get_expected_root_keys
 
 
 def match_non_tensor_stack(expected_stack):

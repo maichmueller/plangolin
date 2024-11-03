@@ -12,7 +12,7 @@ from torch.distributions import Categorical
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet import HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.embedding import (
     EmbeddingTransform,

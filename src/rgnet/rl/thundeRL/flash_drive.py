@@ -27,7 +27,7 @@ class FlashDrive(InMemoryDataset):
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
-        force_reload: bool = True,
+        force_reload: bool = False,
         show_progress: bool = True,
         logging_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> None:

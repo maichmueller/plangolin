@@ -9,7 +9,7 @@ from torch_geometric.data import Batch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.objectives import LossModule
 
-from rgnet import HeteroGNN
+from rgnet.models import HeteroGNN
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack

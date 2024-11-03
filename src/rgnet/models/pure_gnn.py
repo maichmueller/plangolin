@@ -6,7 +6,7 @@ from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
-from rgnet import ColorGraphEncoder
+from rgnet.encoding import ColorGraphEncoder
 
 
 class PureGNN(LightningModule):

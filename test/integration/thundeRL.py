@@ -10,12 +10,13 @@ import pymimir as mi
 import pytest
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT
-from supervised.test_data import hetero_data_equal
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
 from experiments.rl.thundeRL import run_lightning_fast
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
+
+from ..supervised.test_data import hetero_data_equal
 
 
 @pytest.fixture(autouse=True, scope="class")

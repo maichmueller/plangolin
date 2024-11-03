@@ -14,8 +14,8 @@ from torch import Tensor
 
 from experiments.data_layout import DataLayout, DatasetType
 from experiments.policy import Policy, ValuePolicy
-from rgnet import LightningHetero
 from rgnet.encoding import HeteroGraphEncoder
+from rgnet.models import LightningHetero
 from rgnet.supervised import MultiInstanceSupervisedSet
 from rgnet.utils import get_device_cuda_if_possible
 

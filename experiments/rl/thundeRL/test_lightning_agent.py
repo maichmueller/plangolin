@@ -16,7 +16,7 @@ from torchrl.envs.utils import set_exploration_type
 
 from experiments.rl.data_layout import InputData, OutputData
 from experiments.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
-from rgnet import HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import (
     ActorCritic,
     EmbeddingModule,

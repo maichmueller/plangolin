@@ -9,7 +9,7 @@ import pytest
 import torch
 from matplotlib import pyplot as plt
 
-from rgnet import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
