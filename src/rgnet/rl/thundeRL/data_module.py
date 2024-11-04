@@ -80,25 +80,27 @@ class ThundeRLDataModule(LightningDataModule):
         return dataset_list
 
     def prepare_data(self) -> None:
-        problem_paths = self.data.problem_paths + self.data.validation_problem_paths
+        train_prob_paths = self.data.problem_paths
+        validation_prob_paths = self.data.validation_problem_paths
+        problem_paths = train_prob_paths + (validation_prob_paths or [])
         logging.info(f"Using #{len(problem_paths)} problems in total.")
         logging.info(
             f"Problems used for TRAINING:\n{_newline.join(p.stem for p in self.data.problem_paths)}"
         )
-        logging.info(
-            f"Problems used for VALIDATION:\n{_newline.join(p.stem for p in self.data.validation_problem_paths)}"
-        )
+        validation_string = "-NONE-"
+        if validation_prob_paths:
+            validation_string = _newline.join(p.stem for p in validation_prob_paths)
+        logging.info(f"Problems used for VALIDATION:\n{validation_string}")
         datasets = self.load_datasets(problem_paths)
         self.dataset = ConcatDataset(
             filter(
                 lambda drive: drive.problem_path in self.data.problem_paths, datasets
             )
         )
-        if self.data.validation_problems:
+        if validation_prob_paths:
             self.validation_sets = list(
                 filter(
-                    lambda drive: drive.problem_path
-                    in self.data.validation_problem_paths,
+                    lambda drive: drive.problem_path in validation_prob_paths,
                     datasets,
                 )
             )
