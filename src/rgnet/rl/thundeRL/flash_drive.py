@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import pymimir as mi
 import torch
 from torch_geometric.data import Batch, HeteroData, InMemoryDataset
+from torch_geometric.data.separate import separate
 from tqdm import tqdm
 
 from rgnet.encoding import HeteroGraphEncoder
@@ -144,6 +145,20 @@ class FlashDrive(InMemoryDataset):
             for target in data.targets
         )
         return data
+
+    def get(self, idx: int) -> HeteroData:
+        """
+        Get the data object at the given index.
+
+        Override the base-method to avoid caching previously fetched datapoints and increasing memory usage without gain.
+        """
+        return separate(
+            cls=self._data.__class__,
+            batch=self._data,
+            idx=idx,
+            slice_dict=self.slices,
+            decrement=False,
+        )
 
     def __getattr__(self, key: str) -> Any:
         """
