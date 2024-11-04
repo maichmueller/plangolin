@@ -20,12 +20,14 @@ class ThundeRLDataModule(LightningDataModule):
         input_data: InputData,
         gamma: float,
         batch_size: int,
+        parallel: bool = True,
     ) -> None:
         super().__init__()
 
         self.data = input_data
         self.gamma = gamma
         self.batch_size = batch_size
+        self.parallel = parallel
         self.dataset: Dataset
         self.validation_sets: List[Dataset] = []
 
@@ -36,7 +38,7 @@ class ThundeRLDataModule(LightningDataModule):
                 f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
             )
 
-        process_parallely = self.data.parallel and len(problem_paths) > 1
+        process_parallely = self.parallel and len(problem_paths) > 1
         dataset_list = []
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,

@@ -43,11 +43,12 @@ class OutputData:
 
         if ensure_new_out_dir:
             suffix = 0
-            new_out_dir = self.out_dir
-            while new_out_dir.exists():
-                new_out_dir = Path(str(self.out_dir.absolute()) + "_" + str(suffix))
+            new_experiment_name = experiment_name
+            while self.out_dir.exists():
+                new_experiment_name = experiment_name + "_" + str(suffix)
+                self.out_dir = self.out_dir.parent / new_experiment_name
                 suffix += 1
-            self.out_dir = new_out_dir
+            experiment_name = new_experiment_name
 
         self.out_dir.mkdir(exist_ok=True, parents=True)
         logging.info("Using " + str(self.out_dir) + " for output data.")
@@ -68,7 +69,6 @@ class InputData:
     _validation_instances: Optional[List[Path]]
     test_problems: Optional[List[mi.Problem]]
     _test_instances: Optional[List[Path]]
-    parallel: bool
 
     def __init__(
         self,
@@ -83,7 +83,6 @@ class InputData:
         test_instances: Optional[List[str]] | Literal["all"] = None,
         # if specified pddl_domains_dir and dataset_dir will be relative to root_dir
         root_dir: Optional[Path] = ROOT_DIR,
-        parallel: bool = False,
     ):
         """
         Manages the data layout for input data to RL experiments.
@@ -110,7 +109,6 @@ class InputData:
         :param root_dir: Optional parent directory for both pddl_domains_dir and dataset_dir.
             If specified the parameter pddl_domains_dir and dataset_dir will be interpreted as relative to root_dir.
             (default: the project source directory)
-        :param parallel: Whether to use parallel processing to load the data. (default: False)
         """
         self.train_subdir = train_subdir
         self.eval_subdir = eval_subdir or self.train_subdir
@@ -124,8 +122,8 @@ class InputData:
                     "If the root directory is not specified absolute paths for"
                     " 'pddl_domains_dir' and 'dataset_dir' should be specified."
                 )
-        self.dataset_dir = dataset_dir
-        if not self.dataset_dir.exists():
+        self.dataset_dir = dataset_dir / domain_name
+        if not self.dataset_dir.parent.exists():
             logging.info(
                 "Creating missing dataset dir at " + str(self.dataset_dir.absolute())
             )
@@ -144,7 +142,6 @@ class InputData:
         self._spaces: Optional[List[mi.StateSpace]] = None
         self._validation_spaces: Optional[List[mi.StateSpace]] = None
         self.space_by_problem: dict[mi.Problem, mi.StateSpace] = dict()
-        self.parallel = parallel
 
     def _get_or_load_space(self, problem: mi.Problem) -> mi.StateSpace:
         if problem not in self.space_by_problem:
