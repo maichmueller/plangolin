@@ -58,6 +58,11 @@ class FlashDrive(InMemoryDataset):
         return [self.problem_path.stem + ".pt"]
 
     def process(self) -> None:
+        """
+        Process the domain and problem files to build the dataset.
+
+        Only called if self.force_reload is True or the processed dataset file does not exist.
+        """
         domain = mi.DomainParser(str(self.domain_file.absolute())).parse()
         problem = mi.ProblemParser(str(self.problem_path.absolute())).parse(domain)
         space = mi.StateSpace.new(
