@@ -13,6 +13,7 @@ import torch_geometric as pyg
 from torch import Tensor
 
 from experiments.data_layout import DataLayout, DatasetType
+from experiments.plan import parse_plan
 from experiments.policy import Policy, ValuePolicy
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import LightningHetero
@@ -29,52 +30,6 @@ def plot_prediction_for_label(pred_for_label: Dict[int, List[Tensor]], label):
     plt.ylabel("Number of samples")
     plt.title(f"Predicted label distribution for expected label {label}")
     plt.show()
-
-
-def parse_plan(path: pathlib.Path, problem: mi.Problem) -> Tuple[List[mi.Action], int]:
-    """
-    Tries to parse plan file by matching actions to applicable actions in the problem.
-    :param path: Path to the plan file.
-    :param problem: The problem for which the plan is valid.
-    :return: A tuple containing a list of actions and the cost of the plan.
-    """
-    assert path.is_file(), path.absolute()
-    lines = path.read_text().splitlines()
-    succ = mi.GroundedSuccessorGenerator(problem)
-    state = problem.create_state(problem.initial)
-
-    # fast-downward stores plans as (action-schema obj1 obj2)
-    def format_action(a: mi.Action):
-        schema_name = a.schema.name
-        obj = [o.name for o in a.get_arguments()]
-        return "(" + schema_name + " " + " ".join(obj) + ")"
-
-    action_list = []
-    for action_name in lines:
-        if not action_name.startswith("("):
-            break
-        action = next(
-            (
-                a
-                for a in succ.get_applicable_actions(state)
-                if format_action(a) == action_name
-            ),
-            None,
-        )
-        if action is None:
-            raise ValueError(
-                "Could not find applicable action for "
-                f"{action_name}. Applicable actions are"
-                f"{[format_action(a) for a in succ.get_applicable_actions(state)]}."
-            )
-        action_list.append(action)
-        state = action.apply(state)
-    cost = re.search(r"cost = (\d+)", lines[-1])
-    if cost is None:
-        raise ValueError(f"Could not find cost in {lines[-1]}")
-    cost = int(cost.group(1))
-    assert sum(a.cost for a in action_list) == cost
-    return action_list, cost
 
 
 @dataclasses.dataclass
@@ -199,7 +154,9 @@ class CompletedExperiment:
         for plan_file in plans:
             problem_path = self.data_layout.problem_for_plan(plan_file, dataset_type)
             problem = mi.ProblemParser(str(problem_path.absolute())).parse(self.domain)
-            opt_plan, opt_cost = parse_plan(plan_file, problem)
+            self.plan = parse_plan(plan_file, problem)
+            self.self_plan = self.plan
+            opt_plan, opt_cost = self.self_plan
             result = policy.run(problem, max_steps)
             if result is None:
                 found_plans.append(

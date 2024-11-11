@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import itertools
 import logging
 import warnings
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import pymimir as mi
+from pymimir import Problem
 
 from experiments import ROOT_DIR
+from experiments.plan import Plan, parse_plan
 
 
 @dataclasses.dataclass
@@ -69,6 +72,9 @@ class InputData:
     _validation_instances: Optional[List[Path]]
     test_problems: Optional[List[mi.Problem]]
     _test_instances: Optional[List[Path]]
+    # Not guaranteed to have a plan for every problem.
+    # Shared across training, validation and test problems.
+    plan_by_problem: Dict[Problem, Plan]
 
     def __init__(
         self,
@@ -78,6 +84,7 @@ class InputData:
         train_subdir: str = "train",
         eval_subdir: Optional[str] = None,
         test_subdir: Optional[str] = None,
+        plan_subdir: Optional[str] = None,
         instances: List[str] | Literal["all"] = "all",
         validation_instances: Optional[List[str]] | Literal["all"] = None,
         test_instances: Optional[List[str]] | Literal["all"] = None,
@@ -113,6 +120,8 @@ class InputData:
         self.train_subdir = train_subdir
         self.eval_subdir = eval_subdir or self.train_subdir
         self.test_subdir = test_subdir or self.train_subdir
+        self.plan_subdir = plan_subdir or self.test_subdir
+        self.plan_subdir_was_specified = plan_subdir is not None
         if root_dir:
             pddl_domains_dir = root_dir / pddl_domains_dir
             dataset_dir = root_dir / dataset_dir
@@ -137,6 +146,7 @@ class InputData:
         self._resolve_domain_and_instances(instances)
         self._resolve_validation_instances(validation_instances)
         self._resolve_test_instances(test_instances)
+        self.plan_by_problem = self._look_for_plans()
 
         # We load state space lazily as it might be quite expensive
         self._spaces: Optional[List[mi.StateSpace]] = None
@@ -274,3 +284,39 @@ class InputData:
             )
             self.test_problems = problems
             self._test_instances = instances
+
+    def _look_for_plans(self) -> Dict[mi.Problem, Plan]:
+        plan_dir = self.pddl_domains_dir / self.plan_subdir
+        plan_files = list(plan_dir.glob("*.plan"))
+        if len(plan_files) == 0 and self.plan_subdir_was_specified:
+            warnings.warn(
+                f"Could not find .plan files in {plan_dir} even though subdirectory was explicitly set to {self.plan_subdir}"
+            )
+            return dict()
+
+        all_problems = set(
+            itertools.chain.from_iterable(
+                problems
+                for problems in [
+                    self.problems,
+                    self.validation_problems,
+                    self.test_problems,
+                ]
+                if problems
+            )
+        )
+        problem_by_stem: Dict[str, mi.Problem] = {
+            p.name.split("(")[1].removesuffix(".pddl)"): p for p in all_problems
+        }
+        problem_to_plan: Dict[mi.Problem, Plan] = {}
+        for plan_file in plan_files:
+            pddl_file = plan_file.stem.removesuffix(".pddl")
+            problem = problem_by_stem.get(pddl_file)
+            if problem is None:
+                logging.debug(
+                    f"Could not match plan file to problem. Plan name {pddl_file}.\n"
+                    f"\tCandidates: {problem_by_stem.keys()}"
+                )
+                continue
+            problem_to_plan[problem] = parse_plan(plan_file, problem)
+        return problem_to_plan

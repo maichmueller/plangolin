@@ -1,5 +1,6 @@
 import csv
 import dataclasses
+import itertools
 import logging
 import re
 import sys
@@ -14,6 +15,7 @@ from lightning.pytorch.loggers import Logger, WandbLogger
 from tensordict import TensorDict
 from torchrl.envs.utils import set_exploration_type
 
+from experiments.plan import Plan
 from experiments.rl.data_layout import InputData, OutputData
 from experiments.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.encoding import HeteroGraphEncoder
@@ -29,25 +31,20 @@ from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 
 # TODO Unify with experiments.analyze_run.PlanResult
 @dataclasses.dataclass
-class ProbabilisticPlanResult:
-    problem: mi.Problem
-    cost: float = dataclasses.field(init=False)  # derived from action_sequence
-    action_sequence: List[mi.Action]
+class ProbabilisticPlanResult(Plan):
     solved: bool
     average_probability: float
     min_probability: float
-    solved_optimal: Optional[bool] = None
-
-    def __post_init__(self):
-        self.cost = sum(action.cost for action in self.action_sequence)
+    # 0 if optimal, positive if higher cost than optimal
+    diff_to_optimal: Optional[int] = None
 
     # cant use dataclasses.asdict(...) because pymimir problems can't be pickled
     def serialize_as_dict(self):
         def transform(k, v):
             if isinstance(v, mi.Problem):
                 return v.name
-            elif k == "action_sequence":
-                return str(v)
+            elif k == "transitions":
+                return str([t.action for t in v])
             return v
 
         return {
@@ -57,7 +54,9 @@ class ProbabilisticPlanResult:
 
 
 def rollout_on_problem(
-    test_problem: mi.Problem, agent: ActorCritic, test_setup: TestSetup
+    test_problem: mi.Problem,
+    agent: ActorCritic,
+    test_setup: TestSetup,
 ):
     base_env = SuccessorEnvironment(
         generators=[mi.GroundedSuccessorGenerator(test_problem)],
@@ -73,7 +72,7 @@ def rollout_on_problem(
         ),
         cache_specs=True,
     )
-    with set_exploration_type(test_setup.exploration_type):
+    with set_exploration_type(test_setup.exploration_type), torch.no_grad():
         rollout = env.rollout(
             max_steps=test_setup.max_steps,
             policy=agent.as_td_module(
@@ -95,7 +94,7 @@ def _resolve_checkpoint_path(out_data: OutputData):
 
 
 def _analyze_rollouts(
-    results: Dict[mi.Problem, TensorDict]
+    results: Dict[mi.Problem, TensorDict], optimal_plans: Dict[mi.Problem, Plan]
 ) -> List[ProbabilisticPlanResult]:
     out_data: List[ProbabilisticPlanResult] = []
     rollout: TensorDict
@@ -106,17 +105,32 @@ def _analyze_rollouts(
         assert rollout.batch_size[0] == 1
         assert rollout.names[-1] == "time"
         action_probs = rollout["log_probs"].detach().exp()
-        out_data.append(
-            ProbabilisticPlanResult(
-                problem=problem,
-                solved=rollout[("next", "terminated")].any().item(),
-                average_probability=round(action_probs.mean().item(), 4),
-                min_probability=round(action_probs.min().item(), 4),
-                action_sequence=[
-                    transition.action for transition in rollout["action"][0]
-                ],
+        transitions = list(
+            itertools.takewhile(
+                lambda t: not t.source.literals_hold(problem.goal), rollout["action"][0]
             )
         )
+        plan_length = len(transitions)
+        action_probs = action_probs[:plan_length]
+        plan_result = ProbabilisticPlanResult(
+            problem=problem,
+            solved=rollout[("next", "terminated")].any().item(),
+            average_probability=round(action_probs.mean().item(), 4),
+            min_probability=round(action_probs.min().item(), 4),
+            transitions=transitions,
+        )
+        optimal_plan: Optional[Plan] = optimal_plans.get(problem)
+        if optimal_plan is not None:
+            plan_result.diff_to_optimal = plan_result.cost - optimal_plan.cost
+            for i, (plan_step, optimal_plan_step) in enumerate(
+                zip(plan_result.transitions, optimal_plan.transitions)
+            ):
+                # Equal between actions not correctly implemented in old pymimir
+                if plan_step.target != optimal_plan_step.target:
+                    print("Deferred from optimal plan at step ", str(i))
+                    break
+
+        out_data.append(plan_result)
     return out_data
 
 
@@ -209,7 +223,9 @@ def test_lightning_agent(
         test_results[test_problem] = rollout
         logging.info("Completed " + str(test_problem.name))
 
-    analyzed_data: List[ProbabilisticPlanResult] = _analyze_rollouts(test_results)
+    analyzed_data: List[ProbabilisticPlanResult] = _analyze_rollouts(
+        test_results, input_data.plan_by_problem
+    )
 
     results_name = f"results_epoch={epoch}-step={step}"
     results_file = output_data.out_dir / (results_name + ".csv")
@@ -242,6 +258,10 @@ def test_lightning_agent_cli():
     # overwrite this because it might be set in the config.yaml.
     sys.argv.append("--data_layout.output_data.ensure_new_out_dir")
     sys.argv.append("false")
+    # workaround because we can't set the default
+    # Should be set to avoid overwriting the previous run with the same id
+    sys.argv.append("--trainer.logger.init_args.resume")
+    sys.argv.append("true")
     cli = TestThundeRLCLI(run=False)
     lightning_adapter: LightningAdapter = cli.model
     in_data: InputData = cli.datamodule.data
