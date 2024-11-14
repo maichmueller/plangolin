@@ -1,9 +1,6 @@
 import logging
-import warnings
-from logging import handlers
-from multiprocessing import Lock
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 import pymimir as mi
 import torch
@@ -14,9 +11,6 @@ from tqdm import tqdm
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
-
-# TODO: Remove this once the issue is resolved in pytorch-geometric
-warnings.filterwarnings("ignore")
 
 
 class FlashDrive(InMemoryDataset):
@@ -61,7 +55,6 @@ class FlashDrive(InMemoryDataset):
     def process(self) -> None:
         """
         Process the domain and problem files to build the dataset.
-
         Only called if self.force_reload is True or the processed dataset file does not exist.
         """
         domain = mi.DomainParser(str(self.domain_file.absolute())).parse()
@@ -118,9 +111,9 @@ class FlashDrive(InMemoryDataset):
     def _log_build_start(self, space):
         if self.logging_kwargs is not None:
             logger = logging.getLogger(f"thread-{self.logging_kwargs['thread_id']}")
+            logger.setLevel(self.logging_kwargs["log_level"])
         else:
             logger = logging.getLogger("root")
-        logger.setLevel(self.logging_kwargs["log_level"])
         logger.info(
             f"Building {self.__class__.__name__} "
             f"(problem: {space.problem.name}, #states: {space.num_states()})"
@@ -130,15 +123,8 @@ class FlashDrive(InMemoryDataset):
     def target_idx_to_data_transform(self, data: HeteroData) -> HeteroData:
         """
         Convert transition target state indices to actual hetero-data objects.
-
-        Parameters
-        ----------
-        data: HeteroData,
-            The hetero-data object to transform.
-        Returns
-        -------
-        HeteroData
-            The transformed hetero-data object.
+        :param data the hetero-data object to transform.
+        :returns The transformed hetero-data object.
         """
         data.targets = tuple(
             self.get(target) if isinstance(target, int) else target
@@ -149,7 +135,6 @@ class FlashDrive(InMemoryDataset):
     def get(self, idx: int) -> HeteroData:
         """
         Get the data object at the given index.
-
         Override the base-method to avoid caching previously fetched datapoints and increasing memory usage without gain.
         """
         return separate(
