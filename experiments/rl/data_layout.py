@@ -94,7 +94,7 @@ class InputData:
         """
         Manages the data layout for input data to RL experiments.
         The directories can either be specified as absolute paths or relative to the root_dir.
-        In basic layout inside pddl_domains_dir looks like
+        In basic layout inside `pddl_domains_dir` looks like
         domain_name
             domain.pddl
             train
@@ -238,10 +238,23 @@ class InputData:
                 return [], []
             all_instances = filtered_instances
 
-        return all_instances, [
-            mi.ProblemParser(str(instance)).parse(self.domain)
-            for instance in all_instances
-        ]
+        problems = []
+        for instance in all_instances:
+            try:
+                problems.append(mi.ProblemParser(str(instance)).parse(self.domain))
+            except RuntimeError as e:
+                domain_warn_message = (
+                    "Problem file is likely a domain."
+                    "Please make sure that domain files are outside of the problem subdirectories."
+                    "The expected layout can be found in the documentation of InputData."
+                )
+                warn_message = f"Could not parse problem {instance}.{repr(e)}"
+                if instance.stem.lower() == "domain":
+                    warnings.warn(f"{domain_warn_message}\n{warn_message}")
+                else:
+                    warnings.warn(warn_message)
+
+        return all_instances, problems
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
         self.domain: mi.Domain = mi.DomainParser(str(self.domain_path)).parse()
