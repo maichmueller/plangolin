@@ -17,7 +17,7 @@ def test_critic_validation(expanded_state_space_env):
     Tests the critic validation callback.
     Go over whole state space in 5 batches, each 25 elements.
     The value operator is mocked and produces estimates one higher than optimal.
-    The optimal values are just 0,...,124, but the indices of states is reversed.
+    The optimal values are just 0,...,124, but the indices of states are reversed.
     Therefore, the callback has to sort the predictions based on the idx_in_space.
     The expected loss is 1.0 = torch.nn.functional.mse([0,...,124],[1,...,125])
     """
@@ -45,7 +45,7 @@ def test_critic_validation(expanded_state_space_env):
         in_keys=["state"], module=OverestimatingValueOperator()
     )
     critic_validation = CriticValidation(
-        optimal_values_dict=optimal_values_dict, value_operator=value_operator
+        discounted_optimal_values=optimal_values_dict, value_operator=value_operator
     )
     for batch_index in range(5):
         rollout = env.rollout(max_steps=1)

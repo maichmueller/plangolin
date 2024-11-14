@@ -1,17 +1,28 @@
+import abc
 import itertools
+import logging
 import statistics
 import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
+import pymimir as mi
 import torch
+import torch_geometric as pyg
+import tqdm
 from lightning import Callback
 from tensordict import NestedKey, TensorDict
+from torch import Tensor
 from torchrl.modules import ValueOperator
 
 from rgnet.rl import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.rl.thundeRL.value_iteration import (
+    ValueIterationMessagePassing,
+    build_mdp_graph_with_prob,
+    mdp_graph_as_pyg_data,
+)
 
 
 class ValidationCallback(torch.nn.Module, Callback):
@@ -65,8 +76,8 @@ class ValidationCallback(torch.nn.Module, Callback):
         self.is_sanity_check = False
 
     def log_key(self, dataloader_idx: int):
-        return (
-            f"val/{self.log_name}_" + self.dataloader_names[dataloader_idx]
+        return f"val/{self.log_name}_" + (
+            self.dataloader_names[dataloader_idx]
             if self.dataloader_names
             else str(dataloader_idx)
         )
@@ -77,12 +88,18 @@ class ValidationCallback(torch.nn.Module, Callback):
             and dataloader_index not in self.only_run_for_dataloader
         )
 
+    @abc.abstractmethod
+    def forward(
+        self, tensordict: TensorDict, batch_idx: Optional[int] = None, dataloader_idx=0
+    ):
+        pass
+
 
 class CriticValidation(ValidationCallback):
 
     def __init__(
         self,
-        optimal_values_dict: Dict[int, torch.Tensor],
+        discounted_optimal_values: Dict[int, torch.Tensor],
         value_operator: ValueOperator,
         loss_function: Optional[
             Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
@@ -97,7 +114,7 @@ class CriticValidation(ValidationCallback):
         Computes the current prediction of state values for current states and compares them
         to the optimal values using the loss function.
         This is a torch module in order to simplify moving the optimal values to the device.
-        :param optimal_values_dict: Dictionary mapping the dataloader index to a flat tensor.
+        :param discounted_optimal_values: Dictionary mapping the dataloader index to a flat tensor.
             optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
         :param value_operator: The value operator currently learned. Each in-key has to be contained in the tensordicts.
         :param loss_function: Which loss function to use. (default: torch.nn.functional.mse_loss)
@@ -109,13 +126,13 @@ class CriticValidation(ValidationCallback):
             dataloader_names=dataloader_names,
             only_run_for_dataloader=only_run_for_dataloader,
         )
-        for space_idx, optimal_values in optimal_values_dict.items():
+        for space_idx, optimal_values in discounted_optimal_values.items():
             self.register_buffer(str(space_idx), optimal_values)
         self.value_op = value_operator
         self.loss_function = loss_function or torch.nn.functional.mse_loss
         self.state_value_key = state_value_key
 
-    def forward(self, tensordict: TensorDict, dataloader_idx=0):
+    def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
         try:
@@ -174,7 +191,7 @@ class PolicyValidation(ValidationCallback):
         )
         self.keys = keys
 
-    def forward(self, tensordict: TensorDict, dataloader_idx=0):
+    def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         """
         Assesses the policy as the number of states in which an optimal action was chosen
         divided by the number of states.
@@ -184,6 +201,7 @@ class PolicyValidation(ValidationCallback):
         :param tensordict: Result of agent on environment. Specifically we expect
             - "idx_in_space" identifying the current state in the respective StateSpace
             - PlanningEnvironment.keys.action the idx of the transition which the agent chose
+        :param batch_idx: Not required for this callback
         :param dataloader_idx: Each dataloader is associated with a specific StateSpace.
         """
         # TODO use cross entropy loss between all optimal actions and policy probs
@@ -249,7 +267,7 @@ class PolicyEntropy(ValidationCallback):
             (probs_tensor.numel(),), device=probs_tensor.device
         )
 
-    def forward(self, tensordict: TensorDict, dataloader_idx=0):
+    def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         if self.skip_dataloader(dataloader_idx):
             return
         batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
@@ -266,59 +284,41 @@ class PolicyEntropy(ValidationCallback):
         self.epoch_values[dataloader_idx].append(mean_entropy)
 
 
-class ProbsStoreCallback(ValidationCallback):
+class ProbsCollector(torch.nn.Module):
+    """
+    Used to collect all probabilities over one epoch.
+    The probabilities are then sorted and provided as a continuous list, where
+    self.sorted_epoch_probs[i][j][k] is
+        the state-space corresponding to the i-th dataloader,
+        the j-th state in the state-space,
+        the k-th successor of this state.
+
+    Multiple validation-callbacks can share a common collector.
+    For this use case, the batch_idx has to ba passed,
+     which will be used to identify multiple calls with the same data.
+    The collector will hold the probability tensor on the same device, as received in forward.
+    """
 
     def __init__(
         self,
-        save_dir: Path,
         probs_key: NestedKey = ActorCritic.default_keys.probs,
-        log_name: str = "actor_probs",
-        dataloader_names: Optional[Dict[int, str]] = None,
-        only_run_for_dataloader: Optional[set[int]] = None,
     ):
-        """
-        Save the probability for all successors for every state.
-        The combined probabilities over one epoch are saved to a .pt file.
-        The saved file is of the form List[torch.Tensor]. save_file[i][j] is the probability
-        in state i for moving to the j-th successor.
-
-        :param probs_key: Under which key the agent stores its probabilities. The
-            probabilities are assumed to be of the form List[torch.Tensor]
-        :param save_dir: Where to store the .pt files.
-        :param log_name: Start of the file-names. (default: actor_probs)
-        """
-        super().__init__(
-            log_name=log_name,
-            dataloader_names=dataloader_names,
-            only_run_for_dataloader=only_run_for_dataloader,
-        )
+        super().__init__()
         self.probs_key: NestedKey = probs_key
-        assert isinstance(save_dir, Path)
-        self.save_dir: Path = save_dir / self.log_name
-        self.save_dir.mkdir(exist_ok=True)
-        self.epoch: int = 0
         # Collected over one validation epoch
         # The index of the current states in their StateSpaces collected over one epoch
         self.state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
         # The probability for each outgoing transition over one epoch
-        # Each state can have various numbers of successors, therefore, we have a list of list.
+        # Each state can have various numbers of successors, therefore, we have a list of list
         self.probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
 
-    def get_extra_state(self) -> Any:
-        return {
-            "probs_key": self.probs_key,
-            "save_dir": self.save_dir,
-            "epoch": self.epoch,
-        }
+        self._sorted_probs: Optional[Dict[int, List[torch.Tensor]]] = None
+        self.seen_batch_indices: Dict[int, Set[int]] = defaultdict(set)
 
-    def set_extra_state(self, state: Any) -> None:
-        self.probs_key = state["probs_key"]
-        self.save_dir = state["save_dir"]
-        self.epoch = state["epoch"]
-
-    def forward(self, tensordict: TensorDict, dataloader_idx=0, **kwargs):
-        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
+    def forward(self, tensordict: TensorDict, batch_idx: int, dataloader_idx=0):
+        if batch_idx in self.seen_batch_indices[dataloader_idx]:
             return
+        self.seen_batch_indices[dataloader_idx].add(batch_idx)
         # We have the additional time dimension (also for now only one step)
         batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
         batched_probs: List[torch.Tensor] = [ls[0].detach() for ls in batched_probs]
@@ -326,11 +326,28 @@ class ProbsStoreCallback(ValidationCallback):
         self.state_id_in_epoch[dataloader_idx].append(state_indices)
         self.probs_in_epoch[dataloader_idx].append(batched_probs)
 
-    def on_validation_epoch_start(self, trainer, module) -> None:
+    def reset(self) -> None:
+        """The collector should be reset at the start of every epoch."""
         self.state_id_in_epoch.clear()
         self.probs_in_epoch.clear()
+        self.seen_batch_indices.clear()
+        self._sorted_probs = None
 
-    def on_validation_epoch_end(self, trainer, module) -> None:
+    @property
+    def sorted_epoch_probs(self) -> Dict[int, List[Tensor]]:
+        """
+        This method should be called inside on_validation_epoch_end.
+        The method will sort the collected probabilities such that the first tensor
+        contains the probabilities for the successors of the first state.
+        NOTE if the collector is shared, the dictionary will contain values for all
+        dataloader indices. You might want to run skip_dataloader again
+         while iterating over the values.
+
+        """
+        if self._sorted_probs is not None:
+            return self._sorted_probs
+
+        self._sorted_probs = dict()
         for dataloader_idx, state_id_in_epoch in self.state_id_in_epoch.items():
             probs_in_epoch = self.probs_in_epoch[dataloader_idx]
             flattened_indices: torch.Tensor = torch.cat(state_id_in_epoch)
@@ -342,12 +359,200 @@ class ProbsStoreCallback(ValidationCallback):
             sorted_probs: List[torch.Tensor] = []
             for i in new_indices_list:
                 sorted_probs.append(flattened_probs[i])
+            self._sorted_probs[dataloader_idx] = sorted_probs
 
+            return self._sorted_probs
+
+
+class ProbsStoreCallback(ValidationCallback):
+
+    def __init__(
+        self,
+        save_dir: Path,
+        probs_collector: ProbsCollector,
+        log_name: str = "actor_probs",
+        dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
+    ):
+        """
+        Save the probability for all successors for every state.
+        The combined probabilities over one epoch are saved to a .pt file.
+        The saved file is of the form List[torch.Tensor]. save_file[i][j] is the probability
+        in statespace.get_states()[i] for moving to the j-th successor.
+
+        :param probs_collector: The collector which aggregates probs over one epoch.
+        :param save_dir: Where to store the .pt files.
+        :param log_name: Start of the file-names. (default: actor_probs)
+        """
+        super().__init__(
+            log_name=log_name,
+            dataloader_names=dataloader_names,
+            only_run_for_dataloader=only_run_for_dataloader,
+        )
+        self.probs_collector: ProbsCollector = probs_collector
+        assert isinstance(save_dir, Path)
+        self.save_dir: Path = save_dir / self.log_name
+        self.save_dir.mkdir(exist_ok=True)
+        self.epoch: int = 0
+
+    def get_extra_state(self) -> Any:
+        return {
+            "save_dir": self.save_dir,
+            "epoch": self.epoch,
+        }
+
+    def set_extra_state(self, state: Any) -> None:
+        self.save_dir = state["save_dir"]
+        self.epoch = state["epoch"]
+
+    def forward(
+        self, tensordict: TensorDict, batch_idx: Optional[int] = 0, dataloader_idx=0
+    ):
+        if self.skip_dataloader(dataloader_idx):
+            return
+        self.probs_collector(tensordict, batch_idx, dataloader_idx)
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self.probs_collector.reset()
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for (
+            dataloader_idx,
+            epoch_probs,
+        ) in self.probs_collector.sorted_epoch_probs.items():
+            if self.skip_dataloader(dataloader_idx):  # collector can be shared
+                continue
             dataloader_name = self.dataloader_names.get(dataloader_idx) or str(
                 dataloader_idx
             )
+
             file_name = (
                 self.save_dir / f"{self.log_name}_{dataloader_name}_{self.epoch}.pt"
             )
-            torch.save(sorted_probs, file_name)
+            torch.save(epoch_probs, file_name)
             self.epoch += 1
+
+
+class ValueIterationValidation(ValidationCallback):
+    """
+     Measure the policy by running value iteration under the current policy.
+     The value iteration algorithm will compute the discounted value for each state.
+     During the epoch the transition-probabilities for each state in each validation space
+        are collected using the probs_collector.
+     At the end of each validation epoch, the value iteration is executed.
+     The validation iteration will either run for num_iterations or until the change
+     is smaller than.
+    If you add the callback as a validation_hook to the Lightning adapter,
+     it computes value iterations on the same device used for model training
+    """
+
+    def __init__(
+        self,
+        spaces: List[mi.StateSpace],
+        discounted_optimal_values: Dict[int, torch.Tensor],
+        probs_collector: ProbsCollector,
+        gamma: float,
+        log_name: str = "exact_policy_validation",
+        num_iterations: Optional[int] = 10,
+        difference_threshold: Optional[float] = 0.01,
+        dataloader_names: Optional[Dict[int, str]] = None,
+        only_run_for_dataloader: Optional[set[int]] = None,
+    ) -> None:
+        """
+        :param spaces: List of all validation spaces (independent of only_run_for_dataloader)
+            This is needed to construct the state space as networkx graph.
+        :param discounted_optimal_values: Dictionary mapping the dataloader index to a flat tensor.
+            optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
+        :param probs_collector: Potentially shared collector used to gather the probabilities.
+        :param log_name: Name under which the metric results will be logged.
+        :param num_iterations: An optional upper limit for the value iterations.
+            (default 10)
+        :param difference_threshold: Optional L1-norm difference threshold for early stopping.
+            Value iteration halts if the change in the value function is less than this threshold.
+            (default 0.01)
+        Both num_iterations and difference_threshold can be used simultaneously, but at least one
+        has to be specified.
+        """
+        super().__init__(log_name, dataloader_names, only_run_for_dataloader)
+        if num_iterations is None and difference_threshold is None:
+            raise ValueError(
+                "Neither num_iterations nor difference_threshold was given."
+                "At least one is required to determine value-iteration limit."
+            )
+        self.probs_collector = probs_collector
+        for space_idx, optimal_values in discounted_optimal_values.items():
+            self.register_buffer(str(space_idx), optimal_values)
+
+        self._graphs: Dict[int, pyg.data.Data] = dict()
+        logging.info("Building state space graphs for validation problem.")
+        for idx, state_space in tqdm.tqdm(enumerate(spaces), total=len(spaces)):
+            if (
+                only_run_for_dataloader is not None
+                and idx not in only_run_for_dataloader
+            ):
+                continue
+            placeholder_probs = [
+                torch.ones((len(state_space.get_forward_transitions(state)),))
+                for state in state_space.get_states()
+            ]
+            nx_graph = build_mdp_graph_with_prob(state_space, placeholder_probs)
+
+            self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
+
+        self.message_passing: ValueIterationMessagePassing = (
+            ValueIterationMessagePassing(
+                gamma=gamma,
+                num_iterations=num_iterations,
+                difference_threshold=difference_threshold,
+            )
+        )
+
+    def compute_values(
+        self, probs_list: List[torch.Tensor], dataloader_idx: int = 0
+    ) -> torch.Tensor:
+        # The first entry of edge attributes are the transition probabilities.
+        flat_probs = torch.cat(probs_list)
+        graph: pyg.data.Data = self._graphs[dataloader_idx]
+        assert flat_probs.shape == graph.edge_attr[:, 0].shape
+        assert flat_probs.device == graph.edge_attr.device
+        self._graphs[dataloader_idx].edge_attr[:, 0] = flat_probs
+        return self.message_passing(self._graphs[dataloader_idx])
+
+    def forward(
+        self,
+        tensordict: TensorDict,
+        batch_idx: Optional[int] = 0,
+        dataloader_idx: int = 0,
+    ):
+        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
+            return
+        self.probs_collector(
+            tensordict, batch_idx=batch_idx, dataloader_idx=dataloader_idx
+        )
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        self.probs_collector.reset()
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for (
+            dataloader_idx,
+            epoch_probs,
+        ) in self.probs_collector.sorted_epoch_probs.items():
+            if self.skip_dataloader(dataloader_idx):  # collector can be shared
+                continue
+            try:
+                optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
+            except AttributeError:
+                warnings.warn(
+                    f"No optimal values found for dataloader_idx {dataloader_idx}"
+                )
+                continue
+            values: torch.Tensor = self.compute_values(epoch_probs, dataloader_idx)
+            assert values.shape == optimal_values.shape
+            assert values.device == optimal_values.device
+            loss = torch.nn.functional.mse_loss(values, optimal_values)
+            pl_module.log(
+                self.log_key(dataloader_idx),
+                loss,
+                on_epoch=True,
+            )

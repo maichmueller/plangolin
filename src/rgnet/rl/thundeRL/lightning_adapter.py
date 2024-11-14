@@ -86,8 +86,8 @@ class LightningAdapter(lightning.LightningModule):
         successors_flattened: Batch,
         num_successors: torch.Tensor,
     ) -> TensorDict:
-        # Required to group the flattened tensors by each state
-        # E.g. group all the embeddings for each successor state
+        # Required to group the flattened tensors by each state.
+        # E.g., group all the embeddings for each successor state
         slices = num_successors.cumsum(dim=0).long()[:-1]
 
         state_embedding, batched_successor_embeddings = self._compute_embeddings(
@@ -136,8 +136,8 @@ class LightningAdapter(lightning.LightningModule):
             },
             batch_size=(states_data.batch_size,),
         )
-        # Most losses / value estimators expect a time dimension
-        # Therefore we create a "rollout" of shape batch_size x time a.k.a batch_size x 1
+        # Most losses / value estimators expect a time dimension.
+        # Therefore, we create a "rollout" of shape batch_size x time a.k.a batch_size x 1.
         stacked = LazyStackedTensorDict.maybe_dense_stack([td], len(td.batch_size))
         stacked.refine_names(..., "time")
         return stacked
@@ -172,7 +172,9 @@ class LightningAdapter(lightning.LightningModule):
         with set_exploration_type(ExplorationType.MODE):
             as_tensordict = self.forward(*batch_tuple)
             for hook in self.validation_hooks:
-                optional_metrics = hook(as_tensordict, dataloader_idx=dataloader_idx)
+                optional_metrics = hook(
+                    as_tensordict, batch_idx=batch_idx, dataloader_idx=dataloader_idx
+                )
                 if optional_metrics is None:
                     continue
                 for key, value in optional_metrics.items():

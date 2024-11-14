@@ -32,6 +32,7 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
     CriticValidation,
     PolicyEntropy,
     PolicyValidation,
+    ProbsCollector,
     ProbsStoreCallback,
 )
 
@@ -47,7 +48,7 @@ class OptimizerSetup:
         lr_critic: Optional[float] = None,
         lr_embedding: Optional[float] = None,
     ):
-        lr_parameters: List[Dict] = []  # parameter specific learning rate
+        lr_parameters: List[Dict] = []  # parameter-specific learning rate
         plain_parameter: List = []  # no specific learning rate
         if agent.embedding_module is None and gnn is None:
             warnings.warn("No parameter for the embedding found.")
@@ -261,11 +262,23 @@ class ThundeRLCLI(LightningCLI):
             target="trainer.logger.init_args.name",
             apply_on="instantiate",
         )
+        parser.link_arguments(
+            source="data_layout.output_data.out_dir",
+            target="trainer.default_root_dir",
+            apply_on="instantiate",
+        )
 
         # Validation callback links
         # NOTE it seems like you can't have two callbacks which have different parameter
         # of the same name.
         # Not a problem for dataloader_names as it is the same for all of them.
+        parser.link_arguments(
+            source="data_layout.input_data",
+            target="model.validation_hooks.init_args.dataloader_names",
+            compute_fn=validation_dataloader_names,
+            apply_on="instantiate",
+        )
+        # CriticValidation
         parser.link_arguments(
             source="agent.value_operator",
             target="model.validation_hooks.init_args.value_operator",
@@ -277,26 +290,43 @@ class ThundeRLCLI(LightningCLI):
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
         )
+        # PolicyValidation
         parser.link_arguments(
             source="data_layout.input_data",
             target="model.validation_hooks.init_args.optimal_policy_dict",
             compute_fn=optimal_policy_dict,
             apply_on="instantiate",
         )
+        # ProbsStoreCallback
         parser.link_arguments(
             source="data_layout.output_data.out_dir",
             target="model.validation_hooks.init_args.save_dir",
             apply_on="instantiate",
         )
+
+        # ValueIterationValidation
         parser.link_arguments(
-            source="data_layout.input_data",
-            target="model.validation_hooks.init_args.dataloader_names",
-            compute_fn=validation_dataloader_names,
+            source=("data_layout.input_data", "value_estimator.gamma"),
+            target="model.validation_hooks.init_args.discounted_optimal_values",
+            compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source="data_layout.output_data.out_dir",
-            target="trainer.default_root_dir",
+            source="data_layout.input_data.validation_spaces",
+            target="model.validation_hooks.init_args.spaces",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "value_estimator.gamma",
+            "model.validation_hooks.init_args.gamma",
+            apply_on="parse",
+        )
+
+        # ProbsStoreCallback, ValueIterationValidation
+        parser.link_arguments(
+            source="agent",
+            target="model.validation_hooks.init_args.probs_collector",
+            compute_fn=lambda agent: ProbsCollector(probs_key=agent.keys.probs),
             apply_on="instantiate",
         )
 
@@ -305,7 +335,7 @@ class ThundeRLCLI(LightningCLI):
         We need to add the validation callbacks of the model to the trainer.
         The problem is that we have a list of callbacks, and we can't extend
         the list of callbacks provided via the config using jsonargparse.
-        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists too.
+        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
         Therefore, we manually add our model callbacks to the extra callbacks.
         """
         if isinstance(self.model, LightningAdapter) and self.model.validation_hooks:
