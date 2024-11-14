@@ -5,7 +5,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
-import pymimir as mi
 import torch
 from lightning import Callback
 from tensordict import NestedKey, TensorDict
@@ -13,24 +12,6 @@ from torchrl.modules import ValueOperator
 
 from rgnet.rl import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-
-
-def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
-    # index of state to set of indices of optimal actions
-    # optimal[i] = {j},  0 <= j < len(space.get_forward_transitions(space.get_states()[i]))
-    optimal: Dict[int, Set[int]] = dict()
-    for i, state in enumerate(space.get_states()):
-        best_distance = min(
-            space.get_distance_to_goal_state(t.target)
-            for t in space.get_forward_transitions(state)
-        )
-        best_actions: Set[int] = set(
-            idx
-            for idx, t in enumerate(space.get_forward_transitions(state))
-            if space.get_distance_to_goal_state(t.target) == best_distance
-        )
-        optimal[i] = best_actions
-    return optimal
 
 
 class ValidationCallback(torch.nn.Module, Callback):
@@ -45,9 +26,10 @@ class ValidationCallback(torch.nn.Module, Callback):
         """
 
         :param log_name: Under which name the metrics should be logged.
-        :param dataloader_names: Mapping each data loader to a string. Will be used in the full logg-key.
-            The full key will be val/{log_name}_{dataloader_names[idx]. If not specified the index
-            of the dataloader will be used instead.
+        :param dataloader_names: Mapping each data loader to a string.
+            The names will be used in the full logg-key.
+            The full key will be val/{log_name}_{dataloader_names[idx].
+             If not specified, the index of the dataloader will be used instead.
         :param only_run_for_dataloader: Optional parameter to limit the callback to a specific set of dataloader.
         :param epoch_reduction: How to reduce the values of one epoch for one dataloader.
             (default: mean)
@@ -194,7 +176,7 @@ class PolicyValidation(ValidationCallback):
 
     def forward(self, tensordict: TensorDict, dataloader_idx=0):
         """
-        Assesses the policy as number of states in which an optimal action was chosen
+        Assesses the policy as the number of states in which an optimal action was chosen
         divided by the number of states.
         Two alternatives could be considered too:
          - Factor in the number of transitions as denominator
@@ -319,7 +301,7 @@ class ProbsStoreCallback(ValidationCallback):
         # The index of the current states in their StateSpaces collected over one epoch
         self.state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
         # The probability for each outgoing transition over one epoch
-        # Each state can have various number of successor therefore we have a list of list
+        # Each state can have various numbers of successors, therefore, we have a list of list.
         self.probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
 
     def get_extra_state(self) -> Any:

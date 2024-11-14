@@ -11,12 +11,9 @@ from rgnet.rl import ActorCritic, EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.losses.optimal_value_function import OptimalValueFunction
+from rgnet.rl.optimality_utils import discounted_value
 
 ARGS_BOOL_TYPE = lambda x: bool(strtobool(str(x)))
-
-
-def discounted_value(distance_to_goal, gamma):
-    return -(1 - gamma**distance_to_goal) / (1 - gamma)
 
 
 class Parameter(StrEnum):

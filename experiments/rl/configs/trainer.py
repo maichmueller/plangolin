@@ -11,9 +11,10 @@ from torchrl.envs import EnvBase
 from torchrl.record.loggers import Logger
 
 from experiments.rl.configs.agent import Agent
-from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE, discounted_value
+from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
 from experiments.rl.data_layout import InputData
 from rgnet.rl import RolloutCollector
+from rgnet.rl.optimality_utils import optimal_discounted_values
 from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 
 
@@ -33,16 +34,6 @@ class Parameter(StrEnum):
     lr_actor = auto()
     lr_critic = auto()
     lr_embedding = auto()
-
-
-def optimal_values(space: mi.StateSpace, gamma: float):
-    return torch.tensor(
-        [
-            discounted_value(space.get_distance_to_goal_state(s), gamma=gamma)
-            for s in space.get_states()
-        ],
-        dtype=torch.float,
-    )
 
 
 def add_parser_args(parent_parser: ArgumentParser):
@@ -217,7 +208,7 @@ def from_parser_args(
     gamma = parser_args.gamma
 
     optimal_values_dict = {
-        space: optimal_values(space, gamma) for space in data_resolver.spaces
+        space: optimal_discounted_values(space, gamma) for space in data_resolver.spaces
     }
 
     class ValueModule(torch.nn.Module):

@@ -1,6 +1,7 @@
 import dataclasses
 import warnings
 from argparse import Namespace
+from functools import cache
 from os import PathLike
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
@@ -17,11 +18,11 @@ from lightning.pytorch.loggers import WandbLogger
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
-from experiments.rl.configs.trainer import optimal_values
 from experiments.rl.data_layout import InputData, OutputData
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 
@@ -32,7 +33,6 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
     PolicyEntropy,
     PolicyValidation,
     ProbsStoreCallback,
-    optimal_policy,
 )
 
 
@@ -101,9 +101,12 @@ def optimal_policy_dict(input_data: InputData):
     }
 
 
-def optimal_values_dict(input_data: InputData, gamma: float) -> Dict[int, torch.Tensor]:
+@cache
+def discounted_optimal_values_dict(
+    input_data: InputData, gamma: float
+) -> Dict[int, torch.Tensor]:
     return {
-        i: optimal_values(space, gamma)
+        i: optimal_discounted_values(space, gamma)
         for i, space in enumerate(input_data.validation_spaces)
     }
 
@@ -270,8 +273,8 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.link_arguments(
             source=("data_layout.input_data", "value_estimator.gamma"),
-            target="model.validation_hooks.init_args.optimal_values_dict",
-            compute_fn=optimal_values_dict,
+            target="model.validation_hooks.init_args.discounted_optimal_values",
+            compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
         )
         parser.link_arguments(
