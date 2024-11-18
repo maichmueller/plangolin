@@ -2,7 +2,7 @@ import mockito
 import pymimir as mi
 import pytest
 import torch
-from fixtures import medium_blocks
+from fixtures import medium_blocks, request_cuda_for_test
 from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor
@@ -11,6 +11,7 @@ from rgnet.rl.thundeRL.validation import ValueIterationValidation
 
 
 class TestValueIterationValidation:
+    device = request_cuda_for_test("TestValueIterationValidation")
 
     @pytest.fixture
     def mock_probs_collector(self):
@@ -118,15 +119,21 @@ class TestValueIterationValidation:
             ]
             validator.compute_values(bad_probs, 0)
 
+        if self.device == torch.device("cpu"):
+            pytest.skip("Skipping device sensible test")
         # Test bad probs on the wrong device
         with pytest.raises(AssertionError):
             bad_probs = [
-                torch.zeros((num_t,), device=torch.device("meta"))
-                for num_t in num_transitions
+                torch.zeros((num_t,), device=self.device) for num_t in num_transitions
             ]
             validator.compute_values(bad_probs, 0)
 
     def test_compute_values(self, medium_blocks, mock_probs_collector, optimal_values):
+        """
+        Test compute_values e.g., the internal pass to the message passing module.
+        The function should return the computed values und the provided policy.
+        We assert that the message passing module is called with the correct parameters.
+        """
         space = medium_blocks[0]
         spaces = [space]
         validator = ValueIterationValidation(
@@ -150,6 +157,11 @@ class TestValueIterationValidation:
     def test_validation_epoch_end(
         self, medium_blocks, mock_probs_collector, optimal_values
     ):
+        """
+        Test on_validation_epoch_end with valid and invalid data.
+        All other side effects are mocked:
+            compute_values, ProbsCollector, Trainer and LightningAdapter.
+        """
         spaces = [medium_blocks[0]]
         validator = ValueIterationValidation(
             spaces=spaces,
@@ -173,10 +185,12 @@ class TestValueIterationValidation:
         ]
         sorted_epoch_probs = {
             0: collected_probs,
-            1: None,
             # ProbsCollector could be shared. ValueIterationValidation has to filter!
+            1: None,
         }
-        mock_probs_collector.sorted_epoch_probs = sorted_epoch_probs
+        when(mock_probs_collector).sort_probs_on_epoch_end(...).thenReturn(
+            sorted_epoch_probs
+        )
 
         # Mock the compute_values method to return a tensor of the same shape as optimal_values
         mp_return: Tensor = optimal_values[0] + 1.0
@@ -187,9 +201,11 @@ class TestValueIterationValidation:
 
         validator.on_validation_epoch_end(mock_trainer, mock_pl_module)
 
+        if self.device == torch.device("cpu"):
+            pytest.skip("Skipping device sensible test")
         # ProbsCollector stores probs on the wrong device should trigger assertion
         with pytest.raises(AssertionError):
-            meta_device = torch.device("meta")
+            meta_device = self.device
             collected_probs = [t.to(meta_device) for t in collected_probs]
             sorted_epoch_probs[0] = collected_probs
             when(validator).compute_values(...).thenReturn(

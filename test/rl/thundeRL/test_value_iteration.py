@@ -63,11 +63,6 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
     )
     one_before_goal = one_before_goal[0].source
     one_before_goal_idx = space.get_unique_id(one_before_goal)
-    goal_transition = next(
-        i
-        for (i, t) in enumerate(space.get_forward_transitions(one_before_goal))
-        if space.is_goal_state(t.target)
-    )
 
     # make sure the goal is never reached
     def faulty_probs(i, s):

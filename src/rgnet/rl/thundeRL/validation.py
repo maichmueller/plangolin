@@ -1,9 +1,9 @@
 import abc
-import itertools
 import logging
 import statistics
 import warnings
 from collections import defaultdict
+from itertools import chain
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
@@ -307,34 +307,58 @@ class ProbsCollector(torch.nn.Module):
         self.probs_key: NestedKey = probs_key
         # Collected over one validation epoch
         # The index of the current states in their StateSpaces collected over one epoch
-        self.state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
+        self._state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
         # The probability for each outgoing transition over one epoch
         # Each state can have various numbers of successors, therefore, we have a list of list
-        self.probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
+        self._probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
 
         self._sorted_probs: Optional[Dict[int, List[torch.Tensor]]] = None
-        self.seen_batch_indices: Dict[int, Set[int]] = defaultdict(set)
+        self._seen_batch_indices: Dict[int, Set[int]] = defaultdict(set)
 
     def forward(self, tensordict: TensorDict, batch_idx: int, dataloader_idx=0):
-        if batch_idx in self.seen_batch_indices[dataloader_idx]:
+        """
+        Save the transition probabilities over one epoch. Also works with shuffled data.
+        The `idx_in_space` entry will be used to order the collected probabilities.
+        :param tensordict: Of shape [batch_size, 1, feature_dim] with to keys
+            "idx_in_space" and `self.probs_key` present.
+            The "idx_in_space" has to contain the index of each present state, over one
+            full epoch every index should occur only once and be from 0,..,N-1 for some N.
+            The probs entry should contain the probability distribution for each outgoing
+             transition for each state in the batch.
+        :param batch_idx: Is used to detect multiple calls to forward with the same data.
+            Every following call with the same batch_idx will be ignored, until `reset` is called.
+        :param dataloader_idx: Optional parameter if multiple state spaces are used for validation.
+        """
+        if batch_idx in self._seen_batch_indices[dataloader_idx]:
             return
-        self.seen_batch_indices[dataloader_idx].add(batch_idx)
+        self._seen_batch_indices[dataloader_idx].add(batch_idx)
+        if self._sorted_probs is not None:
+            raise UserWarning(
+                "You hae to reset the collector after each call to "
+                "sort_probs_on_epoch_end() before adding new data."
+            )
         # We have the additional time dimension (also for now only one step)
         batched_probs: List[List[torch.Tensor]] = tensordict[self.probs_key]
         batched_probs: List[torch.Tensor] = [ls[0].detach() for ls in batched_probs]
         state_indices = tensordict["idx_in_space"].squeeze()
-        self.state_id_in_epoch[dataloader_idx].append(state_indices)
-        self.probs_in_epoch[dataloader_idx].append(batched_probs)
+
+        # Validate inputs
+        if len(batched_probs) != state_indices.numel():
+            raise ValueError(
+                "Number of probability tensors must match number of states"
+            )
+
+        self._state_id_in_epoch[dataloader_idx].append(state_indices)
+        self._probs_in_epoch[dataloader_idx].append(batched_probs)
 
     def reset(self) -> None:
         """The collector should be reset at the start of every epoch."""
-        self.state_id_in_epoch.clear()
-        self.probs_in_epoch.clear()
-        self.seen_batch_indices.clear()
+        self._state_id_in_epoch.clear()
+        self._probs_in_epoch.clear()
+        self._seen_batch_indices.clear()
         self._sorted_probs = None
 
-    @property
-    def sorted_epoch_probs(self) -> Dict[int, List[Tensor]]:
+    def sort_probs_on_epoch_end(self) -> Dict[int, List[Tensor]]:
         """
         This method should be called inside on_validation_epoch_end.
         The method will sort the collected probabilities such that the first tensor
@@ -348,20 +372,19 @@ class ProbsCollector(torch.nn.Module):
             return self._sorted_probs
 
         self._sorted_probs = dict()
-        for dataloader_idx, state_id_in_epoch in self.state_id_in_epoch.items():
-            probs_in_epoch = self.probs_in_epoch[dataloader_idx]
+        for dataloader_idx, state_id_in_epoch in self._state_id_in_epoch.items():
+            probs_in_epoch: List[List[Tensor]] = self._probs_in_epoch[dataloader_idx]
             flattened_indices: torch.Tensor = torch.cat(state_id_in_epoch)
             sorted_ids, new_indices = torch.sort(flattened_indices)
-            new_indices_list: List[int] = new_indices.tolist()
             flattened_probs: List[torch.Tensor] = list(
-                itertools.chain.from_iterable(probs_in_epoch)
+                chain.from_iterable(probs_in_epoch)
             )
-            sorted_probs: List[torch.Tensor] = []
-            for i in new_indices_list:
-                sorted_probs.append(flattened_probs[i])
+            sorted_probs: List[torch.Tensor] = [
+                flattened_probs[i] for i in new_indices.tolist()
+            ]
             self._sorted_probs[dataloader_idx] = sorted_probs
 
-            return self._sorted_probs
+        return self._sorted_probs
 
 
 class ProbsStoreCallback(ValidationCallback):
@@ -419,7 +442,7 @@ class ProbsStoreCallback(ValidationCallback):
         for (
             dataloader_idx,
             epoch_probs,
-        ) in self.probs_collector.sorted_epoch_probs.items():
+        ) in self.probs_collector.sort_probs_on_epoch_end().items():
             if self.skip_dataloader(dataloader_idx):  # collector can be shared
                 continue
             dataloader_name = self.dataloader_names.get(dataloader_idx) or str(
@@ -507,14 +530,41 @@ class ValueIterationValidation(ValidationCallback):
             )
         )
 
+    def _apply(self, fn, recurse=True):
+        """
+        We need to transfer the graphs to device which are non-tensors, so we can't use register_buffer().
+        The functions to(..) or cuda(...) are actually never called because the callbacks
+        are only nested within lightning_adapter so this seems to be the only way to
+        catch the device transfer.
+        """
+        if recurse:
+            for graph in self._graphs.values():
+                graph.apply(fn)
+        return super()._apply(fn, recurse)
+
     def compute_values(
         self, probs_list: List[torch.Tensor], dataloader_idx: int = 0
     ) -> torch.Tensor:
+        """
+        Compute the value iteration by setting the correct probs and calling the
+        internal message passing module.
+
+        :param probs_list: The sorted transition probabilities for each state.
+            Len(probs_list) = space.get_states() for state space of dataloader_idx
+            probs_list[i].numel() == len(space.get_forward_transitions(space.get_states()[i])
+        :param dataloader_idx: Required if the validator is used with multiple spaces at the same time.
+        :return: A one-dimensional tensor with the values under the provided probabilities.
+        """
         # The first entry of edge attributes are the transition probabilities.
         flat_probs = torch.cat(probs_list)
         graph: pyg.data.Data = self._graphs[dataloader_idx]
-        assert flat_probs.shape == graph.edge_attr[:, 0].shape
-        assert flat_probs.device == graph.edge_attr.device
+        assert (
+            flat_probs.shape == graph.edge_attr[:, 0].shape
+        ), f"Found mismatching shapes {flat_probs.shape=} and {graph.edge_attr[:, 0].shape=}"
+        assert (
+            flat_probs.device == graph.edge_attr.device,
+            f"Found missmatching devices {flat_probs.device=} and {graph.edge_attr.device=}",
+        )
         self._graphs[dataloader_idx].edge_attr[:, 0] = flat_probs
         return self.message_passing(self._graphs[dataloader_idx])
 
@@ -537,7 +587,7 @@ class ValueIterationValidation(ValidationCallback):
         for (
             dataloader_idx,
             epoch_probs,
-        ) in self.probs_collector.sorted_epoch_probs.items():
+        ) in self.probs_collector.sort_probs_on_epoch_end().items():
             if self.skip_dataloader(dataloader_idx):  # collector can be shared
                 continue
             try:

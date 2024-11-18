@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 from typing import List
@@ -46,6 +47,15 @@ def problem_setup(domain_name, problem):
         domain,
         problem,
     )
+
+
+def request_cuda_for_test(test_name: str) -> torch.device:
+    if not torch.cuda.is_available():
+        logging.warning(
+            f"Tried to run device sensitive test {test_name} but cuda was not available."
+        )
+        return torch.device("cpu")
+    return torch.device("cuda:0")
 
 
 # Use a shared blocks-problem, neither of space, domain or problem should be mutated.
@@ -175,7 +185,7 @@ def fresh_drive(tmp_path, force_reload=True):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_end_reward=100.0,
+        custom_dead_end_reward=-100.0,
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
     )
