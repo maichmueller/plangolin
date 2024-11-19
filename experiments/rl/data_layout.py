@@ -44,16 +44,23 @@ class OutputData:
         else:
             self.out_dir = out_dir / experiment_name
 
-        if ensure_new_out_dir:
+        # Create the output directly, there could be multiple experiments with
+        # the same experiment name running in parallel.
+        try:
+            # If ensure_new_out_dir it is not okay that the directory exists.
+            self.out_dir.mkdir(exist_ok=not ensure_new_out_dir, parents=True)
+        except FileExistsError:
             suffix = 0
-            new_experiment_name = experiment_name
-            while self.out_dir.exists():
-                new_experiment_name = experiment_name + "_" + str(suffix)
-                self.out_dir = self.out_dir.parent / new_experiment_name
-                suffix += 1
-            experiment_name = new_experiment_name
+            while True:
+                try:
+                    unique_dir = self.out_dir.parent / f"{experiment_name}_{suffix}"
+                    unique_dir.mkdir(parents=True, exist_ok=False)
+                    self.out_dir = unique_dir
+                    experiment_name = f"{experiment_name}_{suffix}"
+                    break
+                except FileExistsError:
+                    suffix += 1
 
-        self.out_dir.mkdir(exist_ok=True, parents=True)
         logging.info("Using " + str(self.out_dir) + " for output data.")
         self.experiment_name = experiment_name
 
