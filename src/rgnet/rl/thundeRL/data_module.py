@@ -1,7 +1,8 @@
 import logging
+import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
@@ -10,8 +11,6 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from experiments.rl.data_layout import InputData
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
-
-_newline = "\n"
 
 
 class ThundeRLDataModule(LightningDataModule):
@@ -28,82 +27,93 @@ class ThundeRLDataModule(LightningDataModule):
         self.gamma = gamma
         self.batch_size = batch_size
         self.parallel = parallel
-        self.dataset: Dataset
+        self.dataset: Dataset | None = None  # late init in prepare_data()
         self.validation_sets: List[Dataset] = []
 
-    def load_datasets(self, problem_paths: List[Path]) -> List[Dataset]:
+    def load_datasets(self, problem_paths: List[Path]) -> Dict[Path, Dataset]:
 
         def update(dataset):
             logging.info(
                 f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
             )
 
-        process_parallely = self.parallel and len(problem_paths) > 1
-        dataset_list = []
+        datasets: Dict[Path, FlashDrive] = dict()
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,
             custom_dead_end_reward=-1 / (1 - self.gamma),
             root_dir=str(self.data.dataset_dir),
             logging_kwargs=None,
         )
-        if process_parallely:
+        if self.parallel and len(problem_paths) > 1:
+
+            def enqueue_parallel(problem_path: Path, thread_id: int):
+                return pool.apply_async(
+                    FlashDrive,
+                    kwds=flashdrive_kwargs
+                    | dict(
+                        problem_path=problem_path,
+                        show_progress=False,
+                        logging_kwargs=dict(
+                            log_level=logging.getLogger().level, thread_id=thread_id
+                        ),
+                    ),
+                    callback=update,
+                )
+
             with Pool(min(cpu_count(), len(problem_paths))) as pool:
                 logging.info(f"Loading #{len(problem_paths)} problems in parallel.")
-                results = [
-                    pool.apply_async(
-                        FlashDrive,
-                        kwds=flashdrive_kwargs
-                        | dict(
-                            problem_path=problem_path,
-                            show_progress=False,
-                            logging_kwargs=dict(
-                                log_level=logging.getLogger().level, thread_id=i
-                            ),
-                        ),
-                        callback=update,
-                    )
+                results = {
+                    problem_path: enqueue_parallel(problem_path, i)
                     for i, problem_path in enumerate(problem_paths)
-                ]
-                for result in results:
-                    drive = result.get()
-                    dataset_list.append(drive)
+                }
+                for problem_path, result in results.items():
+                    datasets[problem_path] = result.get()
         else:
             for problem_path in problem_paths:
-                dataset_list.append(
-                    FlashDrive(
-                        problem_path=problem_path,
-                        show_progress=True,
-                        **flashdrive_kwargs,
-                    )
+                drive = FlashDrive(
+                    problem_path=problem_path,
+                    show_progress=True,
+                    **flashdrive_kwargs,
                 )
-                update(dataset_list[-1])
-        return dataset_list
+                update(drive)
+                datasets[problem_path] = drive
+        return datasets
 
     def prepare_data(self) -> None:
-        train_prob_paths = self.data.problem_paths
-        validation_prob_paths = self.data.validation_problem_paths
+        """
+        This method needs to be called before fit/validation/etc.
+        The datasets for all training / validation problems are loaded or newly constructed.
+        If `parallel` was specified, the datasets will be loaded using multiprocessing.
+        This will typically be slower if the datasets already exist and can be loaded directly.
+        NOTE it is important for the validation problems to be in the same order as in
+        :attr: `InputData.validation_problem_paths`!
+        """
+        if self.dataset is not None:
+            warnings.warn(
+                "Called prepare_data() but the data is already loaded."
+                "Replacing datasets ..."
+            )
+
+        train_prob_paths: List[Path] = self.data.problem_paths
+        validation_prob_paths: List[Path] | None = self.data.validation_problem_paths
         problem_paths = train_prob_paths + (validation_prob_paths or [])
         logging.info(f"Using #{len(problem_paths)} problems in total.")
         logging.info(
-            f"Problems used for TRAINING:\n{_newline.join(p.stem for p in self.data.problem_paths)}"
+            f"Problems used for TRAINING:\n"
+            + "\n".join(p.stem for p in self.data.problem_paths)
         )
         validation_string = "-NONE-"
         if validation_prob_paths:
-            validation_string = _newline.join(p.stem for p in validation_prob_paths)
+            validation_string = "\n".join(p.stem for p in validation_prob_paths)
         logging.info(f"Problems used for VALIDATION:\n{validation_string}")
-        datasets = self.load_datasets(problem_paths)
+        datasets: Dict[Path, Dataset] = self.load_datasets(problem_paths)
         self.dataset = ConcatDataset(
-            filter(
-                lambda drive: drive.problem_path in self.data.problem_paths, datasets
-            )
+            [datasets[train_problem] for train_problem in train_prob_paths]
         )
         if validation_prob_paths:
-            self.validation_sets = list(
-                filter(
-                    lambda drive: drive.problem_path in validation_prob_paths,
-                    datasets,
-                )
-            )
+            self.validation_sets = [
+                datasets[val_problem] for val_problem in validation_prob_paths
+            ]
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         return DataLoader(
@@ -116,13 +126,15 @@ class ThundeRLDataModule(LightningDataModule):
         )
 
     def val_dataloader(self) -> TRAIN_DATALOADERS:
+        # Order of dataloader has to be equal to order of validation problems in `InputData`.
         return [
             DataLoader(
                 dataset,
                 collate_fn=collate_fn,
                 batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=6,
+                num_workers=2,
+                # as we have multiple loader each individually should get less worker
                 persistent_workers=True,
             )
             for dataset in self.validation_sets
