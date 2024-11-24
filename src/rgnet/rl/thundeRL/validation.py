@@ -18,8 +18,8 @@ from torchrl.modules import ValueOperator
 
 from rgnet.rl import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.thundeRL.value_iteration import (
-    ValueIterationMessagePassing,
+from rgnet.rl.thundeRL.policy_evaluation import (
+    PolicyEvaluationMessagePassing,
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
 )
@@ -198,7 +198,7 @@ class PolicyValidation(ValidationCallback):
         Two alternatives could be considered too:
          - Factor in the number of transitions as denominator
          - Use the actual probabilities and not just the sampled action
-        :param tensordict: Result of agent on environment. Specifically we expect
+        :param tensordict: Result of agent on environment. Specifically, we expect
             - "idx_in_space" identifying the current state in the respective StateSpace
             - PlanningEnvironment.keys.action the idx of the transition which the agent chose
         :param batch_idx: Not required for this callback
@@ -258,7 +258,7 @@ class PolicyEntropy(ValidationCallback):
         Entropy over a tensor of a probability distribution.
         Normalized to [0,1], where 0 corresponds to a uniform distribution.
         :param probs_tensor: Tensor with sum = 1 and values between 0 and 1
-        :return: Tensor of shape (1,) on the same device as the input tensor.
+        :return: Tensor of shape [1, ] on the same device as the input tensor.
         """
         if probs_tensor.numel() == 1:
             return torch.zeros((1,), dtype=torch.float, device=probs_tensor.device)
@@ -322,11 +322,11 @@ class ProbsCollector(torch.nn.Module):
         :param tensordict: Of shape [batch_size, 1, feature_dim] with to keys
             "idx_in_space" and `self.probs_key` present.
             The "idx_in_space" has to contain the index of each present state, over one
-            full epoch every index should occur only once and be from 0,..,N-1 for some N.
+            full epoch every index should occur only once and be from 0,...,N-1 for some N.
             The probs entry should contain the probability distribution for each outgoing
              transition for each state in the batch.
-        :param batch_idx: Is used to detect multiple calls to forward with the same data.
-            Every following call with the same batch_idx will be ignored, until `reset` is called.
+        :param batch_idx: Used to detect multiple calls to forward with the same data.
+            Every following call with the same batch_idx will be ignored until `reset` is called.
         :param dataloader_idx: Optional parameter if multiple state spaces are used for validation.
         """
         if batch_idx in self._seen_batch_indices[dataloader_idx]:
@@ -456,17 +456,16 @@ class ProbsStoreCallback(ValidationCallback):
             self.epoch += 1
 
 
-class ValueIterationValidation(ValidationCallback):
+class PolicyEvaluationValidation(ValidationCallback):
     """
-     Measure the policy by running value iteration under the current policy.
-     The value iteration algorithm will compute the discounted value for each state.
+     Evaluate the current policy by determining the value function induced by the policy
+     and comparing it to the optimal value function.
+     The policy evaluation algorithm will compute the discounted value for each state.
      During the epoch the transition-probabilities for each state in each validation space
         are collected using the probs_collector.
-     At the end of each validation epoch, the value iteration is executed.
-     The validation iteration will either run for num_iterations or until the change
-     is smaller than.
-    If you add the callback as a validation_hook to the Lightning adapter,
-     it computes value iterations on the same device used for model training
+    At the end of each validation epoch, the policy evaluation is executed.
+    The evaluation will either run for num_iterations or until the change is smaller than the threshold.
+    Adding the callback as a validation_hook to the LightningAdapter ensures policy evaluation runs on the same device as model training.
     """
 
     def __init__(
@@ -475,7 +474,7 @@ class ValueIterationValidation(ValidationCallback):
         discounted_optimal_values: Dict[int, torch.Tensor],
         probs_collector: ProbsCollector,
         gamma: float,
-        log_name: str = "exact_policy_validation",
+        log_name: str = "policy_evaluation",
         num_iterations: Optional[int] = 10,
         difference_threshold: Optional[float] = 0.01,
         dataloader_names: Optional[Dict[int, str]] = None,
@@ -488,10 +487,10 @@ class ValueIterationValidation(ValidationCallback):
             optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
         :param probs_collector: Potentially shared collector used to gather the probabilities.
         :param log_name: Name under which the metric results will be logged.
-        :param num_iterations: An optional upper limit for the value iterations.
+        :param num_iterations: An optional upper limit for the policy evaluation.
             (default 10)
         :param difference_threshold: Optional L1-norm difference threshold for early stopping.
-            Value iteration halts if the change in the value function is less than this threshold.
+            Policy evaluation halts if the change in the value function is less than this threshold.
             (default 0.01)
         Both num_iterations and difference_threshold can be used simultaneously, but at least one
         has to be specified.
@@ -522,8 +521,8 @@ class ValueIterationValidation(ValidationCallback):
 
             self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
 
-        self.message_passing: ValueIterationMessagePassing = (
-            ValueIterationMessagePassing(
+        self.message_passing: PolicyEvaluationMessagePassing = (
+            PolicyEvaluationMessagePassing(
                 gamma=gamma,
                 num_iterations=num_iterations,
                 difference_threshold=difference_threshold,
@@ -533,7 +532,7 @@ class ValueIterationValidation(ValidationCallback):
     def _apply(self, fn, recurse=True):
         """
         We need to transfer the graphs to device which are non-tensors, so we can't use register_buffer().
-        The functions to(..) or cuda(...) are actually never called because the callbacks
+        The functions to(...) or cuda(...) are actually never called because the callbacks
         are only nested within lightning_adapter so this seems to be the only way to
         catch the device transfer.
         """
@@ -546,12 +545,12 @@ class ValueIterationValidation(ValidationCallback):
         self, probs_list: List[torch.Tensor], dataloader_idx: int = 0
     ) -> torch.Tensor:
         """
-        Compute the value iteration by setting the correct probs and calling the
+        Compute the policy evaluation by setting the correct probs and calling the
         internal message passing module.
 
         :param probs_list: The sorted transition probabilities for each state.
             Len(probs_list) = space.get_states() for state space of dataloader_idx
-            probs_list[i].numel() == len(space.get_forward_transitions(space.get_states()[i])
+            probs_list[i].numel() == len(space.get_forward_transitions(space.get_states()[i]))
         :param dataloader_idx: Required if the validator is used with multiple spaces at the same time.
         :return: A one-dimensional tensor with the values under the provided probabilities.
         """
@@ -562,9 +561,8 @@ class ValueIterationValidation(ValidationCallback):
             flat_probs.shape == graph.edge_attr[:, 0].shape
         ), f"Found mismatching shapes {flat_probs.shape=} and {graph.edge_attr[:, 0].shape=}"
         assert (
-            flat_probs.device == graph.edge_attr.device,
-            f"Found missmatching devices {flat_probs.device=} and {graph.edge_attr.device=}",
-        )
+            flat_probs.device == graph.edge_attr.device
+        ), f"Found mismatching devices {flat_probs.device=} and {graph.edge_attr.device=}"
         self._graphs[dataloader_idx].edge_attr[:, 0] = flat_probs
         return self.message_passing(self._graphs[dataloader_idx])
 

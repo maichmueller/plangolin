@@ -4,8 +4,8 @@ import torch
 from fixtures import fresh_drive, medium_blocks
 
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
-from rgnet.rl.thundeRL.value_iteration import (
-    ValueIterationMessagePassing,
+from rgnet.rl.thundeRL.policy_evaluation import (
+    PolicyEvaluationMessagePassing,
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
 )
@@ -16,7 +16,7 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
 
     gamma = 0.9
 
-    value_iteration_mp = ValueIterationMessagePassing(
+    value_iteration_mp = PolicyEvaluationMessagePassing(
         gamma, num_iterations=100, difference_threshold=0.001
     )
 
@@ -45,14 +45,14 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
 
 def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
     """
-    Test that running value iteration on a policy that never reaches the goal will yield
+    Test that running policy evaluation on a policy that never reaches the goal will yield
     discounted infinite trajectory values for all non-goal states.
     """
     space, _, _ = medium_blocks
 
     gamma = 0.9
 
-    value_iteration_mp = ValueIterationMessagePassing(
+    value_iteration_mp = PolicyEvaluationMessagePassing(
         gamma, num_iterations=100, difference_threshold=0.01
     )
     goal_state = space.get_goal_states()[0]

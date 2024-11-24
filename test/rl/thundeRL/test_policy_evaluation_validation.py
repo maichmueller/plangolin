@@ -7,11 +7,11 @@ from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor
 
-from rgnet.rl.thundeRL.validation import ValueIterationValidation
+from rgnet.rl.thundeRL.validation import PolicyEvaluationValidation
 
 
-class TestValueIterationValidation:
-    device = request_cuda_for_test("TestValueIterationValidation")
+class TestPolicyEvaluationValidation:
+    device = request_cuda_for_test("TestPolicyEvaluationValidation")
 
     @pytest.fixture
     def mock_probs_collector(self):
@@ -28,7 +28,7 @@ class TestValueIterationValidation:
         space_that_not_be_used = mock(spec=mi.StateSpace, strict=True)
         medium_space = medium_blocks[0]
         spaces = [medium_space, space_that_not_be_used]
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=spaces,
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -45,7 +45,7 @@ class TestValueIterationValidation:
         self, medium_blocks, mock_probs_collector, optimal_values
     ):
         with pytest.raises(ValueError) as exc_info:
-            ValueIterationValidation(
+            PolicyEvaluationValidation(
                 spaces=medium_blocks[0],
                 discounted_optimal_values=optimal_values,
                 probs_collector=mock_probs_collector,
@@ -58,7 +58,7 @@ class TestValueIterationValidation:
         )
 
     def test_forward(self, medium_blocks, mock_probs_collector, optimal_values):
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=[medium_blocks[0]],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -79,7 +79,7 @@ class TestValueIterationValidation:
         self, medium_blocks, mock_probs_collector, optimal_values
     ):
         spaces = [medium_blocks[0]]
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=spaces,
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -97,7 +97,7 @@ class TestValueIterationValidation:
         self, medium_blocks, mock_probs_collector, optimal_values
     ):
         space = medium_blocks[0]
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=[space],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -136,7 +136,7 @@ class TestValueIterationValidation:
         """
         space = medium_blocks[0]
         spaces = [space]
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=spaces,
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -163,7 +163,7 @@ class TestValueIterationValidation:
             compute_values, ProbsCollector, Trainer and LightningAdapter.
         """
         spaces = [medium_blocks[0]]
-        validator = ValueIterationValidation(
+        validator = PolicyEvaluationValidation(
             spaces=spaces,
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
@@ -185,7 +185,7 @@ class TestValueIterationValidation:
         ]
         sorted_epoch_probs = {
             0: collected_probs,
-            # ProbsCollector could be shared. ValueIterationValidation has to filter!
+            # ProbsCollector could be shared. PolicyEvaluationValidation has to filter!
             1: None,
         }
         when(mock_probs_collector).sort_probs_on_epoch_end(...).thenReturn(

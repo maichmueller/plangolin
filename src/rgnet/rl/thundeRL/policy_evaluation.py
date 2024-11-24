@@ -59,7 +59,7 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     The reward for each transition is stored in edge_attr[:, 1].
     The node features are stored as usual in graph.x.
     The first dimension is the node value (starting with 0).
-    The second node feature dimension is one if the node is a goal state.
+    The second node feature dimension is one, if the node is a goal state.
     """
     pyg_graph = torch_geometric.utils.from_networkx(
         nx_state_space_graph, group_edge_attrs=["probs", "reward"]
@@ -76,12 +76,12 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     return pyg_graph
 
 
-# MessagePassing interface defines message_and_aggregate and edge_update which are
+# MessagePassing interface defines message_and_aggregate and edge_update, which are
 # marked abstract but should only be overwritten if needed.
 # noinspection PyMethodOverriding, PyAbstractClass
-class ValueIterationMessagePassing(MessagePassing):
+class PolicyEvaluationMessagePassing(MessagePassing):
     """
-    Implements Value Iteration as a Pytorch Geometric message passing function.
+    Implements Policy evaluation as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
 
     Assumes the input Data object has the following attributes:

@@ -304,7 +304,7 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
 
-        # ValueIterationValidation
+        # PolicyEvaluationValidation
         parser.link_arguments(
             source=("data_layout.input_data", "value_estimator.gamma"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
@@ -322,7 +322,7 @@ class ThundeRLCLI(LightningCLI):
             apply_on="parse",
         )
 
-        # ProbsStoreCallback, ValueIterationValidation
+        # ProbsStoreCallback, PolicyEvaluationValidation
         parser.link_arguments(
             source="agent",
             target="model.validation_hooks.init_args.probs_collector",
