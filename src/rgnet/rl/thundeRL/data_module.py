@@ -4,9 +4,11 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Dict, List
 
+import torch
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
+from torch_geometric.loader import ImbalancedSampler
 
 from experiments.rl.data_layout import InputData
 from rgnet.rl.thundeRL.collate import collate_fn
@@ -20,6 +22,7 @@ class ThundeRLDataModule(LightningDataModule):
         gamma: float,
         batch_size: int,
         parallel: bool = True,
+        balance_by_distance_to_goal: bool = True,
     ) -> None:
         super().__init__()
 
@@ -27,7 +30,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.gamma = gamma
         self.batch_size = batch_size
         self.parallel = parallel
-        self.dataset: Dataset | None = None  # late init in prepare_data()
+        self.balance_by_distance_to_goal = balance_by_distance_to_goal
+        self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: List[Dataset] = []
 
     def load_datasets(self, problem_paths: List[Path]) -> Dict[Path, Dataset]:
@@ -115,12 +119,22 @@ class ThundeRLDataModule(LightningDataModule):
                 datasets[val_problem] for val_problem in validation_prob_paths
             ]
 
+    def _imbalanced_sampler(self):
+        # We expect that every datapoint has a distance_to_goal attribute
+        class_tensor = torch.cat(
+            [dataset.distance_to_goal for dataset in self.dataset.datasets]
+        )
+        return ImbalancedSampler(dataset=class_tensor)
+
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         return DataLoader(
             self.dataset,
+            sampler=(
+                self._imbalanced_sampler() if self.balance_by_distance_to_goal else None
+            ),
             collate_fn=collate_fn,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=not self.balance_by_distance_to_goal,
             num_workers=6,
             persistent_workers=True,
         )

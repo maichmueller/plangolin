@@ -79,8 +79,8 @@ class FlashDrive(InMemoryDataset):
         encoder: HeteroGraphEncoder,
     ) -> List[HeteroData]:
         out = env.reset()
-        space = out[env.keys.instance][0]
-        nr_states = space.num_states()
+        space: mi.StateSpace = out[env.keys.instance][0]
+        nr_states: int = space.num_states()
         self._log_build_start(space)
         # Each data object represents one state
         batched_data: List[HeteroData] = [None] * nr_states
@@ -104,6 +104,9 @@ class FlashDrive(InMemoryDataset):
             data.done = done
             data.targets = tuple(
                 state_to_idx[transition.target] for transition in transitions
+            )
+            data.distance_to_goal = torch.tensor(
+                space.get_distance_to_goal_state(state), dtype=torch.long
             )
             batched_data[i] = data
         return batched_data
