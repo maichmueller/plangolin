@@ -477,6 +477,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         log_name: str = "policy_evaluation",
         num_iterations: Optional[int] = 10,
         difference_threshold: Optional[float] = 0.01,
+        log_aggregated_metric: bool = True,
         dataloader_names: Optional[Dict[int, str]] = None,
         only_run_for_dataloader: Optional[set[int]] = None,
     ) -> None:
@@ -492,6 +493,8 @@ class PolicyEvaluationValidation(ValidationCallback):
         :param difference_threshold: Optional L1-norm difference threshold for early stopping.
             Policy evaluation halts if the change in the value function is less than this threshold.
             (default 0.01)
+        :param log_aggregated_metric: Whether an additional metric val/<log_name> should be logged that averages
+            the result of all used validation problems. Simplifies `ModelCheckpoint` usage by simply specifying `monitor: val/policy_evaluation`.
         Both num_iterations and difference_threshold can be used simultaneously, but at least one
         has to be specified.
         """
@@ -501,6 +504,7 @@ class PolicyEvaluationValidation(ValidationCallback):
                 "Neither num_iterations nor difference_threshold was given."
                 "At least one is required to determine value-iteration limit."
             )
+        self.log_aggregated_metric = log_aggregated_metric
         self.probs_collector = probs_collector
         for space_idx, optimal_values in discounted_optimal_values.items():
             self.register_buffer(str(space_idx), optimal_values)
@@ -582,6 +586,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         self.probs_collector.reset()
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        losses: List[torch.Tensor] = []
         for (
             dataloader_idx,
             epoch_probs,
@@ -602,5 +607,13 @@ class PolicyEvaluationValidation(ValidationCallback):
             pl_module.log(
                 self.log_key(dataloader_idx),
                 loss,
+                on_epoch=True,
+            )
+            losses.append(loss)
+
+        if self.log_aggregated_metric:
+            pl_module.log(
+                f"val/{self.log_name}",
+                torch.stack(losses).view(-1).mean(),
                 on_epoch=True,
             )

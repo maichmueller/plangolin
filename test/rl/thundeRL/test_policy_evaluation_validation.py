@@ -34,6 +34,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
 
@@ -51,6 +52,7 @@ class TestPolicyEvaluationValidation:
                 probs_collector=mock_probs_collector,
                 gamma=0.99,
                 num_iterations=None,
+                log_aggregated_metric=False,
                 difference_threshold=None,
             )
         assert "Neither num_iterations nor difference_threshold was given" in str(
@@ -64,6 +66,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
         td = mock(spec=TensorDict)
@@ -85,6 +88,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=False,
         )
 
         mock_trainer = mock(strict=True)
@@ -103,6 +107,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
         num_transitions = [
@@ -142,6 +147,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
         num_transitions = [
@@ -169,6 +175,7 @@ class TestPolicyEvaluationValidation:
             probs_collector=mock_probs_collector,
             gamma=0.99,
             num_iterations=10,
+            log_aggregated_metric=True,
             only_run_for_dataloader={0},
         )
 
@@ -198,6 +205,9 @@ class TestPolicyEvaluationValidation:
 
         # The Expected mse_loss is 1.0, every value is one greater than optimal
         when(mock_pl_module).log(validator.log_key(0), 1.0, on_epoch=True)
+
+        # We only have one evaluation problem so the aggregated value should be the same.
+        when(mock_pl_module).log(f"val/{validator.log_name}", 1.0, on_epoch=True)
 
         validator.on_validation_epoch_end(mock_trainer, mock_pl_module)
 
