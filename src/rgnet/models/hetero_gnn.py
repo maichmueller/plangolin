@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional, Union
 
 import torch
 import torch_geometric as pyg
@@ -7,6 +7,28 @@ from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.typing import Adj
 
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
+
+
+def mlp(in_size: int, hidden_size: int, out_size: int, **kwargs):
+    return pyg.nn.MLP(
+        [in_size, hidden_size, out_size], norm=None, dropout=0.0, **kwargs
+    )
+
+
+class ResidualBlock(torch.nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        activation: Union[str, Callable, None] = None,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.hidden_size = hidden_size
+        self.mlp = mlp(hidden_size, hidden_size, hidden_size, act=activation)
+
+    def forward(self, input_tensor: torch.Tensor):
+        return input_tensor + self.mlp(input_tensor)
 
 
 class HeteroGNN(torch.nn.Module):
@@ -18,6 +40,7 @@ class HeteroGNN(torch.nn.Module):
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
+        activation: Union[str, Callable, None] = None,
     ):
         """
         :param hidden_size: The size of object embeddings.
@@ -25,6 +48,8 @@ class HeteroGNN(torch.nn.Module):
         :param aggr: Aggregation function to be used for message passing.
         :param obj_type_id: The type identifier of objects in the x_dict.
         :param arity_dict: A dictionary mapping predicate names to their arity.
+        :param activation: The activation function for all MLPs
+            (Default reLU).
         Creates one MLP for each predicate.
         Note that predicates as well as goal-predicates are meant.
         """
@@ -40,17 +65,18 @@ class HeteroGNN(torch.nn.Module):
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object.
-            pred: HeteroGNN.mlp(
-                hidden_size * arity, hidden_size * arity, hidden_size * arity
-            )
+            pred: ResidualBlock(hidden_size * arity, activation=activation)
             for pred, arity in arity_dict.items()
             if arity > 0
         }
 
         self.obj_to_atom = FanOutMP(mlp_dict, src_name=obj_type_id)
 
-        self.obj_update = HeteroGNN.mlp(
-            in_size=2 * hidden_size, hidden_size=2 * hidden_size, out_size=hidden_size
+        self.obj_update = mlp(
+            in_size=2 * hidden_size,
+            hidden_size=2 * hidden_size,
+            out_size=hidden_size,
+            act=activation,
         )
         # Messages from atoms flow to objects
         self.atom_to_obj = FanInMP(
@@ -106,10 +132,6 @@ class HeteroGNN(torch.nn.Module):
         # Aggregate all object embeddings into one aggregated embedding
         return pyg.nn.global_add_pool(obj_emb, batch)  # shape [hidden, 1]
 
-    @staticmethod
-    def mlp(in_size: int, hidden_size: int, out_size: int):
-        return pyg.nn.MLP([in_size, hidden_size, out_size], norm=None, dropout=0.0)
-
 
 class ValueHeteroGNN(HeteroGNN):
 
@@ -120,10 +142,17 @@ class ValueHeteroGNN(HeteroGNN):
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
-        **kwargs
+        activation: Union[str, Callable, None] = None,
     ):
-        super().__init__(hidden_size, num_layer, aggr, obj_type_id, arity_dict)
-        self.readout = HeteroGNN.mlp(hidden_size, 2 * hidden_size, 1)
+        super().__init__(
+            hidden_size,
+            num_layer,
+            aggr,
+            obj_type_id,
+            arity_dict,
+            activation=activation,
+        )
+        self.readout = mlp(hidden_size, 2 * hidden_size, 1, act=activation)
 
     def forward(
         self,
