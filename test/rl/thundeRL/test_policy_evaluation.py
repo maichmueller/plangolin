@@ -1,5 +1,7 @@
+import itertools
 from typing import List
 
+import pymimir as mi
 import torch
 from fixtures import fresh_drive, medium_blocks
 
@@ -9,6 +11,39 @@ from rgnet.rl.thundeRL.policy_evaluation import (
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
 )
+
+
+def _placeholder_probs(space: mi.StateSpace):
+    # Contains 0...(|Edges| - 1) as probabilities
+    it = itertools.count()
+    return [
+        torch.Tensor(
+            [next(it) for _ in range(len(space.get_forward_transitions(state)))],
+        )
+        for state in space.get_states()
+    ]
+
+
+def test_build_mdp_graph(medium_blocks):
+    space: mi.StateSpace = medium_blocks[0]
+    nx_graph = build_mdp_graph_with_prob(space, _placeholder_probs(space))
+    assert all(
+        all(
+            out_edge[0] == space.get_unique_id(s)
+            and out_edge[1] == space.get_unique_id(out_transition.target)
+            for out_edge, out_transition in zip(
+                nx_graph.out_edges(nbunch=[i]), space.get_forward_transitions(s)
+            )
+        )
+        for i, s in enumerate(space.get_states())
+    )
+
+
+def test_mdp_graph_as_pyg_data(medium_blocks):
+    space: mi.StateSpace = medium_blocks[0]
+    probs_list = _placeholder_probs(space)
+    pyg_graph = mdp_graph_as_pyg_data(build_mdp_graph_with_prob(space, probs_list))
+    assert (pyg_graph.edge_attr[:, 0] == torch.cat(probs_list)).all()
 
 
 def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
