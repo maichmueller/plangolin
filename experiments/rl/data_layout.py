@@ -158,20 +158,24 @@ class InputData:
         # We load state space lazily as it might be quite expensive
         self._spaces: Optional[List[mi.StateSpace]] = None
         self._validation_spaces: Optional[List[mi.StateSpace]] = None
-        self.space_by_problem: dict[mi.Problem, mi.StateSpace] = dict()
+        self._space_by_problem: dict[mi.Problem, mi.StateSpace] = dict()
 
-    def _get_or_load_space(self, problem: mi.Problem) -> mi.StateSpace:
-        if problem not in self.space_by_problem:
-            self.space_by_problem[problem] = mi.StateSpace.new(
-                problem, mi.GroundedSuccessorGenerator(problem)
+    def get_or_load_space(
+        self, problem: mi.Problem, max_expanded: int | None = None
+    ) -> mi.StateSpace:
+        if problem not in self._space_by_problem:
+            self._space_by_problem[problem] = mi.StateSpace.new(
+                problem,
+                mi.GroundedSuccessorGenerator(problem),
+                max_expanded or 1_000_000,
             )
-        return self.space_by_problem.get(problem, None)
+        return self._space_by_problem.get(problem, None)
 
     @property
     def spaces(self):
         if self._spaces is None:
             self._spaces = [
-                self._get_or_load_space(problem) for problem in self.problems
+                self.get_or_load_space(problem) for problem in self.problems
             ]
         return self._spaces
 
@@ -183,7 +187,7 @@ class InputData:
             )
         if self._validation_spaces is None:
             self._validation_spaces = [
-                self._get_or_load_space(problem) for problem in self.validation_problems
+                self.get_or_load_space(problem) for problem in self.validation_problems
             ]
         return self._validation_spaces
 

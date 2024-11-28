@@ -222,7 +222,7 @@ def run(
     checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     # Lightning prioritizes the logger-save dir over its own default_dir for
-    # checkpoints. Therefore, we have to use this callback (which has top priority).
+    # _checkpoints. Therefore, we have to use this callback (which has top priority).
     checkpoint_callback = lightning.pytorch.callbacks.ModelCheckpoint(
         dirpath=checkpoint_path
     )
