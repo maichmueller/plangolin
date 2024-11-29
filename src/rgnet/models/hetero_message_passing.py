@@ -1,13 +1,18 @@
 import abc
-from typing import Any, Dict, List, Optional, Union
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch_geometric as pyg
+import torch_geometric.nn
 from torch import Tensor
 from torch_geometric.nn import Aggregation, SimpleConv
 from torch_geometric.nn.conv.hetero_conv import group
 from torch_geometric.nn.module_dict import ModuleDict
+from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
+
+from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
 
 
 class HeteroRouting(torch.nn.Module):
@@ -18,7 +23,15 @@ class HeteroRouting(torch.nn.Module):
 
     def __init__(self, aggr: Optional[str | Aggregation] = None) -> None:
         super().__init__()
-        self.aggr = aggr
+        if isinstance(aggr, str):
+            try:
+                self.aggr = aggregation_resolver(query=aggr)
+            except ValueError:
+                if aggr != "cat" and aggr != "stack":
+                    logging.warning("Failed to resolve aggregation: " + aggr)
+                self.aggr = aggr
+        else:
+            self.aggr = aggr
 
     @abc.abstractmethod
     def _accept_edge(self, src: str, rel: str, dst: str) -> bool:
@@ -127,9 +140,9 @@ class FanInMP(HeteroRouting):
         self,
         hidden_size: int,
         dst_name: str,
-        aggr: Optional[Union[str, Aggregation]] = None,
+        aggr: str | torch_geometric.nn.Aggregation | None = None,
     ) -> None:
-        aggr = aggr or "sum"
+        aggr = aggr or LogSumExpAggregation()
         super().__init__(aggr)
         self.select = SelectMP(hidden_size)
         self.dst_name = dst_name
@@ -139,6 +152,19 @@ class FanInMP(HeteroRouting):
 
     def _internal_forward(self, x, edges_index, edge_type):
         return self.select(x, edges_index, int(edge_type[1]))
+
+    def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+        aggregated = {}
+        for dst, values in out_dict.items():
+            if dst == self.dst_name:
+                inputs, indices, dim_sizes = zip(*values)
+                flat_inputs = torch.cat(inputs)
+                flat_indices = torch.cat(indices)
+                out = self.aggr(
+                    x=flat_inputs, index=flat_indices, dim=0, dim_size=dim_sizes[0]
+                )
+                aggregated[dst] = out
+        return aggregated
 
 
 class SelectMP(pyg.nn.MessagePassing):
@@ -169,3 +195,12 @@ class SelectMP(pyg.nn.MessagePassing):
         #               split[self.position]
         sliced = x_j[:, position * self.hidden : (position + 1) * self.hidden]
         return sliced
+
+    def aggregate(
+        self,
+        inputs: Tensor,
+        index: Tensor,
+        ptr: Optional[Tensor] = None,
+        dim_size: Optional[int] = None,
+    ) -> Tuple[Tensor, Tensor, int]:
+        return inputs, index, dim_size

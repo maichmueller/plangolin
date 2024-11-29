@@ -10,9 +10,9 @@ import torch_geometric as pyg
 from tensordict import NestedKey, NonTensorStack, TensorDict
 from tensordict.nn import ProbabilisticTensorDictModule, TensorDictModule
 from torch import Tensor
-from torch_geometric.nn.models import MLP
 from torchrl.modules.tensordict_module import ValueOperator
 
+from rgnet.models.hetero_gnn import simple_mlp
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import (
@@ -93,39 +93,30 @@ class ActorCritic(torch.nn.Module):
 
         # Input: object embedding of current state and next state, Output: 2 + hidden size
         # -> Two Linear layer with Mish activation
-        self.actor_objects_net = MLP(
-            [
-                2 * self._hidden_size,
-                2 * self._hidden_size,
-                2 * self._hidden_size,
-            ],
-            dropout=0.0,
-            norm=None,
-            act=activation,
+        self.actor_objects_net = simple_mlp(
+            in_size=2 * self._hidden_size,
+            hidden_size=2 * self._hidden_size,
+            out_size=2 * self._hidden_size,
+            activation=activation,
         )
 
         # Input: 2 * hidden size, Output: single scalar "logits"
         # -> Three Linear layer with one Mish activation
-        self.actor_net_probs = MLP(
-            [2 * self._hidden_size, 2 * self._hidden_size, 2 * self._hidden_size, 1],
-            dropout=0.0,
-            norm=None,
-            act=activation,
+        self.actor_net_probs = simple_mlp(
+            in_size=2 * self._hidden_size,
+            hidden_size=2 * self._hidden_size,
+            out_size=1,
+            activation=activation,
         )
 
         # The ValueOperator is the critic of the actor-critic approach.
         # provided with the embeddings of the current state it estimates the value.
         if value_net is None:
-            value_net = MLP(
-                channel_list=[
-                    self._hidden_size,
-                    self._hidden_size,
-                    self._hidden_size,
-                    1,
-                ],
-                norm=None,
-                dropout=0.0,
-                act=activation,
+            value_net = simple_mlp(
+                in_size=hidden_size,
+                hidden_size=hidden_size,
+                out_size=1,
+                activation=activation,
             )
         self.object_pooling = ObjectPoolingModule("add")
         self.value_operator = ValueOperator(

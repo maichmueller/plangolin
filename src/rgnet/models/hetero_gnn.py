@@ -6,22 +6,29 @@ import torch
 import torch_geometric as pyg
 from torch import Tensor
 from torch_geometric.nn.aggr import SoftmaxAggregation
+from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
+from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
-def simple_mlp(in_size: int, hidden_size: int, out_size: int, **kwargs):
-    if "act" not in kwargs:
-        kwargs["act"] = "mish"
-    channel_list = [in_size, hidden_size, hidden_size]
+def simple_mlp(
+    in_size: int, hidden_size: int, out_size: int, activation: str | None = None
+):
+    activation = activation or "mish"
+    layer = [
+        torch.nn.Linear(in_size, hidden_size),
+        activation_resolver(activation),
+        torch.nn.Linear(hidden_size, hidden_size),
+    ]
     if out_size != hidden_size:
-        channel_list.append(out_size)
+        layer.append(torch.nn.Linear(hidden_size, out_size))
 
-    return pyg.nn.MLP(channel_list, norm=None, dropout=0.0, **kwargs)
+    return torch.nn.Sequential(*layer)
 
 
 class ResidualBlock(torch.nn.Module):
@@ -34,7 +41,9 @@ class ResidualBlock(torch.nn.Module):
     ):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
-        self.mlp = simple_mlp(hidden_size, hidden_size, hidden_size, act=activation)
+        self.mlp = simple_mlp(
+            hidden_size, hidden_size, hidden_size, activation=activation
+        )
 
     def forward(self, input_tensor: torch.Tensor):
         return input_tensor + self.mlp(input_tensor)
@@ -67,8 +76,11 @@ class HeteroGNN(PyGHeteroModule):
         self.hidden_size: int = hidden_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
-        if aggr == "softmax":
-            aggr = SoftmaxAggregation()
+        if isinstance(aggr, str) or aggr is None:
+            if aggr is None or aggr.lower() == "logsumexp":
+                aggr = LogSumExpAggregation()
+            elif aggr.lower() == "softmax":
+                aggr = SoftmaxAggregation()
 
         mlp_dict = {
             # One MLP per predicate (goal-predicates included)
@@ -86,13 +98,11 @@ class HeteroGNN(PyGHeteroModule):
             in_size=2 * hidden_size,
             hidden_size=2 * hidden_size,
             out_size=hidden_size,
-            act=activation,
+            activation=activation,
         )
         # Messages from atoms flow to objects
         self.atom_to_obj = FanInMP(
-            hidden_size=hidden_size,
-            dst_name=obj_type_id,
-            aggr=aggr,
+            hidden_size=hidden_size, dst_name=obj_type_id, aggr=aggr
         )
 
     def encoding_layer(self, x_dict: Dict[str, Tensor]):
@@ -114,9 +124,10 @@ class HeteroGNN(PyGHeteroModule):
         # Distribute the atom embeddings back to the corresponding objects.
         out = self.atom_to_obj(x_dict, edge_index_dict)
         # Update the object embeddings using a shared update-MLP.
-        obj_emb = torch.cat([x_dict[self.obj_type_id], out[self.obj_type_id]], dim=1)
+        previous_obj_emb = x_dict[self.obj_type_id]
+        obj_emb = torch.cat([previous_obj_emb, out[self.obj_type_id]], dim=1)
         obj_emb = self.obj_update(obj_emb)
-        x_dict[self.obj_type_id] = obj_emb
+        x_dict[self.obj_type_id] = previous_obj_emb + obj_emb
 
     def forward(
         self,
@@ -162,9 +173,9 @@ class ValueHeteroGNN(HeteroGNN):
         self,
         hidden_size: int,
         num_layer: int,
-        aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
+        aggr: Optional[str | pyg.nn.aggr.Aggregation] = None,
         activation: Union[str, Callable, None] = None,
         pooling: Union[str, Callable[[Tensor, Tensor], Tensor]] = "add",
     ):
@@ -176,7 +187,9 @@ class ValueHeteroGNN(HeteroGNN):
             arity_dict,
             activation=activation,
         )
-        self.readout = simple_mlp(hidden_size, 2 * hidden_size, 1, act=activation)
+        self.readout = simple_mlp(
+            hidden_size, 2 * hidden_size, 1, activation=activation
+        )
         self.pooling = ObjectPoolingModule(pooling)
 
     def forward(
