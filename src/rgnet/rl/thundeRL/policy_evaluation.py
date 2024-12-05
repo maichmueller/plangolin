@@ -95,7 +95,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
     def __init__(
         self,
         gamma: float,
-        num_iterations: int = 1000,
+        num_iterations: int = 1_000,
         difference_threshold: float = 0.001,
     ):
         super().__init__(aggr="sum", node_dim=-1, flow="target_to_source")

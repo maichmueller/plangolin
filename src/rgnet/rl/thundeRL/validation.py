@@ -475,8 +475,8 @@ class PolicyEvaluationValidation(ValidationCallback):
         probs_collector: ProbsCollector,
         gamma: float,
         log_name: str = "policy_evaluation",
-        num_iterations: Optional[int] = 10,
-        difference_threshold: Optional[float] = 0.01,
+        num_iterations: Optional[int] = 1_000,
+        difference_threshold: Optional[float] = 0.001,
         log_aggregated_metric: bool = True,
         dataloader_names: Optional[Dict[int, str]] = None,
         only_run_for_dataloader: Optional[set[int]] = None,
@@ -489,10 +489,10 @@ class PolicyEvaluationValidation(ValidationCallback):
         :param probs_collector: Potentially shared collector used to gather the probabilities.
         :param log_name: Name under which the metric results will be logged.
         :param num_iterations: An optional upper limit for the policy evaluation.
-            (default 10)
+            (default 1_000)
         :param difference_threshold: Optional L1-norm difference threshold for early stopping.
             Policy evaluation halts if the change in the value function is less than this threshold.
-            (default 0.01)
+            (default 0.001)
         :param log_aggregated_metric: Whether an additional metric val/<log_name> should be logged that averages
             the result of all used validation problems. Simplifies `ModelCheckpoint` usage by simply specifying `monitor: val/policy_evaluation`.
         Both num_iterations and difference_threshold can be used simultaneously, but at least one
