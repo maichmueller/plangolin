@@ -4,6 +4,7 @@ import dataclasses
 import datetime
 import itertools
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
@@ -11,8 +12,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 import pymimir as mi
 from pymimir import Problem
 
-from experiments import ROOT_DIR
-from experiments.plan import Plan, parse_plan
+from rgnet.utils.plan import Plan, parse_fd_plan
 
 
 @dataclasses.dataclass
@@ -22,20 +22,22 @@ class OutputData:
 
     def __init__(
         self,
-        out_dir: Path = Path("out"),
+        out_dir: Path | str = Path("out"),
         experiment_name: str | None = None,
         ensure_new_out_dir: bool = False,
         root_dir: Path | None = None,
         domain_name: str | None = None,
     ):
         super().__init__()
-        if root_dir:
+        out_dir = Path(out_dir)
+        if not out_dir.is_absolute():
+            if root_dir is None:
+                logging.info(
+                    f"The root directory is not specified and a relative path is given for '{out_dir=}'. "
+                    f"Defaulting to relative the current working directory: '{os.getcwd() / out_dir}'."
+                )
             out_dir = root_dir / out_dir
-        elif out_dir == Path("out"):
-            warnings.warn(
-                "If the root directory is not specified an absolut path for"
-                " 'directory' should be specified."
-            )
+
         if experiment_name is None:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
 
@@ -96,7 +98,7 @@ class InputData:
         validation_instances: Optional[List[str]] | Literal["all"] = None,
         test_instances: Optional[List[str]] | Literal["all"] = None,
         # if specified pddl_domains_dir and dataset_dir will be relative to root_dir
-        root_dir: Optional[Path] = ROOT_DIR,
+        root_dir: Optional[Path] = None,
     ):
         """
         Manages the data layout for input data to RL experiments.
@@ -112,8 +114,8 @@ class InputData:
         Specifying validation or test instances is optional.
 
         :param domain_name: The name of the domain, used to construct the full pddl_domains directory.
-        :param pddl_domains_dir: path to the pddl_resources (default: rgnet/data/pddl_domains)
-        :param dataset_dir: where to store datasets (default: rgnet/data/flash_drives)
+        :param pddl_domains_dir: path to the pddl_resources (default: project/data/pddl_domains)
+        :param dataset_dir: where to store datasets (default: project/data/flash_drives)
         :param train_subdir: the name of the subdirectory where the problem pddl files are located. (default: "train")
         :param eval_subdir: the subdirectory where the validation problem files are located. (default: "train")
         :param test_subdir: the subdirectory where the testing problem files are located. (default: "train")
@@ -342,5 +344,5 @@ class InputData:
                     f"\tCandidates: {problem_by_stem.keys()}"
                 )
                 continue
-            problem_to_plan[problem] = parse_plan(plan_file, problem)
+            problem_to_plan[problem] = parse_fd_plan(plan_file, problem)
         return problem_to_plan

@@ -1,9 +1,9 @@
 import itertools
+from test.fixtures import fresh_drive, medium_blocks
 from typing import List
 
 import pymimir as mi
 import torch
-from fixtures import fresh_drive, medium_blocks
 
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
 from rgnet.rl.thundeRL.policy_evaluation import (

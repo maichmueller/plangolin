@@ -1,3 +1,4 @@
+from .cli_config import ThundeRLCLI
 from .collate import collate_fn
 from .data_module import ThundeRLDataModule
 from .flash_drive import FlashDrive

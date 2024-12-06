@@ -40,13 +40,13 @@ from rgnet.rl.envs import (
     PlanningEnvironment,
     SuccessorEnvironment,
 )
-from rgnet.rl.envs.manual_transition import MTransition
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, non_tensor_to_list
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.policy_evaluation import (
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
 )
+from rgnet.utils.manual_transition import MTransition
 
 
 def pretty_print_transitions(transitions: List[mi.Transition]):

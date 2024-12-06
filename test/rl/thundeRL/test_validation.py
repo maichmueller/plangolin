@@ -1,11 +1,14 @@
-from test.fixtures import expanded_state_space_env, medium_blocks  # noqa: F401
+from test.fixtures import (  # noqa: F401
+    expanded_state_space_env,
+    medium_blocks,
+    request_cuda_for_test,
+)
 from typing import List
 
 import lightning
 import mockito
 import pytest
 import torch
-from fixtures import request_cuda_for_test
 from tensordict import LazyStackedTensorDict, TensorDict
 from torchrl.modules import ValueOperator
 

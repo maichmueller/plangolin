@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import logging
-import pathlib
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 import networkx as nx
@@ -15,10 +17,6 @@ def get_colors(graph: nx.Graph):
 
 def get_device_cuda_if_possible() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def path_of_str(path: pathlib.Path | str) -> pathlib.Path:
-    return path if isinstance(path, pathlib.Path) else pathlib.Path(path)
 
 
 def time_delta_now(previous: float) -> str:
@@ -44,7 +42,7 @@ def ftime(seconds: float) -> str:
 
 
 def import_all_from(
-    directory: pathlib.Path | str, domain_name: str = "domain"
+    directory: Path | str, domain_name: str = "domain"
 ) -> Tuple[mi.Domain, List[mi.Problem]]:
     """
     Import all pddl-problems and their domain from a directory.
@@ -52,7 +50,7 @@ def import_all_from(
     :param domain_name: The exact file name (without suffix) of the domain-file
     :return: A tuple of domain and list of problems.
     """
-    directory = path_of_str(directory)
+    directory = Path(directory)
     assert directory.is_dir(), str(directory)
     domain_file = (directory / domain_name).with_suffix(".pddl")
     if not domain_file.exists():
@@ -62,9 +60,9 @@ def import_all_from(
 
 
 def import_problems(
-    directory: pathlib.Path | str, domain: mi.Domain, domain_name: Optional[str] = None
+    directory: Path | str, domain: mi.Domain, domain_name: Optional[str] = None
 ) -> List[mi.Problem]:
-    directory: pathlib.Path = path_of_str(directory)
+    directory = Path(directory)
     assert directory.is_dir(), str(directory)
     domain_name = domain.name if domain_name is None else domain_name
 

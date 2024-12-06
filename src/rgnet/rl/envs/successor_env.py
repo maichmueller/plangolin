@@ -3,8 +3,8 @@ from typing import List, Optional, Tuple
 import pymimir as mi
 import torch
 
-from rgnet.rl.envs.manual_transition import MTransition
 from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.utils.manual_transition import MTransition
 
 
 class SuccessorEnvironment(

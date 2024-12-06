@@ -1,9 +1,11 @@
+#!/usr/bin/env python
+
 import logging
 
 import torch
 import torch.nn
 
-from experiments.rl.thundeRL.cli_config import ThundeRLCLI
+from rgnet.rl.thundeRL.cli_config import ThundeRLCLI
 
 
 def cli_main():
@@ -14,6 +16,18 @@ def cli_main():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--conda", default=None)
+    args = parser.parse_args()
+
+    if args.conda is not None:
+        import subprocess
+
+        subprocess.run(["conda", "activate", args.conda])
+
     # https://discuss.pytorch.org/t/training-fails-due-to-memory-exhaustion-when-running-in-a-python-multiprocessing-process/202773/2
     torch.multiprocessing.set_start_method("fork", force=True)
+
     cli_main()

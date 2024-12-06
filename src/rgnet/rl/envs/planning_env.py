@@ -17,8 +17,8 @@ from torchrl.data import (
 )
 from torchrl.envs import EnvBase
 
-from rgnet.rl.envs.manual_transition import MTransition
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
+from rgnet.utils.manual_transition import MTransition
 
 InstanceType = TypeVar("InstanceType")
 

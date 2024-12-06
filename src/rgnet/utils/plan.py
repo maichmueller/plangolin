@@ -1,16 +1,18 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import pymimir as mi
 
-from rgnet.rl.envs.manual_transition import MTransition
+from .manual_transition import MTransition
 
 
 @dataclass
 class Plan:
-    transitions: List[mi.Transition]
+    transitions: Sequence[mi.Transition]
     cost: float = field(init=False)  # derived from action_sequence
     problem: mi.Problem
 
@@ -18,7 +20,7 @@ class Plan:
         self.cost = sum(t.action.cost for t in self.transitions)
 
 
-def parse_plan(path: Path, problem: mi.Problem) -> Plan:
+def parse_fd_plan(path: Path, problem: mi.Problem) -> Plan:
     """
     Tries to parse plan-file by matching actions to applicable actions in the problem.
     :param path: Path to the plan file.

@@ -1,8 +1,9 @@
+from test.fixtures import medium_blocks, request_cuda_for_test
+
 import mockito
 import pymimir as mi
 import pytest
 import torch
-from fixtures import medium_blocks, request_cuda_for_test
 from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor

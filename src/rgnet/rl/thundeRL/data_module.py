@@ -10,7 +10,7 @@ from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
-from experiments.rl.data_layout import InputData
+from rgnet.rl.data_layout import InputData
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
