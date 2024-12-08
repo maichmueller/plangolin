@@ -3,7 +3,7 @@ from enum import StrEnum, auto
 
 import torch
 
-from experiments.rl.data_layout import InputData
+from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import MultiInstanceStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset, WeightedRandomReset
 

@@ -4,9 +4,9 @@ from enum import StrEnum, auto
 import wandb
 from torchrl.record.loggers import Logger
 
-from experiments.rl.configs.agent import Agent
-from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
-from experiments.rl.data_layout import OutputData
+from rgnet.rl.configs.agent import Agent
+from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
+from rgnet.rl.data_layout import OutputData
 
 
 class Parameter(StrEnum):

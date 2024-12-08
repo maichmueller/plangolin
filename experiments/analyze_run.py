@@ -13,12 +13,12 @@ import torch_geometric as pyg
 from torch import Tensor
 
 from experiments.data_layout import DataLayout, DatasetType
-from experiments.plan import parse_plan
 from experiments.policy import Policy, ValuePolicy
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import LightningHetero
 from rgnet.supervised import MultiInstanceSupervisedSet
 from rgnet.utils import get_device_cuda_if_possible
+from rgnet.utils.plan import parse_fd_plan
 
 
 def plot_prediction_for_label(pred_for_label: Dict[int, List[Tensor]], label):
@@ -154,7 +154,7 @@ class CompletedExperiment:
         for plan_file in plans:
             problem_path = self.data_layout.problem_for_plan(plan_file, dataset_type)
             problem = mi.ProblemParser(str(problem_path.absolute())).parse(self.domain)
-            self.plan = parse_plan(plan_file, problem)
+            self.plan = parse_fd_plan(plan_file, problem)
             self.self_plan = self.plan
             opt_plan, opt_cost = self.self_plan
             result = policy.run(problem, max_steps)

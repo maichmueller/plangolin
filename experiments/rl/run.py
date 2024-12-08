@@ -4,21 +4,21 @@ from datetime import datetime
 
 import torch
 
-from experiments.rl.configs import agent as agent_module
-from experiments.rl.configs import data_resolver as data_resolver_module
-from experiments.rl.configs import embedding as embedding_module
-from experiments.rl.configs import environment
-from experiments.rl.configs import logger as logger_module
-from experiments.rl.configs import trainer as trainer_module
-from experiments.rl.configs import value_estimator
-from experiments.rl.configs.agent import Agent
-from experiments.rl.data_layout import OutputData
 from rgnet.rl import (
     ActorCritic,
     EmbeddingModule,
     EmbeddingTransform,
     NonTensorTransformedEnv,
 )
+from rgnet.rl.configs import agent as agent_module
+from rgnet.rl.configs import data_resolver as data_resolver_module
+from rgnet.rl.configs import embedding as embedding_module
+from rgnet.rl.configs import environment
+from rgnet.rl.configs import logger as logger_module
+from rgnet.rl.configs import trainer as trainer_module
+from rgnet.rl.configs import value_estimator
+from rgnet.rl.configs.agent import Agent
+from rgnet.rl.data_layout import OutputData
 
 
 def create_args():

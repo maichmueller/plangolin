@@ -8,9 +8,6 @@ from tensordict.nn import TensorDictModule, TensorDictSequential
 from torch_geometric.nn import MLP
 from torchrl.modules import ValueOperator
 
-from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
-from experiments.rl.configs.value_estimator import Parameter as ValueEstimatorParameter
-from experiments.rl.data_layout import InputData
 from rgnet.rl import (
     ActorCritic,
     ActorCriticLoss,
@@ -20,6 +17,9 @@ from rgnet.rl import (
     EpsilonAnnealing,
 )
 from rgnet.rl.agents import OptimalPolicy, ValueModule
+from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
+from rgnet.rl.configs.value_estimator import Parameter as ValueEstimatorParameter
+from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.losses.all_actions_ac_loss import AllActionsLoss

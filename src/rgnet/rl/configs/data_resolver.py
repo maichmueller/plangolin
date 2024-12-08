@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from enum import StrEnum, auto
 from pathlib import Path
 
-from experiments.rl.data_layout import InputData, OutputData
+from rgnet.rl.data_layout import InputData, OutputData
 
 project_root_dir = Path(__file__).parent.parent.parent
 

@@ -6,9 +6,9 @@ from typing import Optional
 import torch
 import torch_geometric.nn.aggr
 
-from experiments.rl.data_layout import InputData
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import EmbeddingModule
+from rgnet.rl.data_layout import InputData
 from rgnet.rl.embedding import build_embedding_and_gnn
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
 

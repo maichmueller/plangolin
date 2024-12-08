@@ -10,10 +10,10 @@ from torch.optim import SGD, Adam
 from torchrl.envs import EnvBase
 from torchrl.record.loggers import Logger
 
-from experiments.rl.configs.agent import Agent
-from experiments.rl.configs.value_estimator import ARGS_BOOL_TYPE
-from experiments.rl.data_layout import InputData
 from rgnet.rl import RolloutCollector
+from rgnet.rl.configs.agent import Agent
+from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
+from rgnet.rl.data_layout import InputData
 from rgnet.rl.optimality_utils import optimal_discounted_values
 from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 

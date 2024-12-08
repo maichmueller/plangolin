@@ -25,8 +25,6 @@ from torchrl.envs.utils import set_exploration_type
 from tqdm import tqdm
 
 from experiments.plan import Plan
-from experiments.rl.data_layout import InputData, OutputData
-from experiments.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl import (
@@ -35,12 +33,14 @@ from rgnet.rl import (
     EmbeddingTransform,
     NonTensorTransformedEnv,
 )
+from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.envs import (
     ExpandedStateSpaceEnv,
     PlanningEnvironment,
     SuccessorEnvironment,
 )
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, non_tensor_to_list
+from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.policy_evaluation import (
     build_mdp_graph_with_prob,
