@@ -21,7 +21,7 @@ class ResidualBlock(torch.nn.Module):
         hidden_size: int,
         activation: Union[str, Callable, None] = None,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
@@ -40,6 +40,8 @@ class HeteroGNN(torch.nn.Module):
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
+        pool: Optional[Union[str, Callable[[Tensor, Tensor], Tensor]]] = None,
+        split_embeddings: bool = False,
         activation: Union[str, Callable, None] = None,
     ):
         """
@@ -58,6 +60,19 @@ class HeteroGNN(torch.nn.Module):
         self.hidden_size: int = hidden_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
+        self.split_embeddings: bool = split_embeddings
+        if pool is not None and isinstance(pool, str) and pool:
+            if pool == "add":
+                pool = pyg.nn.global_add_pool
+            elif pool == "mean":
+                pool = pyg.nn.global_mean_pool
+            elif pool == "max":
+                pool = pyg.nn.global_max_pool
+            else:
+                raise ValueError(
+                    f"Unknown pooling function: {pool}. Choose from [add, mean, max]."
+                )
+        self.pool = pool
         if aggr == "softmax":
             aggr = SoftmaxAggregation()
 
@@ -129,8 +144,29 @@ class HeteroGNN(torch.nn.Module):
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
-        # Aggregate all object embeddings into one aggregated embedding
-        return pyg.nn.global_add_pool(obj_emb, batch)  # shape [hidden, 1]
+        if self.pool is not None:
+            # Aggregate all object embeddings into one aggregated embedding
+            return self.pool(obj_emb, batch)  # shape [hidden, 1]
+        if self.split_embeddings:
+            return self.split_object_embeddings(obj_emb, batch)
+        else:
+            return obj_emb
+
+    @staticmethod
+    def split_object_embeddings(object_embeddings: torch.Tensor, batch_indices: Tensor):
+        """
+        Splits object embeddings by batch indices into embedding tensors for each batch element.
+
+        Example
+        -------
+        Batch object embeddings of shape (N, D) are split into a list of tensors of shape (N_i, D) where N_i is the
+        number of objects in batch element i and hence sum_i N_i = N.
+        """
+        # compute sizes of each batch
+        unique_batches, batch_sizes = torch.unique(batch_indices, return_counts=True)
+        # split embeddings by batch sizes
+        grouped_embeddings = torch.split(object_embeddings, batch_sizes.tolist())
+        return grouped_embeddings
 
 
 class ValueHeteroGNN(HeteroGNN):
