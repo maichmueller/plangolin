@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import lightning
 import torch
@@ -10,6 +10,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.objectives import LossModule
 
 from rgnet.models import HeteroGNN
+from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
@@ -17,21 +18,36 @@ from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
+def _unpack_hetero_data(
+    data: Batch,
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    return data.x_dict, data.edge_index_dict, data.batch_dict
+
+
+def _unpack_homo_data(data: Batch) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return data.x, data.edge_index, data.batch
+
+
 class LightningAdapter(lightning.LightningModule):
 
     def __init__(
         self,
-        gnn: HeteroGNN,
+        gnn: Union[PyGModule, PyGHeteroModule],
         actor_critic: ActorCritic,
         loss: LossModule,
         optim: torch.optim.Optimizer,
         validation_hooks: Optional[List[ValidationCallback]] = None,
     ) -> None:
         super().__init__()
-        assert isinstance(gnn, HeteroGNN)
         assert isinstance(actor_critic, ActorCritic)
         assert isinstance(loss, LossModule)
         assert isinstance(optim, torch.optim.Optimizer)
+        if isinstance(gnn, PyGHeteroModule):
+            self._unpack_data = _unpack_hetero_data
+        elif isinstance(gnn, PyGModule):
+            self._unpack_data = _unpack_homo_data
+        else:
+            raise ValueError(f"Unknown GNN type: {gnn}")
         self.gnn = gnn
         self.actor_critic = actor_critic
         self.loss = loss
@@ -170,7 +186,9 @@ class LightningAdapter(lightning.LightningModule):
                 if optional_metrics is None:
                     continue
                 for key, value in optional_metrics.items():
-                    self.log("val/" + key, value, batch_size=batch_tuple[0].batch_size)
+                    self.log(
+                        "validation/" + key, value, batch_size=batch_tuple[0].batch_size
+                    )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim

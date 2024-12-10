@@ -2,7 +2,7 @@ import logging
 import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Type
 
 import torch
 from lightning import LightningDataModule
@@ -10,6 +10,7 @@ from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
+from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
@@ -21,6 +22,9 @@ class ThundeRLDataModule(LightningDataModule):
         input_data: InputData,
         gamma: float,
         batch_size: int,
+        encoder_type: Type[GraphEncoderBase],
+        *,
+        encoder_kwargs: Optional[Dict[str, Any]] = None,
         parallel: bool = True,
         balance_by_distance_to_goal: bool = True,
     ) -> None:
@@ -30,6 +34,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.gamma = gamma
         self.batch_size = batch_size
         self.parallel = parallel
+        self.encoder_type = encoder_type
+        self.encoder_kwargs = encoder_kwargs or dict()
         self.balance_by_distance_to_goal = balance_by_distance_to_goal
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: List[Dataset] = []
@@ -47,6 +53,8 @@ class ThundeRLDataModule(LightningDataModule):
             custom_dead_end_reward=-1 / (1 - self.gamma),
             root_dir=str(self.data.dataset_dir),
             logging_kwargs=None,
+            encoder_type=self.encoder_type,
+            encoder_kwargs=self.encoder_kwargs,
         )
         if self.parallel and len(problem_paths) > 1:
 

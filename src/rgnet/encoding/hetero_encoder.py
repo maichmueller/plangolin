@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 from collections import defaultdict
+from functools import singledispatch
 from typing import Dict, List, NamedTuple
 
 import networkx as nx
@@ -21,6 +22,29 @@ class PredicateEdgeType(NamedTuple):
     dst_type: str
 
 
+@singledispatch
+def make_arity_dict(predicates, node_factory=NodeFactory()) -> Dict[Node, int]:
+    return dict(
+        sorted(
+            (
+                (node_factory(predicate, **kwargs_dict), predicate.arity)
+                for predicate in predicates
+                for kwargs_dict in (
+                    {"is_goal": True, "is_negated": False},
+                    {"is_goal": False, "is_negated": False},
+                    {"is_goal": True, "is_negated": True},
+                )
+            ),
+            key=lambda x: x[0],
+        )
+    )
+
+
+@make_arity_dict.register(Domain)
+def _(domain: Domain, node_factory=NodeFactory()) -> Dict[Node, int]:
+    return make_arity_dict(domain.predicates, node_factory)
+
+
 class HeteroGraphEncoder(GraphEncoderBase):
     def __init__(
         self,
@@ -28,25 +52,12 @@ class HeteroGraphEncoder(GraphEncoderBase):
         node_factory: NodeFactory = NodeFactory(),
         obj_type_id: str = "obj",
     ) -> None:
-        super().__init__()
+        super().__init__(domain)
         self.obj_type_id: str = obj_type_id
         self.node_factory: NodeFactory = node_factory
         self.predicates: List[Predicate] = domain.predicates
 
-        self.arity_dict: Dict[Node, int] = dict(
-            sorted(
-                (
-                    (self.node_factory(predicate, **kwargs_dict), predicate.arity)
-                    for predicate in self.predicates
-                    for kwargs_dict in (
-                        {"is_goal": True, "is_negated": False},
-                        {"is_goal": False, "is_negated": False},
-                        {"is_goal": True, "is_negated": True},
-                    )
-                ),
-                key=lambda x: x[0],
-            )
-        )
+        self.arity_dict = make_arity_dict(self.predicates, self.node_factory)
         # Generate all possible edge types
         self.all_edge_types: List[EdgeType] = []
         for predicate, arity in self.arity_dict.items():

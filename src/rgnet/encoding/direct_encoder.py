@@ -45,6 +45,7 @@ class DirectGraphEncoder(GraphEncoderBase):
         ----------
         domain: pymimir.Domain, the domain over which instance-states will be encoded
         """
+        super().__init__(domain)
 
         # register our aux node to the node factory's dispatch
         @node_factory.__call__.register
@@ -52,7 +53,6 @@ class DirectGraphEncoder(GraphEncoderBase):
             return str(aux)
 
         self.node_factory = node_factory
-        self._domain = domain
         self._predicates = self.domain.predicates
         self._feature_map = self._build_feature_map()
 

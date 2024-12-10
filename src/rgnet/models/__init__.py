@@ -1,3 +1,4 @@
 from .hetero_gnn import HeteroGNN, ValueHeteroGNN
 from .lightning_hetero import LightningHetero
-from .pure_gnn import PureGNN
+from .pyg_module import PyGHeteroModule, PyGModule
+from .vanilla_gnn import VanillaGNN

@@ -5,13 +5,20 @@ from abc import ABC, abstractmethod
 
 import networkx as nx
 import torch_geometric as pyg
-from pymimir import State
+from pymimir import Domain, State
 
 
 class GraphEncoderBase(ABC):
     """
     The state-graph encoder base class into an associated state-graph.
     """
+
+    def __init__(self, domain: Domain, *args, **kwargs):
+        self._domain = domain
+
+    @property
+    def domain(self) -> Domain:
+        return self._domain
 
     @abstractmethod
     def __eq__(self, other): ...

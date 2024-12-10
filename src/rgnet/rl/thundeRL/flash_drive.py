@@ -1,14 +1,14 @@
 import logging
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Tuple, Type, Union
 
 import pymimir as mi
 import torch
-from torch_geometric.data import Batch, HeteroData, InMemoryDataset
+from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.separate import separate
 from tqdm import tqdm
 
-from rgnet.encoding import HeteroGraphEncoder
+from rgnet.encoding import GraphEncoderBase, HeteroGraphEncoder
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 
@@ -19,6 +19,8 @@ class FlashDrive(InMemoryDataset):
         domain_path: Path,
         problem_path: Path,
         custom_dead_end_reward: float,
+        encoder_type: Optional[Type[GraphEncoderBase]] = None,
+        encoder_kwargs: Optional[Mapping[str, Any]] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
@@ -30,6 +32,8 @@ class FlashDrive(InMemoryDataset):
         assert problem_path.exists() and problem_path.is_file()
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
+        self.encoder_type = encoder_type
+        self.encoder_kwargs = encoder_kwargs or dict()
         self.custom_dead_end_reward = custom_dead_end_reward
         self.max_expanded = max_expanded
         self.show_progress = show_progress
@@ -70,20 +74,20 @@ class FlashDrive(InMemoryDataset):
             reset_strategy=IteratingReset(),
             custom_dead_end_reward=self.custom_dead_end_reward,
         )
-        data_list = self._build(env, HeteroGraphEncoder(domain))
+        data_list = self._build(env, self.encoder_type(domain, **self.encoder_kwargs))
         self.save(data_list, self.processed_paths[0])
 
     def _build(
         self,
         env: ExpandedStateSpaceEnv,
-        encoder: HeteroGraphEncoder,
+        encoder: GraphEncoderBase,
     ) -> List[HeteroData]:
         out = env.reset()
         space: mi.StateSpace = out[env.keys.instance][0]
         nr_states: int = space.num_states()
         self._log_build_start(space)
         # Each data object represents one state
-        batched_data: List[HeteroData] = [None] * nr_states
+        batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
         state_to_idx = {state: i for i, state in enumerate(space.get_states())}
         state_iter = state_to_idx.items()
         if self.show_progress:
@@ -123,7 +127,9 @@ class FlashDrive(InMemoryDataset):
         )
         del self.logging_kwargs
 
-    def target_idx_to_data_transform(self, data: HeteroData) -> HeteroData:
+    def target_idx_to_data_transform(
+        self, data: Union[HeteroData, Data]
+    ) -> Union[HeteroData, Data]:
         """
         Convert transition target state indices to actual hetero-data objects.
         :param data the hetero-data object to transform.
@@ -135,7 +141,7 @@ class FlashDrive(InMemoryDataset):
         )
         return data
 
-    def get(self, idx: int) -> HeteroData:
+    def get(self, idx: int) -> Union[HeteroData, Data]:
         """
         Get the data object at the given index.
         Override the base-method to avoid caching previously fetched datapoints and increasing memory usage without gain.
