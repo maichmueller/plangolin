@@ -2,14 +2,16 @@ from pathlib import Path
 from test.fixtures import fresh_drive, medium_blocks
 
 import mockito
-import pytest
+from supervised.test_data import assert_hetero_stores
 from torch_geometric.data import HeteroData
 
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
 def validate_drive(drive, space):
     assert len(drive) == space.num_states()
+    encoder = HeteroGraphEncoder(space.problem.domain)
     for i, state in enumerate(space.get_states()):
         num_transitions = len(space.get_forward_transitions(state))
         data: HeteroData = drive[i]
@@ -21,6 +23,8 @@ def validate_drive(drive, space):
             assert data.done.all()
         else:
             assert not drive.done.all()
+        expected = encoder.to_pyg_data(encoder.encode(state))
+        assert_hetero_stores(data, expected)
 
 
 def test_process(fresh_drive, medium_blocks):
@@ -37,7 +41,7 @@ def test_save_and_load(fresh_drive, medium_blocks):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_end_reward=100.0,
+        custom_dead_end_reward=-100.0,
         root_dir=fresh_drive.root,
         force_reload=False,
     )
