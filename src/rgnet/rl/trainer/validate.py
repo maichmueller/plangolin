@@ -11,7 +11,6 @@ from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
 
 class SupervisedValueLoss(torch.nn.Module):
-
     def __init__(
         self,
         optimal_values: Dict[mi.StateSpace, torch.Tensor],
@@ -38,7 +37,6 @@ class SupervisedValueLoss(torch.nn.Module):
 
 
 class PolicyQuality(torch.nn.Module):
-
     def __init__(
         self,
         spaces: List[mi.StateSpace],
@@ -83,22 +81,22 @@ class PolicyQuality(torch.nn.Module):
             if space.get_distance_to_goal_state(t.target) == best_distance
         )
 
+    @torch.no_grad()
     def forward(self):
         # TODO use cross entropy loss between all optimal actions and policy probs
         losses = dict()
-        with torch.no_grad():
-            with set_exploration_type(ExplorationType.MODE):
-                self.policy.eval()
+        with set_exploration_type(ExplorationType.MODE):
+            self.policy.eval()
 
-                for space in self.test_data.keys():
-                    num_correct_actions = self.num_correct_actions(space)
-                    policy_precision: float = num_correct_actions / float(
-                        space.num_states()
-                    )
-                    losses[f"{self.log_name}/{space.problem.name}"] = policy_precision
+            for space in self.test_data.keys():
+                num_correct_actions = self.num_correct_actions(space)
+                policy_precision: float = num_correct_actions / float(
+                    space.num_states()
+                )
+                losses[f"{self.log_name}/{space.problem.name}"] = policy_precision
 
-                self.policy.train()
-                return losses
+            self.policy.train()
+            return losses
 
     def num_correct_actions(self, space: mi.StateSpace):
         actions: List[mi.Transition] = self.policy(self.test_data[space])[
@@ -107,4 +105,4 @@ class PolicyQuality(torch.nn.Module):
         optimal_actions: Dict[mi.State, Set[mi.Transition]] = self.optimal_transitions[
             space
         ]
-        return sum(1 for action in actions if action in optimal_actions[action.source])
+        return sum(action in optimal_actions[action.source] for action in actions)

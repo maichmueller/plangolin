@@ -19,7 +19,7 @@ from rgnet.encoding import (
     GraphEncoderBase,
     HeteroGraphEncoder,
 )
-from rgnet.models import LightningHetero, PureGNN
+from rgnet.models import LightningHetero, VanillaGNN
 from rgnet.supervised.over_sampler import OverSampler
 from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.utils import import_problems, time_delta_now
@@ -208,10 +208,10 @@ def run(
         )
         wlogger.watch(model.model)
     else:
-        model = PureGNN(
+        model = VanillaGNN(
             size_out=1,
             size_in=1,
-            size_embedding=kwargs["hidden_size"],
+            hidden_size=kwargs["hidden_size"],
             num_layer=kwargs["num_layer"],
         )
         wlogger.watch(model)

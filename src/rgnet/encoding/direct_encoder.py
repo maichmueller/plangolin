@@ -112,7 +112,7 @@ class DirectGraphEncoder(GraphEncoderBase):
         for obj in objects:
             graph.add_node(
                 self.node_factory(obj),
-                feature=self.feature(None),
+                feature=self.feature(obj.type),
                 info=obj.type.name,
             )
         graph.add_node(
