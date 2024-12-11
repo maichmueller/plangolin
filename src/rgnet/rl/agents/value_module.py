@@ -8,12 +8,8 @@ from torch_geometric.nn import MLP
 
 from rgnet.rl.agents.actor_critic import embed_transition_targets
 from rgnet.rl.embedding import EmbeddingModule
-from rgnet.rl.non_tensor_data_utils import (
-    NonTensorWrapper,
-    as_non_tensor_stack,
-    non_tensor_to_list,
-)
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
 
 
 class ValueModule(torch.nn.Module):
@@ -41,7 +37,7 @@ class ValueModule(torch.nn.Module):
     def forward(
         self, transitions_in: List[List[mi.Transition]] | NonTensorWrapper
     ) -> List[mi.Transition] | NonTensorWrapper:
-        transitions: List[List[mi.Transition]] = non_tensor_to_list(transitions_in)
+        transitions: List[List[mi.Transition]] = tolist(transitions_in)
         with torch.no_grad():
             # We don't want gradient for the next values and next embeddings.
             # The value net will be updated by a ValueEstimator like TD0Estimator.

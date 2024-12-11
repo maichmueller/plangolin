@@ -17,7 +17,7 @@ from tensordict import NonTensorStack
 
 from rgnet.rl import ActorCritic
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
@@ -95,9 +95,7 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
             # log of a probability is in (-infty, 0]
             assert (log_prob_tensor <= 0).all()
 
-            probs = non_tensor_to_list(
-                rollout.get(agent.keys.probs)[batch_idx][time_step]
-            )
+            probs = tolist(rollout.get(agent.keys.probs)[batch_idx][time_step])
             # assert that all values are between 0 and 1
             assert torch.all(probs >= 0.0)
             assert torch.all(probs <= 1.0)
@@ -185,6 +183,6 @@ def test_probabilities_require_grad(agent, env, hidden_size, batch_size):
     out = policy(rollout)
     probs_non_tensor_stack = out.get(agent.keys.probs)
     assert isinstance(probs_non_tensor_stack, NonTensorStack)
-    probs = non_tensor_to_list(probs_non_tensor_stack)
+    probs = tolist(probs_non_tensor_stack)
     assert all(p.requires_grad for p in probs)
     assert len(probs) == batch_size
