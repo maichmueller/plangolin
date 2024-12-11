@@ -249,7 +249,6 @@ class ThundeRLCLI(LightningCLI):
             "data_layout.output_data.domain_name",
             apply_on="parse",
         )
-        # for _, name in encoders:
         parser.link_arguments(
             "data_layout.input_data.domain",
             f"encoder.init_args.domain",
