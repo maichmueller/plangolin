@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from abc import ABC, abstractmethod
+from typing import Optional, Type
 
 import networkx as nx
 import torch_geometric as pyg
@@ -68,3 +69,14 @@ def check_encoded_by_this(func):
         return func(self, graph, *args, **kwargs)
 
     return wrapper
+
+
+class EncoderFactory:
+    def __init__(
+        self, encoder_class: Type[GraphEncoderBase], kwargs: Optional[dict] = None
+    ):
+        self.encoder_class = encoder_class
+        self.kwargs = kwargs or dict()
+
+    def __call__(self, domain: Domain):
+        return self.encoder_class(domain, **self.kwargs)

@@ -17,6 +17,7 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
+from pymimir import Domain
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
@@ -186,17 +187,25 @@ class ThundeRLCLI(LightningCLI):
 
         parser.add_subclass_arguments(GraphEncoderBase, "encoder")
 
+        parser.add_class_arguments(EncoderFactory, "encoder_factory")
+
         parser.link_arguments(
             "encoder",
-            "data.encoder_type",
+            "encoder_factory.encoder_class",
             apply_on="instantiate",
             compute_fn=lambda encoder: encoder.__class__,
         )
+
         parser.link_arguments(
             "encoder.init_args",
-            "data.encoder_kwargs",
+            "encoder_factory.kwargs",
             apply_on="instantiate",
             compute_fn=lambda namespace: vars(namespace),
+        )
+        parser.link_arguments(
+            "encoder_factory",
+            "data.encoder_factory",
+            apply_on="instantiate",
         )
         parser.link_arguments(
             "encoder.obj_type_id",

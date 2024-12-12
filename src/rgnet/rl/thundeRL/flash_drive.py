@@ -1,9 +1,10 @@
 import logging
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple, Type, Union
+from typing import Any, Callable, List, Mapping, Optional, Tuple, Type, Union
 
 import pymimir as mi
 import torch
+from pymimir import Domain
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.separate import separate
 from tqdm import tqdm
@@ -19,8 +20,7 @@ class FlashDrive(InMemoryDataset):
         domain_path: Path,
         problem_path: Path,
         custom_dead_end_reward: float,
-        encoder_type: Optional[Type[GraphEncoderBase]] = None,
-        encoder_kwargs: Optional[Mapping[str, Any]] = None,
+        encoder_factory: Optional[Callable[[Domain], GraphEncoderBase]] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
@@ -32,8 +32,7 @@ class FlashDrive(InMemoryDataset):
         assert problem_path.exists() and problem_path.is_file()
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
-        self.encoder_type = encoder_type
-        self.encoder_kwargs = encoder_kwargs or dict()
+        self.encoder_factory = encoder_factory
         self.custom_dead_end_reward = custom_dead_end_reward
         self.max_expanded = max_expanded
         self.show_progress = show_progress
@@ -74,7 +73,7 @@ class FlashDrive(InMemoryDataset):
             reset_strategy=IteratingReset(),
             custom_dead_end_reward=self.custom_dead_end_reward,
         )
-        data_list = self._build(env, self.encoder_type(domain, **self.encoder_kwargs))
+        data_list = self._build(env, self.encoder_factory(domain))
         self.save(data_list, self.processed_paths[0])
 
     def _build(
