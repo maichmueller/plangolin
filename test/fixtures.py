@@ -11,6 +11,7 @@ import torch
 from matplotlib import pyplot as plt
 
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
@@ -199,5 +200,6 @@ def fresh_drive(tmp_path, force_reload=True):
         custom_dead_end_reward=-100.0,
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
+        encoder_factory=EncoderFactory(HeteroGraphEncoder),
     )
     return drive

@@ -6,6 +6,7 @@ from supervised.test_data import assert_hetero_stores
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
@@ -44,6 +45,7 @@ def test_save_and_load(fresh_drive, medium_blocks):
         custom_dead_end_reward=-100.0,
         root_dir=fresh_drive.root,
         force_reload=False,
+        encoder_factory=EncoderFactory(HeteroGraphEncoder),
     )
 
     mockito.verify(FlashDrive, times=0).process()

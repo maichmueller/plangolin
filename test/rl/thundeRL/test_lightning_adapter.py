@@ -5,7 +5,7 @@ import torch.optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet.models import HeteroGNN
+from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
@@ -101,8 +101,11 @@ def test_training_step(fresh_drive, medium_blocks):
             return current_embeddings
         return successor_embeddings
 
+    def gnn_invoke(batch):
+        return gnn_forward(*PyGHeteroModule.unpack(batch))
+
     gnn_mock = mockito.mock(HeteroGNN)
-    mockito.when(gnn_mock).__call__(...).thenAnswer(gnn_forward)
+    mockito.when(gnn_mock).invoke(...).thenAnswer(gnn_invoke)
 
     value_net_mock = ObjectPoolingModule(pooling="add")
 

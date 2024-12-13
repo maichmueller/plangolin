@@ -60,6 +60,10 @@ class FlashDrive(InMemoryDataset):
         Process the domain and problem files to build the dataset.
         Only called if self.force_reload is True or the processed dataset file does not exist.
         """
+        if self.encoder_factory is None:
+            raise ValueError(
+                "Encoder factory must be provided when data has not been processed prior."
+            )
         domain = mi.DomainParser(str(self.domain_file.absolute())).parse()
         problem = mi.ProblemParser(str(self.problem_path.absolute())).parse(domain)
         space = mi.StateSpace.new(
