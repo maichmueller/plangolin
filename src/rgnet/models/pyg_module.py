@@ -13,7 +13,7 @@ class PyGModule(Module, ABC):
 
     @classmethod
     def unpack(cls, data: Union[Data, Batch]):
-        return data.x, data.edge_index, data.batch  # type: ignore
+        return data.x, data.edge_index, data.batch
 
     def invoke(self, data: Union[Data, Batch]):
         return self(*self.unpack(data))
@@ -30,7 +30,7 @@ class PyGHeteroModule(Module, ABC):
 
     @classmethod
     def unpack(cls, data: Union[HeteroData, Batch]):
-        return data.x_dict, data.edge_index_dict, data.batch_dict  # type: ignore
+        return data.x_dict, data.edge_index_dict, data.batch_dict
 
     def invoke(self, data: Union[HeteroData, Batch]):
         return self(*self.unpack(data))
