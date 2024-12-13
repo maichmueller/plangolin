@@ -9,7 +9,6 @@ from torch_geometric.data import Batch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.objectives import LossModule
 
-from rgnet.models import HeteroGNN
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
@@ -18,18 +17,7 @@ from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
-def _unpack_hetero_data(
-    data: Batch,
-) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
-    return data.x_dict, data.edge_index_dict, data.batch_dict
-
-
-def _unpack_homo_data(data: Batch) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    return data.x, data.edge_index, data.batch
-
-
 class LightningAdapter(lightning.LightningModule):
-
     def __init__(
         self,
         gnn: Union[PyGModule, PyGHeteroModule],
@@ -42,11 +30,7 @@ class LightningAdapter(lightning.LightningModule):
         assert isinstance(actor_critic, ActorCritic)
         assert isinstance(loss, LossModule)
         assert isinstance(optim, torch.optim.Optimizer)
-        if isinstance(gnn, PyGHeteroModule):
-            self._unpack_data = _unpack_hetero_data
-        elif isinstance(gnn, PyGModule):
-            self._unpack_data = _unpack_homo_data
-        else:
+        if not isinstance(gnn, PyGHeteroModule) and not isinstance(gnn, PyGModule):
             raise ValueError(f"Unknown GNN type: {gnn}")
         self.gnn = gnn
         self.actor_critic = actor_critic

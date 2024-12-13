@@ -4,51 +4,46 @@ import torch_geometric as pyg
 from lightning import LightningModule
 from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
+from torch_geometric.data import Batch
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
 from rgnet.encoding import ColorGraphEncoder
-from rgnet.models import VanillaGNN
+from rgnet.models import PyGModule, VanillaGNN
 
 
 class LitVanillaGNN(LightningModule):
     def __init__(
         self,
-        vanilla_gnn: VanillaGNN,
+        gnn: PyGModule,
         *,
         verbose: bool = False,
     ) -> None:
         super().__init__()
         self.l1_loss = nn.L1Loss(reduction="mean")
-        self.vanilla_gnn = vanilla_gnn
+        self.gnn = gnn
         self.readout = nn.Sequential(
-            nn.Linear(vanilla_gnn.hiddden_size, vanilla_gnn.hiddden_size),
+            nn.Linear(gnn.hiddden_size, gnn.hiddden_size),
             nn.Tanh(),
-            nn.Linear(vanilla_gnn.hiddden_size, vanilla_gnn.size_out),
+            nn.Linear(gnn.hiddden_size, gnn.size_out),
         )
         self.verbose = verbose
 
-    def forward(self, x: Tensor, edge_index: Tensor, batch: Tensor) -> Tensor:
-        """
-        :param x: The node feature matrix of floats
-        :param edge_index: The adjacency list tensor
-        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
-        :return: Value estimate for every input graph, tensor of shape [32, 1]
-        """
-        x = self.linear(x.view(-1, 1))
-        x = self.layer[0].conv(x, edge_index)
-        for layer in self.layer[1:]:
-            x = layer(x, edge_index)
-
-        x = self.layer[0].act(self.layer[0].norm(x))
+    def forward(self, batch: Batch) -> Tensor:
+        x, edge_index, batch_info = self.gnn.unpack(batch)
+        out = self.gnn(self.linear(x.view(-1, 1)), edge_index, batch)
         # sum-up the embeddings for each graph-node -> shape [embedding_size,batch_size]
-        aggregated = pyg.nn.global_add_pool(x, batch)
+        aggregated = pyg.nn.global_add_pool(out, batch)
         # reduce from embeddings_size to one -> shape [batch_size, 1]
         out = self.readout(aggregated)
         return out.view(-1)  # shape [batch_size]
 
     def training_step(self, batch, batch_index) -> Tensor:
-        x, edge_index = batch.x, batch.edge_index
-        out = self(x, edge_index, batch.batch)
+        """
+        :param x: The node feature matrix of floats
+        :param edge_index: The adjacency list tensor
+        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
+        """
+        out = self(batch)
         loss: Tensor = self.l1_loss(out, batch.y)
         self.log("train_loss", loss, batch_size=batch.batch_size)
         return loss
