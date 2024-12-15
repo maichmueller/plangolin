@@ -603,7 +603,7 @@ class PolicyEvaluationValidation(ValidationCallback):
             values: torch.Tensor = self.compute_values(epoch_probs, dataloader_idx)
             assert values.shape == optimal_values.shape
             assert values.device == optimal_values.device
-            loss = torch.nn.functional.mse_loss(values, optimal_values)
+            loss = torch.nn.functional.l1_loss(values, optimal_values)
             pl_module.log(
                 self.log_key(dataloader_idx),
                 loss,
