@@ -85,7 +85,7 @@ class LitVanillaGNN(LightningModule):
 if __name__ == "__main__":
     import pymimir as mi
 
-    model = VanillaGNN(size_out=1, size_in=1, size_embedding=10, num_layer=4)
+    model = VanillaGNN(hidden_size=10, num_layer=4)
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
     problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
 
