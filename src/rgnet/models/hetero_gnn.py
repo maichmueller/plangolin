@@ -6,7 +6,9 @@ from torch import Tensor
 from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.typing import Adj
 
+from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
+from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def mlp(in_size: int, hidden_size: int, out_size: int, **kwargs):
@@ -40,14 +42,12 @@ class HeteroGNN(torch.nn.Module):
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
-        pool: Optional[Union[str, Callable[[Tensor, Tensor], Tensor]]] = None,
-        split_embeddings: bool = False,
         activation: Union[str, Callable, None] = None,
     ):
         """
         :param hidden_size: The size of object embeddings.
         :param num_layer: Total number of message exchange iterations.
-        :param aggr: Aggregation function to be used for message passing.
+        :param aggr: Aggregation-function to be used for message passing.
         :param obj_type_id: The type identifier of objects in the x_dict.
         :param arity_dict: A dictionary mapping predicate names to their arity.
         :param activation: The activation function for all MLPs
@@ -60,19 +60,6 @@ class HeteroGNN(torch.nn.Module):
         self.hidden_size: int = hidden_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
-        self.split_embeddings: bool = split_embeddings
-        if pool is not None and isinstance(pool, str) and pool:
-            if pool == "add":
-                pool = pyg.nn.global_add_pool
-            elif pool == "mean":
-                pool = pyg.nn.global_mean_pool
-            elif pool == "max":
-                pool = pyg.nn.global_max_pool
-            else:
-                raise ValueError(
-                    f"Unknown pooling function: {pool}. Choose from [add, mean, max]."
-                )
-        self.pool = pool
         if aggr == "softmax":
             aggr = SoftmaxAggregation()
 
@@ -126,9 +113,23 @@ class HeteroGNN(torch.nn.Module):
     def forward(
         self,
         x_dict: Dict[str, Tensor],
-        edge_index_dict: Dict[str, Adj],
+        edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
-    ):
+    ) -> ObjectEmbedding:
+        """
+        Compute object embeddings for each state.
+        The states represent graphs and their objects represent nodes.
+        The graphs also contain atoms as nodes, but only the object embeddings are returned.
+        :param x_dict: The node features for each node type.
+            The keys should contain self.obj_type_id.
+        :param edge_index_dict: The edges between heterogeneous nodes.
+        :param batch_dict: Optional information which node is associated to which state.
+            If you pass more than one state (graph) to this function, you should pass the batch_dict too.
+        :return: A tuple containing:
+        - The first tensor contains object embeddings with shape [N, hidden_size], where N is the total number of objects across all states in the batch.
+        - The second tensor contains batch indices with shape [N], mapping each object (node) to its corresponding state (graph).
+        Note that the number of objects is not necessarily equal for each state.
+        """
         # Filter out dummies
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
@@ -144,29 +145,7 @@ class HeteroGNN(torch.nn.Module):
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
-        if self.pool is not None:
-            # Aggregate all object embeddings into one aggregated embedding
-            return self.pool(obj_emb, batch)  # shape [hidden, 1]
-        if self.split_embeddings:
-            return self.split_object_embeddings(obj_emb, batch)
-        else:
-            return obj_emb
-
-    @staticmethod
-    def split_object_embeddings(object_embeddings: torch.Tensor, batch_indices: Tensor):
-        """
-        Splits object embeddings by batch indices into embedding tensors for each batch element.
-
-        Example
-        -------
-        Batch object embeddings of shape (N, D) are split into a list of tensors of shape (N_i, D) where N_i is the
-        number of objects in batch element i and hence sum_i N_i = N.
-        """
-        # compute sizes of each batch
-        unique_batches, batch_sizes = torch.unique(batch_indices, return_counts=True)
-        # split embeddings by batch sizes
-        grouped_embeddings = torch.split(object_embeddings, batch_sizes.tolist())
-        return grouped_embeddings
+        return ObjectEmbedding.from_sparse(obj_emb, batch)
 
 
 class ValueHeteroGNN(HeteroGNN):
@@ -179,6 +158,7 @@ class ValueHeteroGNN(HeteroGNN):
         obj_type_id: str,
         arity_dict: Dict[str, int],
         activation: Union[str, Callable, None] = None,
+        pooling: Union[str, Callable[[Tensor, Tensor], Tensor]] = "add",
     ):
         super().__init__(
             hidden_size,
@@ -189,12 +169,13 @@ class ValueHeteroGNN(HeteroGNN):
             activation=activation,
         )
         self.readout = mlp(hidden_size, 2 * hidden_size, 1, act=activation)
+        self.pooling = ObjectPoolingModule(pooling)
 
     def forward(
         self,
         x_dict: Dict[str, Tensor],
-        edge_index_dict: Dict[str, Adj],
+        edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
-    ):
-        aggr = super().forward(x_dict, edge_index_dict, batch_dict)
-        return self.readout(aggr).view(-1)
+    ) -> torch.Tensor:
+        object_embeddings = super().forward(x_dict, edge_index_dict, batch_dict)
+        return self.readout(self.pooling(object_embeddings)).view(-1)

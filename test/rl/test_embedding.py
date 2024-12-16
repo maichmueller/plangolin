@@ -6,6 +6,7 @@ import torch
 
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.utils.object_embeddings import ObjectEmbedding
 
 from .envs.test_state_space_env import get_expected_next_keys, get_expected_root_keys
 
@@ -42,8 +43,15 @@ def test_forward(small_blocks, embedding_mock, batch_size):
     mockito.verify(embedding_mock, times=1).forward(
         match_non_tensor_stack(td.get(env_keys.state))
     )
-    assert td["current_embedding"].shape == torch.Size([batch_size, 3])
-    assert td["current_embedding"].requires_grad
+    current_embedding: ObjectEmbedding = ObjectEmbedding.from_tensordict(
+        td["current_embedding"]
+    )
+    assert current_embedding.dense_embedding.shape == (
+        batch_size,
+        embedding_mock.test_num_objects,
+        embedding_mock.hidden_size,
+    )
+    assert current_embedding.dense_embedding.requires_grad
 
     transformed.rand_step(td)
     expected_next_keys = sorted(
@@ -56,15 +64,23 @@ def test_forward(small_blocks, embedding_mock, batch_size):
     mockito.verify(embedding_mock, times=1).forward(
         match_non_tensor_stack(td.get(("next", env_keys.state)))
     )
-    assert td[("next", "current_embedding")].requires_grad
+    assert ObjectEmbedding.from_tensordict(
+        td[("next", "current_embedding")]
+    ).dense_embedding.requires_grad
 
     out = transformed._step_mdp(td)
     expected_t_1_keys = sorted(expected_keys + ["action"])
 
     assert out.sorted_keys == expected_t_1_keys
     mockito.verify(embedding_mock, times=2).forward(...)  # no new invocations
-    assert out["current_embedding"].shape == torch.Size([batch_size, 3])
-    assert torch.allclose(out["current_embedding"], td[("next", "current_embedding")])
+    assert ObjectEmbedding.from_tensordict(
+        out["current_embedding"]
+    ).dense_embedding.shape == torch.Size(
+        [batch_size, embedding_mock.test_num_objects, embedding_mock.hidden_size]
+    )
+    assert ObjectEmbedding.embeddings_is_close(
+        out["current_embedding"], td[("next", "current_embedding")]
+    )
 
     # assert that the spec complies with the tensordict using _StepMDP
     assert transformed._step_mdp.validate(td)
@@ -98,11 +114,13 @@ def test_partial_reset(small_blocks, embedding_mock, batch_size):
     tensordict_ = transformed.maybe_reset(tensordict_)
 
     mockito.verify(embedding_mock, times=1).forward(...)
+
     # Assert that the not-done entry is still the same
-    assert torch.allclose(
+    assert ObjectEmbedding.embeddings_is_close(
         tensordict_["current_embedding"][1], td[("next", "current_embedding")][1]
     )
-    assert not torch.allclose(
+
+    assert not ObjectEmbedding.embeddings_is_close(
         tensordict_["current_embedding"][0], td[("next", "current_embedding")][0]
     )
     assert tensordict_[env.keys.state][0] != td[("next", env.keys.state)][0]

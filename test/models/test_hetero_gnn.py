@@ -7,6 +7,7 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
 from rgnet.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
+from rgnet.utils.object_embeddings import ObjectPoolingModule
 
 
 @pytest.mark.parametrize(
@@ -68,9 +69,15 @@ def test_hetero_gnn_backward(tmp_path):
     )
     model.train()
     optim = torch.optim.SGD(model.parameters(), 0.001)
+    pooling = ObjectPoolingModule(pooling="add")
     for i in range(3):
         optim.zero_grad()
-        out = model(batch.x_dict, batch.edge_index_dict, batch.batch_dict)
+        from rgnet.utils.object_embeddings import ObjectEmbedding
+
+        embedding: ObjectEmbedding = model(
+            batch.x_dict, batch.edge_index_dict, batch.batch_dict
+        )
+        out = pooling(embedding)
         target = torch.eye(n=5, dtype=torch.float)
         assert out.shape[0] == len(batch)
         loss = torch.nn.functional.mse_loss(out, target)

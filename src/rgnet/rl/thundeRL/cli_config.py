@@ -2,6 +2,7 @@ import dataclasses
 import warnings
 from argparse import Namespace
 from functools import cache
+from itertools import chain
 from os import PathLike
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
@@ -58,7 +59,13 @@ class OptimizerSetup:
         else:
             gnn_params = gnn.parameters()
         for specific_lr, params in [
-            (lr_actor, agent.actor_net.parameters()),
+            (
+                lr_actor,
+                chain(
+                    agent.actor_net_probs.parameters(),
+                    agent.actor_objects_net.parameters(),
+                ),
+            ),
             (lr_critic, agent.value_operator.parameters()),
             (lr_embedding, gnn_params),
         ]:

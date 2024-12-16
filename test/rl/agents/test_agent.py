@@ -1,4 +1,9 @@
-from test.fixtures import embedding_mock, medium_blocks, small_blocks
+from test.fixtures import (
+    embedding_mock,
+    medium_blocks,
+    random_object_embeddings,
+    small_blocks,
+)
 from test.rl.envs.test_state_space_env import (
     _test_rollout_soundness,
     get_expected_root_keys,
@@ -8,11 +13,12 @@ from typing import List
 import mockito
 import pytest
 import torch
-from tensordict import NonTensorData, NonTensorStack
+from tensordict import NonTensorStack
 
 from rgnet.rl import ActorCritic
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
+from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 @pytest.fixture
@@ -38,7 +44,8 @@ def medium_env(medium_blocks, batch_size):
 def test_init(agent, hidden_size):
     assert agent._hidden_size == hidden_size
     assert agent._embedding_module is not None
-    assert agent.actor_net is not None
+    assert agent.actor_net_probs is not None
+    assert agent.actor_objects_net is not None
     assert agent.value_operator is not None
     assert agent.probabilistic_module is not None
 
@@ -112,17 +119,18 @@ def test_policy_preparation(embedding_mock, hidden_size):
         hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
     )
 
-    mockito.when(agent.actor_net).forward(...).thenAnswer(actor_mock)
+    mockito.when(agent.actor_net_probs).forward(...).thenAnswer(actor_mock)
 
-    current_embeddings = torch.rand(size=(batch_size, hidden_size))
+    current_embeddings = random_object_embeddings(batch_size, 4, hidden_size)
 
-    successor_embeddings = (
-        torch.rand(size=(3, hidden_size)),
-        torch.rand(size=(4, hidden_size)),
-        torch.rand(size=(2, hidden_size)),
+    num_successors = torch.tensor([3, 4, 2], dtype=torch.long)
+    successor_embeddings = random_object_embeddings(
+        num_successors.sum(), 4, hidden_size
     )
 
-    batched_probabilities = agent._actor_probs(current_embeddings, successor_embeddings)
+    batched_probabilities = agent._actor_probs(
+        current_embeddings, successor_embeddings, num_successors
+    )
 
     assert isinstance(batched_probabilities, List)
     assert all(isinstance(t, torch.Tensor) for t in batched_probabilities)
@@ -140,13 +148,25 @@ def test_policy_preparation(embedding_mock, hidden_size):
     )
     mockito.verify(embedding_mock, times=0).__call__(...)
     # At most one call for every element in the batch_size
-    mockito.verify(agent.actor_net, times=batch_size).forward(...)
+    mockito.verify(agent.actor_net_probs, times=batch_size).forward(...)
 
-    # Assert mismatching between number of current_embeddings and transitions
+    # Assert error on mismatch between number of successors and successor_embeddings.
     with pytest.raises(AssertionError):
         agent._actor_probs(
-            embedding_mock([None] * batch_size),
-            NonTensorData([None] * 3, batch_size=(1,)),
+            current_embeddings,
+            successor_embeddings,
+            num_successors=torch.tensor([3, 4, 3], dtype=torch.long),
+        )
+    # Assert error on extra dim.
+    with pytest.raises(AssertionError):
+        object_embeddings_extra_dim = ObjectEmbedding(
+            current_embeddings.dense_embedding.unsqueeze(dim=1),
+            is_real_mask=current_embeddings.is_real_mask.unsqueeze(dim=1),
+        )
+        agent._actor_probs(
+            object_embeddings_extra_dim,
+            successor_embeddings,
+            num_successors=torch.tensor([3, 4, 3], dtype=torch.long),
         )
 
 

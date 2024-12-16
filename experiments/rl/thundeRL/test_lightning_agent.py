@@ -17,14 +17,13 @@ import torch_geometric as pyg
 import torchrl
 from lightning.pytorch.cli import LightningArgumentParser
 from lightning.pytorch.loggers import Logger, WandbLogger
-from pymimir import Problem
+from pymimir import Problem, State
 from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import InteractionType, TensorDictModule
 from torch import Tensor
 from torchrl.envs.utils import set_exploration_type
 from tqdm import tqdm
 
-from experiments.plan import Plan
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl import (
@@ -47,6 +46,8 @@ from rgnet.rl.thundeRL.policy_evaluation import (
     mdp_graph_as_pyg_data,
 )
 from rgnet.utils.manual_transition import MTransition
+from rgnet.utils.object_embeddings import ObjectEmbedding
+from rgnet.utils.plan import Plan
 
 
 def pretty_print_transitions(transitions: List[mi.Transition]):
@@ -248,9 +249,12 @@ class RlExperimentAnalyzer:
                 self._parent.env_keys.transitions,
                 self._parent.env_keys.action,
                 add_probs=True,
-                out_successor_embeddings=True,
+                # out_successor_embeddings=True,
             )
 
+            # All states over a single space have the same number of objects.
+            # We can simply save the dense embeddings without the mask.
+            # Shape [space.num_states(), num_objects, hidden_size]
             self._embedding_for_space: Dict[mi.StateSpace, torch.Tensor] = dict()
 
             # Computed probs for space
@@ -266,15 +270,41 @@ class RlExperimentAnalyzer:
         def _compute_probs_for_space(self, space: mi.StateSpace):
             with set_exploration_type(InteractionType.MODE):
                 embeddings: Tensor = self.embedding_for_space(space)
-                successor_indices = self._parent.successor_indices(space)
+                successor_indices: dict[State, list[int]] = (
+                    self._parent.successor_indices(space)
+                )
                 successor_indices_list: List[torch.Tensor] = [
                     torch.tensor(successor_indices[s]) for s in space.get_states()
                 ]
-                successor_embeddings = tuple(
-                    embeddings[indices] for indices in successor_indices_list
+                num_successors: torch.Tensor = torch.tensor(
+                    [len(ls) for ls in successor_indices_list],
+                    dtype=torch.long,
+                    device=self._parent.device,
                 )
+                successor_embeddings = torch.cat(
+                    [embeddings[indices] for indices in successor_indices_list], dim=0
+                )
+                assert num_successors.size(0) == embeddings.size(0)
+                assert successor_embeddings.size(0) == num_successors.sum()
+
                 batched_probs, action_indices, log_probs = self.agent.embedded_forward(
-                    embeddings, successor_embeddings
+                    ObjectEmbedding(
+                        embeddings,
+                        torch.ones(
+                            size=embeddings.shape[:-1],
+                            dtype=torch.bool,
+                            device=self._parent.device,
+                        ),
+                    ),
+                    ObjectEmbedding(
+                        successor_embeddings,
+                        torch.ones(
+                            size=successor_embeddings.shape[:-1],
+                            dtype=torch.bool,
+                            device=self._parent.device,
+                        ),
+                    ),
+                    num_successors,
                 )
                 self._computed_probs_list_for_space[space] = batched_probs
                 self._action_indices_for_space[space] = action_indices
@@ -310,7 +340,7 @@ class RlExperimentAnalyzer:
                 )
                 self._embedding_for_space[space] = self.agent.embedding_module(
                     space.get_states()
-                )
+                ).dense_embedding
             return self._embedding_for_space[space]
 
         def transformed_embedding_env(self, base_env):
@@ -709,7 +739,7 @@ def test_lightning_agent(
     referencing the epoch and step form the loaded checkpoint.
 
     :param lightning_adapter: An agent instance. The weights for the agent will be loaded from a checkpoint.
-    :param logger: If a WandbLogger is passed the results are uploaded as table.
+    :param logger: If a WandbLogger is passed, the results are uploaded as table.
     :param input_data: InputData which should specify at least one test_problem.
     :param output_data: OutputData pointing to the checkpoint containing the learned weights for the agent.
     :param test_setup: Extra parameter for testing the agent.

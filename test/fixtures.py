@@ -16,6 +16,7 @@ from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
+from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
@@ -121,15 +122,25 @@ def hetero_encoded_state(request):
     )
 
 
+def random_object_embeddings(batch_size, num_object, hidden_size):
+    dense_embeddings = torch.randn(
+        size=(batch_size, num_object, hidden_size), requires_grad=True
+    )
+    is_real_mask = torch.ones(size=(batch_size, num_object), dtype=torch.bool)
+    return ObjectEmbedding(dense_embedding=dense_embeddings, is_real_mask=is_real_mask)
+
+
 @pytest.fixture
 def embedding_mock(hidden_size):
 
     def random_embeddings(states: List | NonTensorWrapper):
         states = non_tensor_to_list(states)
         batch_size = len(states)
-        return torch.randn(size=(batch_size, hidden_size), requires_grad=True)
+        # shape is (batch_size, max_num_objects, hidden_size)
+        return random_object_embeddings(batch_size, 4, hidden_size)
 
     empty_module = torch.nn.Module()
+    empty_module.test_num_objects = 4
     empty_module.device = torch.device("cpu")
     mockito.when(empty_module).forward(...).thenAnswer(random_embeddings)
     empty_module.hidden_size = hidden_size

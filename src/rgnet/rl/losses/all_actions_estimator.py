@@ -12,6 +12,7 @@ from rgnet.rl import ActorCritic, EmbeddingModule
 from rgnet.rl.agents.actor_critic import embed_transition_targets
 from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 class AllActionsValueEstimator(TD0Estimator):
@@ -91,16 +92,17 @@ class AllActionsValueEstimator(TD0Estimator):
         )
         time_steps = len(transitions)
         assert time_steps == len(instances) == len(transition_probability)
-        successor_embeddings: tuple[Tensor, ...] = embed_transition_targets(
+        successor_embeddings: ObjectEmbedding = embed_transition_targets(
             transitions if time_steps > 0 else [transitions], self._embedding_module
         )
+        successor_values: torch.Tensor = self.value_network.module(successor_embeddings)
 
         # shape = [time_steps]
         expected_value_targets: List[torch.Tensor] = []
         individual_advantages: List[torch.Tensor] = []
 
         for time in range(time_steps):
-            successor_values = self.value_network.module(successor_embeddings[time])
+            successor_values = successor_values[time]
 
             reward, done = self._env.get_reward_and_done(
                 transitions[time],

@@ -12,6 +12,7 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 def build_embedding_and_gnn(
@@ -45,7 +46,7 @@ class EmbeddingModule(torch.nn.Module):
         self.gnn = gnn
         self.encoder: HeteroGraphEncoder = encoder
 
-    def forward(self, states: List[mi.State] | NonTensorWrapper) -> torch.Tensor:
+    def forward(self, states: List[mi.State] | NonTensorWrapper) -> ObjectEmbedding:
         states = non_tensor_to_list(states)
         assert isinstance(states, List)
 
@@ -87,7 +88,7 @@ class EmbeddingTransform(Transform):
 
     def _apply_transform(self, states: NonTensorWrapper) -> TensorDictBase:
         """This function will be called by _call for every in-key."""
-        return self.embedding_module(states)
+        return self.embedding_module(states).to_tensordict()
 
     def _reset(
         self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
@@ -111,10 +112,15 @@ class EmbeddingTransform(Transform):
         new_observation_spec = observation_spec.clone()
         embedding_shape: List[int] = list(observation_spec.shape)
         embedding_shape.append(self.embedding_module.hidden_size)
-        new_observation_spec[self.current_embedding_key] = (
-            UnboundedContinuousTensorSpec(
-                shape=torch.Size(embedding_shape), device=self.embedding_module.device
-            )
+        new_observation_spec[self.current_embedding_key] = CompositeSpec(
+            dense_embedding=UnboundedContinuousTensorSpec(
+                shape=torch.Size(embedding_shape)
+            ),
+            is_real_mask=UnboundedContinuousTensorSpec(
+                shape=torch.Size(embedding_shape)
+            ),
+            shape=observation_spec.shape,
+            device=self.embedding_module.device,
         )
         return new_observation_spec
 

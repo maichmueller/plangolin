@@ -1,5 +1,5 @@
 import copy
-import itertools
+from itertools import chain
 from test.fixtures import embedding_mock, small_blocks  # noqa: F401
 
 import mockito
@@ -87,9 +87,7 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
     loss = ActorCriticLoss(critic_mock, reduction="mean")
     loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=True)
 
-    optim = torch.optim.SGD(
-        itertools.chain(critic_mock.parameters(), actor_mock.parameters())
-    )
+    optim = torch.optim.SGD(chain(critic_mock.parameters(), actor_mock.parameters()))
 
     actor_mock(rollout_not_done)  # add log_probs with gradients
 
@@ -197,12 +195,22 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
 
     optim.zero_grad()
     assert all(param.grad is None for param in agent.value_operator.parameters())
-    assert all(param.grad is None for param in agent.actor_net.parameters())
+    assert all(
+        param.grad is None
+        for param in chain(
+            agent.actor_net_probs.parameters(), agent.actor_objects_net.parameters()
+        )
+    )
     if uses_gnn:
         assert all(param.grad is None for param in embedding.gnn.parameters())
     (loss_actor + loss_critic).backward()
 
     assert not all(param.grad is None for param in agent.value_operator.parameters())
-    assert not all(param.grad is None for param in agent.actor_net.parameters())
+    assert not all(
+        param.grad is None
+        for param in chain(
+            agent.actor_net_probs.parameters(), agent.actor_objects_net.parameters()
+        )
+    )
     if uses_gnn:
         assert not all(param.grad is None for param in embedding.gnn.parameters())

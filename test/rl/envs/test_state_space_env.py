@@ -70,13 +70,19 @@ def _test_rollout_soundness(
     actual_keys.remove("next")
     assert actual_keys == expected_root_keys
 
+    def validate_shape(value):
+        if isinstance(value, torch.Tensor):
+            assert value.shape[0] == batch_size and value.shape[1] == rollout_length
+        elif isinstance(value, TensorDict):
+            for nested in value.values():
+                validate_shape(nested)
+        else:
+            assert isinstance(value, NonTensorStack)
+            assert value.batch_size == (batch_size, rollout_length)
+
     for key in expected_root_keys:
         val = rollout.get(key)
-        if isinstance(val, torch.Tensor):
-            assert val.shape[0] == batch_size and val.shape[1] == rollout_length
-        else:
-            assert isinstance(val, NonTensorStack)
-            assert val.batch_size == (batch_size, rollout_length)
+        validate_shape(val)
 
     keys = ExpandedStateSpaceEnv.default_keys
     # Test that the rollout makes sense
