@@ -64,6 +64,7 @@ class ActorCritic(torch.nn.Module):
         hidden_size: int,
         embedding_module: Optional[EmbeddingModule] = None,
         value_net: torch.nn.Module | None = None,
+        activation: str = "mish",
         keys: AcceptedKeys = default_keys,
     ):
         """
@@ -93,31 +94,40 @@ class ActorCritic(torch.nn.Module):
         )
 
         # Input: object embedding of current state and next state, Output: 2 + hidden size
+        # -> Two Linear layer with Mish activation
         self.actor_objects_net = MLP(
             [
-                2 * self._hidden_size,
                 2 * self._hidden_size,
                 2 * self._hidden_size,
                 2 * self._hidden_size,
             ],
             dropout=0.0,
             norm=None,
+            act=activation,
         )
 
         # Input: 2 * hidden size, Output: single scalar "logits"
+        # -> Three Linear layer with one Mish activation
         self.actor_net_probs = MLP(
             [2 * self._hidden_size, 2 * self._hidden_size, 2 * self._hidden_size, 1],
             dropout=0.0,
             norm=None,
+            act=activation,
         )
 
         # The ValueOperator is the critic of the actor-critic approach.
         # provided with the embeddings of the current state it estimates the value.
         if value_net is None:
             value_net = MLP(
-                channel_list=[self._hidden_size, self._hidden_size, 1],
+                channel_list=[
+                    self._hidden_size,
+                    self._hidden_size,
+                    self._hidden_size,
+                    1,
+                ],
                 norm=None,
                 dropout=0.0,
+                act=activation,
             )
         self.object_pooling = ObjectPoolingModule("add")
         self.value_operator = ValueOperator(

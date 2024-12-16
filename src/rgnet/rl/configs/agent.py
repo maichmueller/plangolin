@@ -1,6 +1,7 @@
 import dataclasses
 from argparse import ArgumentParser
 from enum import StrEnum, auto
+from itertools import chain
 from typing import Dict, Iterable, Optional
 
 import torch
@@ -260,6 +261,8 @@ class AgentAndLossConfig:
             embedding=self.embedding,
             loss=loss,
             parameter_critic=agent.value_operator.parameters(),
-            parameter_actor=agent.actor_net.parameters(),
+            parameter_actor=chain(
+                agent.actor_net_probs.parameters(), agent.actor_net_probs.parameters()
+            ),
             parameter_embedding=self.embedding.parameters(),
         )

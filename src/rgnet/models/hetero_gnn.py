@@ -11,10 +11,14 @@ from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
-def mlp(in_size: int, hidden_size: int, out_size: int, **kwargs):
-    return pyg.nn.MLP(
-        [in_size, hidden_size, out_size], norm=None, dropout=0.0, **kwargs
-    )
+def simple_mlp(in_size: int, hidden_size: int, out_size: int, **kwargs):
+    if "act" not in kwargs:
+        kwargs["act"] = "mish"
+    channel_list = [in_size, hidden_size, hidden_size]
+    if out_size != hidden_size:
+        channel_list.append(out_size)
+
+    return pyg.nn.MLP(channel_list, norm=None, dropout=0.0, **kwargs)
 
 
 class ResidualBlock(torch.nn.Module):
@@ -27,7 +31,7 @@ class ResidualBlock(torch.nn.Module):
     ):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
-        self.mlp = mlp(hidden_size, hidden_size, hidden_size, act=activation)
+        self.mlp = simple_mlp(hidden_size, hidden_size, hidden_size, act=activation)
 
     def forward(self, input_tensor: torch.Tensor):
         return input_tensor + self.mlp(input_tensor)
@@ -49,9 +53,9 @@ class HeteroGNN(torch.nn.Module):
         :param num_layer: Total number of message exchange iterations.
         :param aggr: Aggregation-function to be used for message passing.
         :param obj_type_id: The type identifier of objects in the x_dict.
-        :param arity_dict: A dictionary mapping predicate names to their arity.
+        :param arity_dict: A dictionary mapping predicates names to their arity.
         :param activation: The activation function for all MLPs
-            (Default reLU).
+            (Default mish).
         Creates one MLP for each predicate.
         Note that predicates as well as goal-predicates are meant.
         """
@@ -74,7 +78,8 @@ class HeteroGNN(torch.nn.Module):
 
         self.obj_to_atom = FanOutMP(mlp_dict, src_name=obj_type_id)
 
-        self.obj_update = mlp(
+        # Updates object embedding from embedding of last iteration and current iteration.
+        self.obj_update = simple_mlp(
             in_size=2 * hidden_size,
             hidden_size=2 * hidden_size,
             out_size=hidden_size,
@@ -168,7 +173,7 @@ class ValueHeteroGNN(HeteroGNN):
             arity_dict,
             activation=activation,
         )
-        self.readout = mlp(hidden_size, 2 * hidden_size, 1, act=activation)
+        self.readout = simple_mlp(hidden_size, 2 * hidden_size, 1, act=activation)
         self.pooling = ObjectPoolingModule(pooling)
 
     def forward(
