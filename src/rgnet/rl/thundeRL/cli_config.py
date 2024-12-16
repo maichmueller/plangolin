@@ -4,6 +4,7 @@ from argparse import Namespace
 from functools import cache
 from itertools import chain
 from os import PathLike
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
 import torch
@@ -96,6 +97,7 @@ class ValueEstimatorConfig:
 class WandbExtraParameter:
     watch_model: Optional[bool] = True  # whether to watch the model gradients
     log_frequency: int = 100  # the frequency for watch
+    log_code: bool = False  # whether to save the code as wandb artifact
 
 
 def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
@@ -385,3 +387,7 @@ class ThundeRLCLI(LightningCLI):
         wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
         if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
             self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
+        if wandb_extra.log_code:  # save everything inside src/rgnet
+            self.trainer.logger.experiment.log_code(
+                str((Path(__file__) / ".." / ".." / "..").resolve())
+            )
