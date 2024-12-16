@@ -16,11 +16,18 @@ def as_non_tensor_stack(sequence: Sequence) -> NonTensorStack:
 
 
 @singledispatch
-def tolist(input_) -> List:
+def tolist(input_, **kwargs) -> List:
     return list(input_)
+
+
+@tolist.register(list)
+def _(input_: list, *, ensure_copy: bool = False, **kwargs) -> List:
+    if ensure_copy:
+        return input_.copy()
+    return input_
 
 
 @tolist.register(NonTensorStack)
 @tolist.register(NonTensorData)
-def _(input_: NonTensorWrapper) -> List:
+def _(input_: NonTensorWrapper, **kwargs) -> List:
     return input_.tolist()
