@@ -51,7 +51,7 @@ class OptimizerSetup:
         self,
         agent: ActorCritic,
         optimizer: OptimizerCallable,  # already partly initialized from cli
-        gnn: Optional[HeteroGNN] = None,
+        gnn: Optional[torch.nn.Module] = None,
         lr_actor: Optional[float] = None,
         lr_critic: Optional[float] = None,
         lr_embedding: Optional[float] = None,
