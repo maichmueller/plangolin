@@ -40,7 +40,7 @@ from rgnet.rl.envs import (
 )
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
-from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
+from rgnet.rl.thundeRL.lightning_adapter import PolicyGradientModule
 from rgnet.rl.thundeRL.policy_evaluation import (
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
@@ -166,7 +166,7 @@ class RlExperimentAnalyzer:
 
     def __init__(
         self,
-        lightning_agent: LightningAdapter,
+        lightning_agent: PolicyGradientModule,
         in_data: InputData,
         out_data: OutputData,
         test_setup: TestSetup,
@@ -225,7 +225,7 @@ class RlExperimentAnalyzer:
 
         def __init__(
             self,
-            lightning_adapter: LightningAdapter,
+            lightning_adapter: PolicyGradientModule,
             checkpoint_path: Path,
             experiment_analyzer,
         ):
@@ -242,7 +242,7 @@ class RlExperimentAnalyzer:
             self.agent: ActorCritic = adapter.actor_critic
             # TODO fix embedding from agent, can't mix properties and torch.nn.Module
             self.agent._embedding_module = embedding
-            self.adapter: LightningAdapter = adapter
+            self.adapter: PolicyGradientModule = adapter
             self.gnn: HeteroGNN = self.adapter.gnn
             self.policy: TensorDictModule = self.agent.as_td_module(
                 self._parent.env_keys.state,
@@ -720,7 +720,7 @@ class TestThundeRLCLI(ThundeRLCLI):
 
 
 def test_lightning_agent(
-    lightning_adapter: LightningAdapter,
+    lightning_adapter: PolicyGradientModule,
     logger: Logger,
     input_data: InputData,
     output_data: OutputData,
@@ -810,7 +810,7 @@ def test_lightning_agent_cli():
     sys.argv.append("--trainer.logger.init_args.resume")
     sys.argv.append("true")
     cli = TestThundeRLCLI(run=False)
-    lightning_adapter: LightningAdapter = cli.model
+    lightning_adapter: PolicyGradientModule = cli.model
     in_data: InputData = cli.datamodule.data
     out_data = cli.config_init["data_layout.output_data"]
     test_setup: TestSetup = cli.config_init["test_setup"]

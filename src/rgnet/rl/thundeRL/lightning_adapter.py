@@ -17,7 +17,7 @@ from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
-class LightningAdapter(lightning.LightningModule):
+class PolicyGradientModule(lightning.LightningModule):
     def __init__(
         self,
         gnn: Union[PyGModule, PyGHeteroModule],

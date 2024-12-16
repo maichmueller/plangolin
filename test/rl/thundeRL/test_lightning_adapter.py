@@ -8,16 +8,16 @@ from torchrl.objectives import ValueEstimators
 from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
-from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
+from rgnet.rl.thundeRL.lightning_adapter import PolicyGradientModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def test_training_step(fresh_drive, medium_blocks):
     """
-    Integration test for the training step of the LightningAdapter.
+    Integration test for the training step of the PolicyGradientModule.
     Mocked: HeteroGNN, ActorCritic, ValueOperator
-    Tested: ActorCriticLoss, LightningAdapter
-    Tests he exact loss of LightningAdapter::training_step.
+    Tested: ActorCriticLoss, PolicyGradientModule
+    Tests he exact loss of PolicyGradientModule::training_step.
     Setup:
     We use a fixed batch size of five states.
     The done and reward signals are fixed such that only the first state is terminal.
@@ -144,12 +144,12 @@ def test_training_step(fresh_drive, medium_blocks):
         spec=ActorCritic,
     )
 
-    # Setup Loss and LightningAdapter
+    # Setup Loss and PolicyGradientModule
     loss = ActorCriticLoss(operator_mock, reduction="mean", loss_critic_type="l2")
     loss.make_value_estimator(ValueEstimators.TD0, gamma=GAMMA)
     optimizer_mock = mockito.mock(spec=torch.optim.Optimizer)
 
-    adapter = LightningAdapter(
+    adapter = PolicyGradientModule(
         gnn_mock, actor_critic_mock, loss=loss, optim=optimizer_mock
     )
 

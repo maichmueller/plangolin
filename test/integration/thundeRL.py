@@ -27,7 +27,7 @@ def setup_multiprocessing():
     torch.multiprocessing.set_start_method("fork", force=True)
 
 
-class LightningAdapterMock:
+class PolicyGradientModuleMock:
 
     def __init__(self):
         super().__init__()
@@ -74,7 +74,7 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        rgnet.rl.thundeRL.lightning_adapter.LightningAdapter,
+        rgnet.rl.thundeRL.lightning_adapter.PolicyGradientModule,
         "training_step",
         training_step_mock,
     )
@@ -154,7 +154,9 @@ def validate_successor_batch(
 
 
 def _validate_done_reward_num_transitions(
-    small_space: mi.StateSpace, medium_space: mi.StateSpace, mock: LightningAdapterMock
+    small_space: mi.StateSpace,
+    medium_space: mi.StateSpace,
+    mock: PolicyGradientModuleMock,
 ):
     assert len(mock.batched_list) == 5
     # we assert that every state of both problems was encountered once
@@ -196,7 +198,7 @@ def _validate_done_reward_num_transitions(
 
 def test_full_epoch(tmp_path, small_blocks, medium_blocks):
     """Run a full epoch of the training setup including small and medium blocks.
-    Test that the model receives the correct data by patching it with LightningAdapterMock
+    Test that the model receives the correct data by patching it with PolicyGradientModuleMock
     which simply records all incoming data.
     """
     small_space: mi.StateSpace
@@ -220,7 +222,7 @@ def test_full_epoch(tmp_path, small_blocks, medium_blocks):
     ]
 
     assert small_space.num_states() + medium_space.num_states() == 130
-    mock = LightningAdapterMock()
+    mock = PolicyGradientModuleMock()
     # args are specified in config.yaml
     config_file = Path(__file__).parent / "config.yaml"
     launch_thundeRL(

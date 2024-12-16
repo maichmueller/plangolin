@@ -465,7 +465,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         are collected using the probs_collector.
     At the end of each validation epoch, the policy evaluation is executed.
     The evaluation will either run for num_iterations or until the change is smaller than the threshold.
-    Adding the callback as a validation_hook to the LightningAdapter ensures policy evaluation runs on the same device as model training.
+    Adding the callback as a validation_hook to the PolicyGradientModule ensures policy evaluation runs on the same device as model training.
     """
 
     def __init__(
