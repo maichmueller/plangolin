@@ -52,9 +52,7 @@ class LitVanillaGNN(LightningModule):
         return torch.optim.Adam(self.parameters(), lr=0.01, weight_decay=5e-4)
 
     def _val_test_step(self, batch, phase: str):
-        x, edge_index = batch.x, batch.edge_index
-        x_out = self.forward(x, edge_index, batch.batch)
-
+        x_out = self.forward(batch)
         loss = F.l1_loss(x_out, batch.y)
         self.log(f"{phase}_loss", loss, batch_size=batch.batch_size)
         return x_out, loss, batch.y
@@ -94,5 +92,5 @@ if __name__ == "__main__":
     state = space.get_initial_state()
     encoder = ColorGraphEncoder(domain)
     data = encoder.to_pyg_data(encoder.encode(state))
-    out = model(data.x, data.edge_index, data.batch)
-    print(out)
+    output = model(data.x, data.edge_index, data.batch)
+    print(output)
