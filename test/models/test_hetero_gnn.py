@@ -74,9 +74,7 @@ def test_hetero_gnn_backward(tmp_path):
         optim.zero_grad()
         from rgnet.utils.object_embeddings import ObjectEmbedding
 
-        embedding: ObjectEmbedding = model(
-            batch.x_dict, batch.edge_index_dict, batch.batch_dict
-        )
+        embedding: ObjectEmbedding = model(batch)
         out = pooling(embedding)
         target = torch.eye(n=5, dtype=torch.float)
         assert out.shape[0] == len(batch)
@@ -98,5 +96,6 @@ def test_hetero_batched(tmp_path):
             arity_dict=encoder.arity_dict,
         )
 
-        out = model(batch.x_dict, batch.edge_index_dict, batch.batch_dict)
+        out = model(batch)
+
         assert out.size() == (batch.batch_size,)
