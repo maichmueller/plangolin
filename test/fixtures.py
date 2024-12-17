@@ -127,8 +127,8 @@ def random_object_embeddings(batch_size, num_object, hidden_size):
     dense_embeddings = torch.randn(
         size=(batch_size, num_object, hidden_size), requires_grad=True
     )
-    is_real_mask = torch.ones(size=(batch_size, num_object), dtype=torch.bool)
-    return ObjectEmbedding(dense_embedding=dense_embeddings, is_real_mask=is_real_mask)
+    padding_mask = torch.ones(size=(batch_size, num_object), dtype=torch.bool)
+    return ObjectEmbedding(dense_embedding=dense_embeddings, padding_mask=padding_mask)
 
 
 @pytest.fixture

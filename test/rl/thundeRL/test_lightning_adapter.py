@@ -55,7 +55,7 @@ def test_training_step(fresh_drive, medium_blocks):
     )
     assert current_embeddings.dense_embedding.requires_grad
     # last object of first state is fake
-    assert not current_embeddings.is_real_mask[0, -1]
+    assert not current_embeddings.padding_mask[0, -1]
 
     # Successors have the same number of objects as source state.
     total_num_successors_objects: int = num_objects_per_state.dot(

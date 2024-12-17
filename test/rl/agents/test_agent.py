@@ -159,7 +159,7 @@ def test_policy_preparation(embedding_mock, hidden_size):
     with pytest.raises(AssertionError):
         object_embeddings_extra_dim = ObjectEmbedding(
             current_embeddings.dense_embedding.unsqueeze(dim=1),
-            is_real_mask=current_embeddings.is_real_mask.unsqueeze(dim=1),
+            padding_mask=current_embeddings.padding_mask.unsqueeze(dim=1),
         )
         agent._actor_probs(
             object_embeddings_extra_dim,

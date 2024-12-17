@@ -86,7 +86,7 @@ class PolicyGradientModule(lightning.LightningModule):
         # Select the next-states by the action index chosen for each batch entry
         next_object_embeddings = ObjectEmbedding(
             successor_embeddings.dense_embedding[successor_action_indices],
-            is_real_mask=successor_embeddings.is_real_mask[successor_action_indices],
+            padding_mask=successor_embeddings.padding_mask[successor_action_indices],
         )
 
         # Data corresponding to the next state -> the result of applying the actions

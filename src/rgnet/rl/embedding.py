@@ -117,7 +117,7 @@ class EmbeddingTransform(Transform):
             dense_embedding=UnboundedContinuousTensorSpec(
                 shape=torch.Size(embedding_shape), device=device
             ),
-            is_real_mask=UnboundedContinuousTensorSpec(
+            padding_mask=UnboundedContinuousTensorSpec(
                 shape=torch.Size(embedding_shape), device=device
             ),
             shape=observation_spec.shape,

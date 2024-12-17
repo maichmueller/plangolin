@@ -202,13 +202,13 @@ class ActorCritic(torch.nn.Module):
             == successor_embeddings.dense_embedding.shape[1:]
         )
 
-        dense, is_real_mask = (
+        dense, padding_mask = (
             current_embeddings.dense_embedding,
-            current_embeddings.is_real_mask,
+            current_embeddings.padding_mask,
         )
         dense_successor, is_real_successor = (
             successor_embeddings.dense_embedding,
-            successor_embeddings.is_real_mask,
+            successor_embeddings.padding_mask,
         )
         # repeat the current embeddings for each successor.
         repeated_dense = dense.repeat_interleave(repeats=num_successors, dim=0)

@@ -9,19 +9,18 @@ from torch import Tensor
 
 
 class ObjectEmbedding:
-
     dense_embedding: Tensor
-    is_real_mask: Tensor
+    padding_mask: Tensor
 
-    def __init__(self, dense_embedding: Tensor, is_real_mask: Tensor) -> None:
+    def __init__(self, dense_embedding: Tensor, padding_mask: Tensor) -> None:
         self.dense_embedding = dense_embedding
-        self.is_real_mask = is_real_mask
+        self.padding_mask = padding_mask
 
     def to_tensordict(self) -> TensorDict:
         return TensorDict(
             {
                 "dense_embedding": self.dense_embedding,
-                "is_real_mask": self.is_real_mask,
+                "padding_mask": self.padding_mask,
             },
             batch_size=(self.dense_embedding.size(0),),
         )
@@ -36,13 +35,13 @@ class ObjectEmbedding:
             other = ObjectEmbedding.from_tensordict(other)
         return (
             torch.allclose(embeddings.dense_embedding, other.dense_embedding)
-            and (embeddings.is_real_mask == other.is_real_mask).all()
+            and (embeddings.padding_mask == other.padding_mask).all()
         )
 
     @staticmethod
     def from_tensordict(tensordict: TensorDict) -> ObjectEmbedding:
         return ObjectEmbedding(
-            tensordict["dense_embedding"], tensordict["is_real_mask"]
+            tensordict["dense_embedding"], tensordict["padding_mask"]
         )
 
     @staticmethod
@@ -50,7 +49,7 @@ class ObjectEmbedding:
         dense, mask = pyg.utils.to_dense_batch(
             sparse_embedding, batch, fill_value=torch.nan
         )
-        return ObjectEmbedding(dense_embedding=dense, is_real_mask=mask)
+        return ObjectEmbedding(dense_embedding=dense, padding_mask=mask)
 
 
 def mask_to_batch_indices(mask: torch.Tensor):
@@ -58,8 +57,9 @@ def mask_to_batch_indices(mask: torch.Tensor):
     Given the mask indicating which objects are real, return the batch indices.
     This can be seen as the inverse of `torch_geometric.utils.to_dense_batch`.
     batch[i] = j means that the i-th object belongs to the j-th graph.
-    :param mask: A boolean mask indicating which objects are real.
-        Can be of with or without batch dimension.
+    :param mask: A boolean mask indicating which object embeddings are real and which are paddings.
+        A truthy value means a real embedding at this location.
+        Can be with or without batch dimension.
     :return: A tensor of batch indices. shape [N] where N is the number of objects.
     """
     return torch.arange(mask.size(0), device=mask.device).repeat_interleave(
@@ -117,6 +117,6 @@ class ObjectPoolingModule(torch.nn.Module):
             return self.pooling(dense_embedding)
 
         return self.pooling(
-            dense_embedding[object_embedding.is_real_mask],
-            mask_to_batch_indices(object_embedding.is_real_mask),
+            dense_embedding[object_embedding.padding_mask],
+            mask_to_batch_indices(object_embedding.padding_mask),
         )
