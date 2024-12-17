@@ -7,7 +7,7 @@ from types import NoneType
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
-from pymimir import Atom, Domain, Literal, State
+from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
@@ -45,6 +45,7 @@ class DirectGraphEncoder(GraphEncoderBase):
         ----------
         domain: pymimir.Domain, the domain over which instance-states will be encoded
         """
+        super().__init__(domain)
 
         # register our aux node to the node factory's dispatch
         @node_factory.__call__.register
@@ -52,17 +53,15 @@ class DirectGraphEncoder(GraphEncoderBase):
             return str(aux)
 
         self.node_factory = node_factory
-        self._domain = domain
         self._predicates = self.domain.predicates
+        self._types = tuple(typ.name for typ in self.domain.types)
         self._feature_map = self._build_feature_map()
 
     def _build_feature_map(self):
         # times 3 because of augmentation for pred_name * (is normal atom / is goal atom / is negated goal atom)
-        feature_dim = len(self._predicates) * 3
+        feature_dim = len(self._predicates) * 3 + len(self._types)
         # one-hot encoding of the (possibly (negated) goal) predicates
-        edge_feature_vectors: np.ndarray = np.eye(feature_dim, dtype=np.int8).reshape(
-            len(self._predicates), 3, feature_dim
-        )
+        edge_feature_vectors: np.ndarray = np.eye(feature_dim, dtype=np.int8)
         # make all views read only
         edge_feature_vectors.flags.writeable = False
         return edge_feature_vectors
@@ -70,18 +69,27 @@ class DirectGraphEncoder(GraphEncoderBase):
     def __eq__(self, other: DirectGraphEncoder):
         return self._domain == other.domain
 
+    def _type_feature_offset(self):
+        return len(self._predicates) * 3
+
     @singledispatchmethod
     def feature(self, item) -> np.ndarray:
         raise NotImplementedError(f"Type passed not supported: {type(item)}")
 
     @feature.register
     def atom_feature_vector(self, atom: Atom) -> np.ndarray:
-        return self._feature_map[self._predicates.index(atom.predicate), 0]
+        return self._feature_map[self._predicates.index(atom.predicate)]
 
     @feature.register
     def literal_feature_vector(self, literal: Literal) -> np.ndarray:
         return self._feature_map[
-            self._predicates.index(literal.atom.predicate), 1 + literal.negated
+            self._predicates.index(literal.atom.predicate) + 1 + literal.negated
+        ]
+
+    @feature.register
+    def type_feature_vector(self, typ: Type) -> np.ndarray:
+        return self._feature_map[
+            self._type_feature_offset() + self._types.index(typ.name)
         ]
 
     @feature.register(NoneType)

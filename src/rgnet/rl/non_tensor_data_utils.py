@@ -1,3 +1,4 @@
+from functools import singledispatch
 from typing import List, Sequence, Union
 
 from tensordict import NonTensorData, NonTensorStack
@@ -14,8 +15,19 @@ def as_non_tensor_stack(sequence: Sequence) -> NonTensorStack:
     return NonTensorStack(*(NonTensorData(x) for x in sequence))
 
 
-def non_tensor_to_list(input_: Union[NonTensorData, NonTensorStack, List]):
-    if isinstance(input_, (NonTensorData, NonTensorStack)):
-        return input_.tolist()
-    assert isinstance(input_, List)
+@singledispatch
+def tolist(input_, **kwargs) -> List:
+    return list(input_)
+
+
+@tolist.register(list)
+def _(input_: list, *, ensure_copy: bool = False, **kwargs) -> List:
+    if ensure_copy:
+        return input_.copy()
     return input_
+
+
+@tolist.register(NonTensorStack)
+@tolist.register(NonTensorData)
+def _(input_: NonTensorWrapper, **kwargs) -> List:
+    return input_.tolist()

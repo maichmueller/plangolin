@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Callable, Dict, Optional, Union
 
 import torch
@@ -8,6 +10,7 @@ from torch_geometric.typing import Adj
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
+from rgnet.models.pyg_module import PyGHeteroModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
@@ -37,7 +40,7 @@ class ResidualBlock(torch.nn.Module):
         return input_tensor + self.mlp(input_tensor)
 
 
-class HeteroGNN(torch.nn.Module):
+class HeteroGNN(PyGHeteroModule):
 
     def __init__(
         self,

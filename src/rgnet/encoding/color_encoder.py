@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from collections import namedtuple
 from copy import copy
 from enum import Enum
 from functools import singledispatchmethod
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, NamedTuple, Optional
 
 import networkx as nx
 import numpy as np
@@ -17,7 +16,12 @@ from torch_geometric.data import Data
 from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import NodeFactory
 
-ColorKey = namedtuple("ColorKey", ["name", "position", "is_goal", "is_negated"])
+
+class ColorKey(NamedTuple):
+    name: str
+    position: int
+    is_goal: bool
+    is_negated: bool
 
 
 class FeatureMode(Enum):
@@ -58,9 +62,10 @@ class ColorGraphEncoder(GraphEncoderBase):
             raise ValueError(
                 f"`feature_mode` value {feature_mode} not element of the enum."
             )
+        super().__init__(domain)
         self.node_factory = node_factory
         self.add_predicate_nodes = add_global_predicate_nodes
-        self._domain = domain
+        self._types_map = domain.get_type_map()
         self._predicates = self.domain.predicates
         self._feature_mode = feature_mode
         self._feature_enc_len = feature_enc_len

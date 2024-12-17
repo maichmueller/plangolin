@@ -17,11 +17,17 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
+from pymimir import Domain
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.models import HeteroGNN
+from rgnet.encoding import (
+    ColorGraphEncoder,
+    DirectGraphEncoder,
+    GraphEncoderBase,
+    HeteroGraphEncoder,
+)
+from rgnet.models import HeteroGNN, VanillaGNN
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
@@ -45,7 +51,7 @@ class OptimizerSetup:
         self,
         agent: ActorCritic,
         optimizer: OptimizerCallable,  # already partly initialized from cli
-        gnn: Optional[HeteroGNN] = None,
+        gnn: Optional[torch.nn.Module] = None,
         lr_actor: Optional[float] = None,
         lr_critic: Optional[float] = None,
         lr_embedding: Optional[float] = None,
@@ -178,10 +184,38 @@ class ThundeRLCLI(LightningCLI):
         )
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        # parser = value_estimator_module.add_parser_args(parser)
-        parser.add_class_arguments(HeteroGNN, "hetero_gnn", as_positional=True)
-        parser.add_class_arguments(
-            HeteroGraphEncoder, "encoding", as_positional=True, skip={"node_factory"}
+
+        parser.add_subclass_arguments(GraphEncoderBase, "encoder")
+
+        parser.add_class_arguments(EncoderFactory, "encoder_factory")
+
+        parser.link_arguments(
+            "encoder",
+            "encoder_factory.encoder_class",
+            apply_on="instantiate",
+            compute_fn=lambda encoder: encoder.__class__,
+        )
+
+        parser.link_arguments(
+            "encoder.init_args",
+            "encoder_factory.kwargs",
+            apply_on="instantiate",
+            compute_fn=lambda namespace: vars(namespace),
+        )
+        parser.link_arguments(
+            "encoder_factory",
+            "data.encoder_factory",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "encoder.obj_type_id",
+            "model.gnn.init_args.obj_type_id",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "encoder.arity_dict",
+            "model.gnn.init_args.arity_dict",
+            apply_on="instantiate",
         )
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
@@ -210,7 +244,9 @@ class ThundeRLCLI(LightningCLI):
             ValueEstimatorConfig, "value_estimator", as_positional=True
         )
         parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
+
         # Link arguments
+
         parser.link_arguments(
             "data_layout.root_dir", "data_layout.input_data.root_dir", apply_on="parse"
         )
@@ -223,25 +259,21 @@ class ThundeRLCLI(LightningCLI):
             apply_on="parse",
         )
         parser.link_arguments(
-            "data_layout.input_data.domain", "encoding.domain", apply_on="instantiate"
-        )
-        parser.link_arguments(
-            "encoding.obj_type_id", "hetero_gnn.obj_type_id", apply_on="instantiate"
-        )
-        parser.link_arguments(
-            "encoding.arity_dict", "hetero_gnn.arity_dict", apply_on="instantiate"
+            "data_layout.input_data.domain",
+            f"encoder.init_args.domain",
+            apply_on="instantiate",
         )
         parser.link_arguments(
             "data_layout.input_data", "data.input_data", apply_on="instantiate"
         )
         parser.link_arguments(
-            "hetero_gnn.hidden_size", "agent.hidden_size", apply_on="parse"
+            "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
         )
         parser.link_arguments("value_estimator.gamma", "data.gamma", apply_on="parse")
-        parser.link_arguments("hetero_gnn", "model.gnn", apply_on="instantiate")
         parser.link_arguments(
             "agent.value_operator", "ac_loss.critic_network", apply_on="instantiate"
         )
+
         # Model links
         parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
 
@@ -254,7 +286,7 @@ class ThundeRLCLI(LightningCLI):
 
         parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
         parser.link_arguments(
-            "hetero_gnn", "optimizer_setup.gnn", apply_on="instantiate"
+            "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"
         )
         parser.link_arguments(
             "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"

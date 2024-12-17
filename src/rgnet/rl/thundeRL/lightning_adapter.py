@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import lightning
 import torch
@@ -9,7 +9,7 @@ from torch_geometric.data import Batch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.objectives import LossModule
 
-from rgnet.models import HeteroGNN
+from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
@@ -18,42 +18,25 @@ from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 class LightningAdapter(lightning.LightningModule):
-
     def __init__(
         self,
-        gnn: HeteroGNN,
+        gnn: Union[PyGModule, PyGHeteroModule],
         actor_critic: ActorCritic,
         loss: LossModule,
         optim: torch.optim.Optimizer,
         validation_hooks: Optional[List[ValidationCallback]] = None,
     ) -> None:
         super().__init__()
-        assert isinstance(gnn, HeteroGNN)
         assert isinstance(actor_critic, ActorCritic)
         assert isinstance(loss, LossModule)
         assert isinstance(optim, torch.optim.Optimizer)
+        if not isinstance(gnn, PyGHeteroModule) and not isinstance(gnn, PyGModule):
+            raise ValueError(f"Unknown GNN type: {gnn}")
         self.gnn = gnn
         self.actor_critic = actor_critic
         self.loss = loss
         self.optim = optim
         self.validation_hooks = ModuleList(validation_hooks or [])
-
-    def _compute_embeddings(
-        self,
-        states_data: Batch,
-        successors_flattened: Batch,
-    ) -> Tuple[ObjectEmbedding, ObjectEmbedding]:
-        # Shape batch_size x embedding_size
-        object_embedding: ObjectEmbedding = self.gnn(
-            states_data.x_dict, states_data.edge_index_dict, states_data.batch_dict
-        )
-        # shape (batch_size * num_successor[i]) x embedding_size
-        successor_embedding: ObjectEmbedding = self.gnn(
-            successors_flattened.x_dict,
-            successors_flattened.edge_index_dict,
-            successors_flattened.batch_dict,
-        )
-        return object_embedding, successor_embedding
 
     @staticmethod
     def _get_rewards_and_done(
@@ -78,10 +61,10 @@ class LightningAdapter(lightning.LightningModule):
         # E.g., group all the embeddings for each successor state
         slices = num_successors.cumsum(dim=0).long()[:-1]
 
-        successor_embeddings: ObjectEmbedding
-        object_embeddings, successor_embeddings = self._compute_embeddings(
-            states_data, successors_flattened
-        )
+        # Shape batch_size x embedding_size
+        object_embeddings: ObjectEmbedding = self.gnn(states_data)
+        # shape (batch_size * num_successor[i]) x embedding_size
+        successor_embeddings: ObjectEmbedding = self.gnn(successors_flattened)
 
         # Sample actions from the agent
         batched_probs: List[torch.Tensor]  # probability for each transition
@@ -170,7 +153,9 @@ class LightningAdapter(lightning.LightningModule):
                 if optional_metrics is None:
                     continue
                 for key, value in optional_metrics.items():
-                    self.log("val/" + key, value, batch_size=batch_tuple[0].batch_size)
+                    self.log(
+                        "validation/" + key, value, batch_size=batch_tuple[0].batch_size
+                    )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim

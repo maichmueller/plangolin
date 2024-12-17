@@ -38,7 +38,7 @@ from rgnet.rl.envs import (
     PlanningEnvironment,
     SuccessorEnvironment,
 )
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.policy_evaluation import (
@@ -676,7 +676,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
     def _apply_transform(
         self, batched_transitions: List[List[mi.Transition]] | NonTensorStack
     ) -> NonTensorStack:
-        batched_transitions = non_tensor_to_list(batched_transitions)
+        batched_transitions = tolist(batched_transitions)
         filtered_transitions = []
         for batch_idx, transitions in enumerate(batched_transitions):
             assert (

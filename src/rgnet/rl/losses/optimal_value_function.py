@@ -5,7 +5,7 @@ import torch
 from tensordict import NestedKey
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 
 
 class OptimalValueFunction(torch.nn.Module):
@@ -19,7 +19,7 @@ class OptimalValueFunction(torch.nn.Module):
     def __call__(
         self, batched_states: List[mi.State] | NonTensorWrapper
     ) -> torch.Tensor:
-        batched_states = non_tensor_to_list(batched_states)
+        batched_states = tolist(batched_states)
         return torch.stack(
             [
                 torch.tensor(

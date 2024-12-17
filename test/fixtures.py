@@ -11,10 +11,11 @@ import torch
 from matplotlib import pyplot as plt
 
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
@@ -134,7 +135,7 @@ def random_object_embeddings(batch_size, num_object, hidden_size):
 def embedding_mock(hidden_size):
 
     def random_embeddings(states: List | NonTensorWrapper):
-        states = non_tensor_to_list(states)
+        states = tolist(states)
         batch_size = len(states)
         # shape is (batch_size, max_num_objects, hidden_size)
         return random_object_embeddings(batch_size, 4, hidden_size)
@@ -199,5 +200,6 @@ def fresh_drive(tmp_path, force_reload=True):
         custom_dead_end_reward=-100.0,
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
+        encoder_factory=EncoderFactory(HeteroGraphEncoder),
     )
     return drive

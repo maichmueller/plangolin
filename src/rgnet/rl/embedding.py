@@ -11,7 +11,7 @@ from torchrl.envs import Transform, TransformedEnv
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl.envs import PlanningEnvironment
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
@@ -47,7 +47,7 @@ class EmbeddingModule(torch.nn.Module):
         self.encoder: HeteroGraphEncoder = encoder
 
     def forward(self, states: List[mi.State] | NonTensorWrapper) -> ObjectEmbedding:
-        states = non_tensor_to_list(states)
+        states = tolist(states)
         assert isinstance(states, List)
 
         as_batch = Batch.from_data_list(

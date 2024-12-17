@@ -2,6 +2,8 @@ import torch
 from tensordict import NonTensorData, NonTensorStack
 from tensordict.base import NO_DEFAULT
 
+from rgnet.rl.non_tensor_data_utils import tolist
+
 
 def patched_stack_non_tensor(list_of_non_tensor, dim=0):
     """
@@ -28,7 +30,7 @@ def patched__post_init__(self):
             data_inner = getattr(data, "data", None)
         if data_inner is None:
             # Support for stacks
-            data_inner = data.tolist()
+            data_inner = tolist(data)
         del _tensordict["data"]
         _non_tensordict["data"] = data_inner
     assert _tensordict.is_empty(), self._tensordict

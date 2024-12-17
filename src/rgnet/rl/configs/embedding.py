@@ -10,7 +10,7 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl import EmbeddingModule
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.embedding import build_embedding_and_gnn
-from rgnet.rl.non_tensor_data_utils import non_tensor_to_list
+from rgnet.rl.non_tensor_data_utils import tolist
 
 
 def one_hot_embedding(
@@ -40,7 +40,7 @@ def one_hot_embedding(
             self.device = device
 
         def forward(self, states_):
-            states_ = non_tensor_to_list(states_)
+            states_ = tolist(states_)
             return torch.stack([self.lookup[s] for s in states_])
 
     return Embedding()

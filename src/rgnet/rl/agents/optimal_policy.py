@@ -5,11 +5,7 @@ import pymimir as mi
 from tensordict import NestedKey
 from tensordict.nn import TensorDictModule
 
-from rgnet.rl.non_tensor_data_utils import (
-    NonTensorWrapper,
-    as_non_tensor_stack,
-    non_tensor_to_list,
-)
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
 
 
 def optimal_action(space: mi.StateSpace, state: mi.State) -> mi.Transition:
@@ -32,7 +28,7 @@ class OptimalPolicy:
     def __call__(
         self, batched_states: List[List[mi.State]] | NonTensorWrapper
     ) -> List[mi.Transition] | NonTensorWrapper:
-        batched_states = non_tensor_to_list(batched_states)
+        batched_states = tolist(batched_states)
         return as_non_tensor_stack(
             [self.best_actions[state] for state in batched_states]
         )

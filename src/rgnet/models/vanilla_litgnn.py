@@ -4,70 +4,46 @@ import torch_geometric as pyg
 from lightning import LightningModule
 from torch import Tensor, nn
 from torch.nn import LayerNorm, ReLU
+from torch_geometric.data import Batch
 from torch_geometric.nn import DeepGCNLayer, GENConv
 
 from rgnet.encoding import ColorGraphEncoder
+from rgnet.models import PyGModule, VanillaGNN
 
 
-class PureGNN(LightningModule):
+class LitVanillaGNN(LightningModule):
     def __init__(
         self,
-        size_out: int,
-        size_in: int,
-        size_embedding: int,
-        num_layer: int,
+        gnn: PyGModule,
         *,
         verbose: bool = False,
     ) -> None:
         super().__init__()
         self.l1_loss = nn.L1Loss(reduction="mean")
-        self.linear = nn.Linear(size_in, size_embedding)
-        self.layer = nn.ModuleList()
-        for i in range(num_layer):
-            conv = GENConv(
-                size_embedding,
-                size_embedding,
-                aggr="softmax",
-                learn_t=False,
-                num_layers=2,
-                norm="layer",
-                node_dim=0,
-            )
-            norm = LayerNorm(size_embedding, elementwise_affine=True)
-            act = ReLU(inplace=True)
-
-            layer = DeepGCNLayer(conv, norm, act, block="res+", dropout=0.1)
-            self.layer.append(layer)
-
+        self.gnn = gnn
         self.readout = nn.Sequential(
-            nn.Linear(size_embedding, size_embedding),
+            nn.Linear(gnn.hiddden_size, gnn.hiddden_size),
             nn.Tanh(),
-            nn.Linear(size_embedding, size_out),
+            nn.Linear(gnn.hiddden_size, gnn.size_out),
         )
         self.verbose = verbose
 
-    def forward(self, x, edge_index, batch):
-        """
-        :param x: The node feature matrix of floats
-        :param edge_index: The adjacency list tensor
-        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
-        :return: Value estimate for every input graph, tensor of shape [32, 1]
-        """
-        x = self.linear(x.view(-1, 1))
-        x = self.layer[0].conv(x, edge_index)
-        for layer in self.layer[1:]:
-            x = layer(x, edge_index)
-
-        x = self.layer[0].act(self.layer[0].norm(x))
+    def forward(self, batch: Batch) -> Tensor:
+        x, edge_index, batch_info = self.gnn.unpack(batch)
+        out = self.gnn(self.linear(x.view(-1, 1)), edge_index, batch)
         # sum-up the embeddings for each graph-node -> shape [embedding_size,batch_size]
-        aggregated = pyg.nn.global_add_pool(x, batch)
+        aggregated = pyg.nn.global_add_pool(out, batch)
         # reduce from embeddings_size to one -> shape [batch_size, 1]
         out = self.readout(aggregated)
         return out.view(-1)  # shape [batch_size]
 
-    def training_step(self, batch, batch_index) -> torch.Tensor:
-        x, edge_index = batch.x, batch.edge_index
-        out = self(x, edge_index, batch.batch)
+    def training_step(self, batch, batch_index) -> Tensor:
+        """
+        :param x: The node feature matrix of floats
+        :param edge_index: The adjacency list tensor
+        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
+        """
+        out = self(batch)
         loss: Tensor = self.l1_loss(out, batch.y)
         self.log("train_loss", loss, batch_size=batch.batch_size)
         return loss
@@ -76,9 +52,7 @@ class PureGNN(LightningModule):
         return torch.optim.Adam(self.parameters(), lr=0.01, weight_decay=5e-4)
 
     def _val_test_step(self, batch, phase: str):
-        x, edge_index = batch.x, batch.edge_index
-        x_out = self.forward(x, edge_index, batch.batch)
-
+        x_out = self.forward(batch)
         loss = F.l1_loss(x_out, batch.y)
         self.log(f"{phase}_loss", loss, batch_size=batch.batch_size)
         return x_out, loss, batch.y
@@ -109,7 +83,7 @@ class PureGNN(LightningModule):
 if __name__ == "__main__":
     import pymimir as mi
 
-    model = PureGNN(size_out=1, size_in=1, size_embedding=10, num_layer=4)
+    model = VanillaGNN(hidden_size=10, num_layer=4)
     domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
     problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
 
@@ -118,5 +92,5 @@ if __name__ == "__main__":
     state = space.get_initial_state()
     encoder = ColorGraphEncoder(domain)
     data = encoder.to_pyg_data(encoder.encode(state))
-    out = model(data.x, data.edge_index, data.batch)
-    print(out)
+    output = model(data.x, data.edge_index, data.batch)
+    print(output)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import itertools
 from typing import List, Optional, Tuple
@@ -12,11 +14,7 @@ from torch_geometric.nn.models import MLP
 from torchrl.modules.tensordict_module import ValueOperator
 
 from rgnet.rl.embedding import EmbeddingModule
-from rgnet.rl.non_tensor_data_utils import (
-    NonTensorWrapper,
-    as_non_tensor_stack,
-    non_tensor_to_list,
-)
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import (
     ObjectEmbedding,
     ObjectPoolingModule,
@@ -265,7 +263,7 @@ class ActorCritic(torch.nn.Module):
         current_embedding: Optional[ObjectEmbedding | TensorDict] = None,
     ) -> Tuple[NonTensorStack, TensorDict, torch.Tensor, NonTensorStack]:
 
-        transitions: List[List[mi.Transition]] = non_tensor_to_list(transitions)
+        transitions: List[List[mi.Transition]] = tolist(transitions)
         assert all(
             len(ts) > 0 for ts in transitions
         ), "Found empty transition, environment should reset on dead-end states."

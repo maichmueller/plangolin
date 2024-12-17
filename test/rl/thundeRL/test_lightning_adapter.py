@@ -5,7 +5,7 @@ import torch.optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet.models import HeteroGNN
+from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
@@ -95,7 +95,8 @@ def test_training_step(fresh_drive, medium_blocks):
     # shape [batch_size, 1]
     expected_current_values = current_embeddings.dense_embedding.nansum(dim=1).squeeze()
 
-    def gnn_forward(x_dict, edge_index_dict, batch_dict):
+    def gnn_forward(batch):
+        x_dict, edge_index_dict, batch_dict = PyGHeteroModule.unpack(batch)
         batch_size = batch_dict["obj"].max().item() + 1
         if batch_size == BATCH_SIZE:
             return current_embeddings
