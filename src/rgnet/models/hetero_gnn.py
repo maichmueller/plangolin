@@ -4,6 +4,7 @@ from typing import Callable, Dict, Optional, Union
 
 import torch
 import torch_geometric as pyg
+from ase.test.calculator.gamess_us.test_gamess_us import kwargs
 from torch import Tensor
 from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.nn.resolver import activation_resolver
@@ -13,6 +14,7 @@ from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
+from rgnet.models.residual import ResidualModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
@@ -29,24 +31,6 @@ def simple_mlp(
         layer.append(torch.nn.Linear(hidden_size, out_size))
 
     return torch.nn.Sequential(*layer)
-
-
-class ResidualBlock(torch.nn.Module):
-    def __init__(
-        self,
-        hidden_size: int,
-        activation: Union[str, Callable, None] = None,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.hidden_size = hidden_size
-        self.mlp = simple_mlp(
-            hidden_size, hidden_size, hidden_size, activation=activation
-        )
-
-    def forward(self, input_tensor: torch.Tensor):
-        return input_tensor + self.mlp(input_tensor)
 
 
 class HeteroGNN(PyGHeteroModule):
@@ -86,7 +70,12 @@ class HeteroGNN(PyGHeteroModule):
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object.
-            pred: ResidualBlock(hidden_size * arity, activation=activation)
+            pred: ResidualModule(
+                simple_mlp(
+                    *([hidden_size * arity] * 3),
+                    act=activation,
+                )
+            )
             for pred, arity in arity_dict.items()
             if arity > 0
         }
@@ -107,8 +96,8 @@ class HeteroGNN(PyGHeteroModule):
 
     def encoding_layer(self, x_dict: Dict[str, Tensor]):
         # Resize everything by the hidden_size
-        # embedding of objects = hidden_size
-        # embedding of atoms = arity of predicate * hidden_size
+        # embedding-dims of objects = hidden_size
+        # embedding-dims of atoms = (arity of predicate) * hidden_size
         for k, v in x_dict.items():
             assert v.dim() == 2
             x_dict[k] = torch.zeros(
