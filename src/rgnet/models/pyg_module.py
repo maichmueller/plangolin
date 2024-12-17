@@ -21,8 +21,8 @@ class PyGModule(Module, ABC):
         raise NotImplementedError(msg)
 
     @__call__.register(dict)
-    def _(self, x_dict, edge_index_dict, batch_dict):
-        return super().__call__(x_dict, edge_index_dict, batch_dict)
+    def _(self, x, edge_index, batch=None):
+        return super().__call__(x, edge_index, batch)
 
     @__call__.register(Data)
     @__call__.register(Batch)
@@ -52,7 +52,7 @@ class PyGHeteroModule(Module, ABC):
         raise NotImplementedError(msg)
 
     @__call__.register(dict)
-    def _(self, x_dict, edge_index_dict, batch_dict):
+    def _(self, x_dict, edge_index_dict, batch_dict=None):
         return super().__call__(x_dict, edge_index_dict, batch_dict)
 
     @__call__.register(HeteroData)
