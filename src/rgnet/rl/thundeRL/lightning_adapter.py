@@ -38,23 +38,6 @@ class LightningAdapter(lightning.LightningModule):
         self.optim = optim
         self.validation_hooks = ModuleList(validation_hooks or [])
 
-    def _compute_embeddings(
-        self,
-        states_data: Batch,
-        successors_flattened: Batch,
-    ) -> Tuple[ObjectEmbedding, ObjectEmbedding]:
-        # Shape batch_size x embedding_size
-        object_embedding: ObjectEmbedding = self.gnn(
-            states_data.x_dict, states_data.edge_index_dict, states_data.batch_dict
-        )
-        # shape (batch_size * num_successor[i]) x embedding_size
-        successor_embedding: ObjectEmbedding = self.gnn(
-            successors_flattened.x_dict,
-            successors_flattened.edge_index_dict,
-            successors_flattened.batch_dict,
-        )
-        return object_embedding, successor_embedding
-
     @staticmethod
     def _get_rewards_and_done(
         successor_action_indices: torch.Tensor, states_data: Batch
@@ -78,10 +61,10 @@ class LightningAdapter(lightning.LightningModule):
         # E.g., group all the embeddings for each successor state
         slices = num_successors.cumsum(dim=0).long()[:-1]
 
-        successor_embeddings: ObjectEmbedding
-        object_embeddings, successor_embeddings = self._compute_embeddings(
-            states_data, successors_flattened
-        )
+        # Shape batch_size x embedding_size
+        object_embeddings: ObjectEmbedding = self.gnn(states_data)
+        # shape (batch_size * num_successor[i]) x embedding_size
+        successor_embeddings: ObjectEmbedding = self.gnn(successors_flattened)
 
         # Sample actions from the agent
         batched_probs: List[torch.Tensor]  # probability for each transition

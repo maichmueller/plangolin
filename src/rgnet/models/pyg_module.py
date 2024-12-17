@@ -10,7 +10,9 @@ from torch_geometric.typing import Adj
 
 class PyGModule(Module, ABC):
     @abstractmethod
-    def forward(self, x: Tensor, edge_index: Tensor, batch: Tensor) -> Tensor: ...
+    def forward(
+        self, x: Tensor, edge_index: Tensor, batch: Tensor = None
+    ) -> Tensor: ...
 
     @singledispatchmethod
     def __call__(self, *args):
