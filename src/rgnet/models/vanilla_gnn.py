@@ -76,5 +76,5 @@ if __name__ == "__main__":
     state = space.get_initial_state()
     encoder = ColorGraphEncoder(domain)
     data = encoder.to_pyg_data(encoder.encode(state))
-    out = model.invoke(data)
+    out = model = data
     print(out)

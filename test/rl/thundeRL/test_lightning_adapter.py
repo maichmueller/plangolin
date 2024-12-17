@@ -95,17 +95,15 @@ def test_training_step(fresh_drive, medium_blocks):
     # shape [batch_size, 1]
     expected_current_values = current_embeddings.dense_embedding.nansum(dim=1).squeeze()
 
-    def gnn_forward(x_dict, edge_index_dict, batch_dict):
+    def gnn_forward(batch):
+        x_dict, edge_index_dict, batch_dict = PyGHeteroModule.unpack(batch)
         batch_size = batch_dict["obj"].max().item() + 1
         if batch_size == BATCH_SIZE:
             return current_embeddings
         return successor_embeddings
 
-    def gnn_invoke(batch):
-        return gnn_forward(*PyGHeteroModule.unpack(batch))
-
     gnn_mock = mockito.mock(HeteroGNN)
-    mockito.when(gnn_mock).invoke(...).thenAnswer(gnn_invoke)
+    mockito.when(gnn_mock).__call__(...).thenAnswer(gnn_forward)
 
     value_net_mock = ObjectPoolingModule(pooling="add")
 

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Union
+from functools import singledispatchmethod
+from typing import Dict, Mapping, Optional, Union
 
 from torch import Tensor
 from torch.nn import Module
@@ -11,12 +12,26 @@ class PyGModule(Module, ABC):
     @abstractmethod
     def forward(self, x: Tensor, edge_index: Tensor, batch: Tensor) -> Tensor: ...
 
+    @singledispatchmethod
+    def __call__(self, *args):
+        if args:
+            msg = f"Invalid input type {args[0].__class__} for '__call__'"
+        else:
+            msg = "No input for '__call__'"
+        raise NotImplementedError(msg)
+
+    @__call__.register(dict)
+    def _(self, x_dict, edge_index_dict, batch_dict):
+        return super().__call__(x_dict, edge_index_dict, batch_dict)
+
+    @__call__.register(Data)
+    @__call__.register(Batch)
+    def _(self, data, *args):
+        return super().__call__(*self.unpack(data))
+
     @classmethod
     def unpack(cls, data: Union[Data, Batch]):
         return data.x, data.edge_index, data.batch
-
-    def invoke(self, data: Union[Data, Batch]):
-        return self(*self.unpack(data))
 
 
 class PyGHeteroModule(Module, ABC):
@@ -28,9 +43,23 @@ class PyGHeteroModule(Module, ABC):
         batch_dict: Optional[Dict[str, Tensor]] = None,
     ): ...
 
+    @singledispatchmethod
+    def __call__(self, *args):
+        if args:
+            msg = f"Invalid input type {args[0].__class__} for '__call__'"
+        else:
+            msg = "No input for '__call__'"
+        raise NotImplementedError(msg)
+
+    @__call__.register(dict)
+    def _(self, x_dict, edge_index_dict, batch_dict):
+        return super().__call__(x_dict, edge_index_dict, batch_dict)
+
+    @__call__.register(HeteroData)
+    @__call__.register(Batch)
+    def _(self, data, *args):
+        return super().__call__(*self.unpack(data))
+
     @classmethod
     def unpack(cls, data: Union[HeteroData, Batch]):
         return data.x_dict, data.edge_index_dict, data.batch_dict
-
-    def invoke(self, data: Union[HeteroData, Batch]):
-        return self(*self.unpack(data))
