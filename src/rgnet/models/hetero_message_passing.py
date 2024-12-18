@@ -34,12 +34,10 @@ class HeteroRouting(torch.nn.Module):
             self.aggr = aggr
 
     @abc.abstractmethod
-    def _accept_edge(self, src: str, rel: str, dst: str) -> bool:
-        pass
+    def _accepts_edge(self, edge_type: EdgeType) -> bool: ...
 
     @abc.abstractmethod
-    def _internal_forward(self, x, edges_index, edge_type: EdgeType):
-        pass
+    def _internal_forward(self, x, edges_index, edge_type: EdgeType): ...
 
     def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
@@ -58,18 +56,16 @@ class HeteroRouting(torch.nn.Module):
     def forward(self, x_dict, edge_index_dict):
         """
         Apply message passing to each edge_index key if the edge-type is accepted.
+
         Calls the internal forward with a normal homogenous signature of x, edge_index
+
         :param x_dict: Dictionary with a feature matrix for each node type
         :param edge_index_dict: One edge_index adjacency matrix for each edge type.
         :return: Dictionary with each processed dst as key and their updated embedding as value.
         """
-        out_dict: Dict[str, Any] = {}
-        for edge_type in edge_index_dict.keys():
+        out_dict: Dict[str, Any] = defaultdict(list)
+        for edge_type in filter(self._accepts_edge, edge_index_dict.keys()):
             src, rel, dst = edge_type
-
-            if not self._accept_edge(src, rel, dst):
-                continue
-
             if src == dst and src in x_dict:
                 x = x_dict[src]
             elif src in x_dict or dst in x_dict:
@@ -117,8 +113,9 @@ class FanOutMP(HeteroRouting):
         self.simple = SimpleConv()
         self.src_name = src_name
 
-    def _accept_edge(self, src, rel, dst) -> bool:
-        return src == self.src_name
+    def _accepts_edge(self, edge_type: EdgeType) -> bool:
+        src, *_ = edge_type
+        return src == self.src_type
 
     def _internal_forward(self, x, edge_index, edge_type: EdgeType):
         position = int(edge_type[1])
@@ -147,7 +144,8 @@ class FanInMP(HeteroRouting):
         self.select = SelectMP(hidden_size)
         self.dst_name = dst_name
 
-    def _accept_edge(self, src: str, rel: str, dst: str) -> bool:
+    def _accepts_edge(self, edge_type: EdgeType) -> bool:
+        *_, dst = edge_type
         return dst == self.dst_name
 
     def _internal_forward(self, x, edges_index, edge_type):
