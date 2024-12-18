@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Dict, Optional, Union, final
 
 import torch
 import torch_geometric as pyg
@@ -9,6 +9,7 @@ from torch import Tensor
 from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
+from triton.profiler import finalize
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
@@ -80,18 +81,20 @@ class HeteroGNN(PyGHeteroModule):
             if arity > 0
         }
 
-        self.obj_to_atom = FanOutMP(mlp_dict, src_name=obj_type_id)
+        self.objects_to_atom_mp = FanOutMP(mlp_dict, src_type=obj_type_id)
 
         # Updates object embedding from embedding of last iteration and current iteration.
-        self.obj_update = simple_mlp(
+        self.embedding_updater = simple_mlp(
             in_size=2 * hidden_size,
             hidden_size=2 * hidden_size,
             out_size=hidden_size,
             activation=activation,
         )
         # Messages from atoms flow to objects
-        self.atom_to_obj = FanInMP(
-            hidden_size=hidden_size, dst_name=obj_type_id, aggr=aggr
+        self.atoms_to_object_mp = FanInMP(
+            hidden_size=hidden_size,
+            dst_name=obj_type_id,
+            aggr=aggr,
         )
 
     def encoding_layer(self, x_dict: Dict[str, Tensor]):
@@ -106,17 +109,24 @@ class HeteroGNN(PyGHeteroModule):
         return x_dict
 
     def layer(self, x_dict, edge_index_dict):
-        # Groups object embeddings that are part of an atom and
-        # applies predicate-specific MLP based on the edge type.
-        out = self.obj_to_atom(x_dict, edge_index_dict)
-        x_dict.update(out)  # update atom embeddings
-        # Distribute the atom embeddings back to the corresponding objects.
-        out = self.atom_to_obj(x_dict, edge_index_dict)
-        # Update the object embeddings using a shared update-MLP.
-        previous_obj_emb = x_dict[self.obj_type_id]
-        obj_emb = torch.cat([previous_obj_emb, out[self.obj_type_id]], dim=1)
-        obj_emb = self.obj_update(obj_emb)
-        x_dict[self.obj_type_id] = previous_obj_emb + obj_emb
+        """
+        # Groups object embeddings that are part of an atom and applies predicate-specific Module (e.g. MLP) based on the edge type.
+        """
+        # Spread the object embeddings to the atoms via message passing.
+        # Note: unlike object embeddings, atom embeddings are always simply replaced, instead of updated.
+        atom_msgs = self.objects_to_atom_mp(x_dict, edge_index_dict)
+        x_dict.update(atom_msgs)
+
+        # Distribute the atom embeddings back to the corresponding objects via message passing.
+        object_msgs = self.atoms_to_object_mp(x_dict, edge_index_dict)[self.obj_type_id]
+        # perform update step of message passing, but for object-nodes only.
+        # The object embeddings are updated based on the previous embedding `X_o` and final object message `m_o`.
+        # In formula: `X_o = comb([X_o, m_o])`
+        updated_obj_emb = self.embedding_updater(
+            torch.cat([x_dict[self.obj_type_id], object_msgs], dim=1)
+        )
+        # residual update (current + updates)
+        x_dict[self.obj_type_id] += updated_obj_emb
 
     def forward(
         self,

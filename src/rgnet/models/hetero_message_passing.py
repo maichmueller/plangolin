@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 import abc
+from collections import defaultdict
+from functools import singledispatchmethod
+from typing import Any, Dict, List, Optional, Union
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch_geometric as pyg
@@ -42,12 +46,10 @@ class HeteroRouting(torch.nn.Module):
     def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
         for key, value in out_dict.items():
-            # hetero_conv.group does not yet support Aggregation modules
+            # `hetero_conv.group` does not yet support Aggregation modules
             if isinstance(self.aggr, Aggregation):
                 out = torch.stack(value, dim=0)
-                out = self.aggr(out, dim=0)
-                if out.dim() == 3 and out.shape[0] == 1:
-                    out = out[0]  # TODO Why does Softmax return one dim to much
+                out = self.aggr(out, dim=0).squeeze(0)
             else:
                 out = group(value, self.aggr)
             aggregated[key] = out
@@ -78,40 +80,41 @@ class HeteroRouting(torch.nn.Module):
                     f"Neither src ({src}) nor destination ({dst})"
                     + f" found in x_dict ({x_dict})"
                 )
-
             out = self._internal_forward(x, edge_index_dict[edge_type], edge_type)
+            out_dict[dst].append(out)
 
-            if dst not in out_dict:
-                out_dict[dst] = [out]
-            else:
-                out_dict[dst].append(out)
-
-        return self._group_out(out_dict)
+        return self._group_out(dict(out_dict))
 
 
 class FanOutMP(HeteroRouting):
     """
-     Accepts EdgeTypes with the defined src_name.
-    1. For each destination concatenate all embeddings of the source.
-    2. Run the destination specific MLP on the concatenated embeddings.
-    3. Save the new embedding under the destination key.
+    Update the embeddings of the destination nodes based on the embeddings of the source nodes.
+
+    Accepts `EdgeType`s whose attr `src` matches the parameter `src_type`.
+
+    Processes the incoming edges by:
+        1. For each destination concatenate all embeddings of the source.
+        2. Apply the destination specific Module to the concatenated embeddings.
+        3. Save the new embedding under the destination key.
+
     FanOut should be aggregation free in theory.
-    Every atom gets only as many messages as the arity of its predicate.
-    :param update_mlp_by_dst: An MLP for each possible destination.
-        Needs the degree of incoming edges as input and output dimension
-    :param src_name: The node-type for which outgoing edges should be accepted.
+    Every atom receives only as many messages as the arity of its predicate.
+
+    :param update_modules: Dict, maps destination node-types to a Module (e.g. MLP) to compute messages with.
+        Each Module input-and output-tensor needs to match the degree of incoming edges in shape at dim 0.
+    :param src_type: The node-type whose outgoing edges should be accepted.
     """
 
     def __init__(
         self,
-        update_mlp_by_dst: Dict[str, torch.nn.Module],
-        src_name: str,
+        update_modules: Dict[str, torch.nn.Module],
+        src_type: str,
     ) -> None:
         """ """
         super().__init__()
-        self.update_mlp_by_dst = ModuleDict(update_mlp_by_dst)
+        self.update_modules = ModuleDict(update_modules)
         self.simple = SimpleConv()
-        self.src_name = src_name
+        self.src_type = src_type
 
     def _accepts_edge(self, edge_type: EdgeType) -> bool:
         src, *_ = edge_type
@@ -123,12 +126,12 @@ class FanOutMP(HeteroRouting):
         return position, out
 
     def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+        grouped = dict()
         for dst, value in out_dict.items():
             sorted_out = sorted(value, key=lambda tpl: tpl[0])
             stacked = torch.cat([out for _, out in sorted_out], dim=1)
-            out_dict[dst] = self.update_mlp_by_dst[dst](stacked)
-
-        return out_dict
+            grouped[dst] = self.update_modules[dst](stacked)
+        return grouped
 
 
 class FanInMP(HeteroRouting):
@@ -191,7 +194,7 @@ class SelectMP(pyg.nn.MessagePassing):
         # e.g from [1, 2, 3, 4, 5, 6] with hidden=2 and position=1 -> [3, 4]
         # alternatively split = torch.split(x_j, self.hidden, dim=-1)
         #               split[self.position]
-        sliced = x_j[:, position * self.hidden : (position + 1) * self.hidden]
+        sliced = x_j[..., position * self.hidden : (position + 1) * self.hidden]
         return sliced
 
     def aggregate(
