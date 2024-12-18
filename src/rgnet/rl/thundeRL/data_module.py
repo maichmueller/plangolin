@@ -27,6 +27,8 @@ class ThundeRLDataModule(LightningDataModule):
         batch_size: int,
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
+        num_workers_train: int = 6,
+        num_workers_validation: int = 2,
         parallel: bool = True,
         balance_by_distance_to_goal: bool = True,
     ) -> None:
@@ -36,6 +38,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.gamma = gamma
         self.batch_size = batch_size
         self.parallel = parallel
+        self.num_workers_train = num_workers_train
+        self.num_workers_val = num_workers_validation
         self.encoder_factory = encoder_factory
         self.balance_by_distance_to_goal = balance_by_distance_to_goal
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
@@ -143,8 +147,8 @@ class ThundeRLDataModule(LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             shuffle=not self.balance_by_distance_to_goal,
-            num_workers=6,
-            persistent_workers=True,
+            num_workers=self.num_workers_train,
+            persistent_workers=self.num_workers_train > 0,
         )
 
     def val_dataloader(self) -> TRAIN_DATALOADERS:
@@ -155,9 +159,9 @@ class ThundeRLDataModule(LightningDataModule):
                 collate_fn=collate_fn,
                 batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=2,
-                # as we have multiple loader each individually should get less worker
-                persistent_workers=True,
+                num_workers=self.num_workers_val,
+                # as we have multiple loader each individually should get fewer workers
+                persistent_workers=self.num_workers_val > 0,
             )
             for dataset in self.validation_sets
         ]
