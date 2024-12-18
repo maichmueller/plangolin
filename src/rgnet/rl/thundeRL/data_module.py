@@ -4,7 +4,7 @@ import logging
 import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Sequence, Type
 
 import torch
 from lightning import LightningDataModule
@@ -39,9 +39,9 @@ class ThundeRLDataModule(LightningDataModule):
         self.encoder_factory = encoder_factory
         self.balance_by_distance_to_goal = balance_by_distance_to_goal
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
-        self.validation_sets: List[Dataset] = []
+        self.validation_sets: Sequence[Dataset] = []
 
-    def load_datasets(self, problem_paths: List[Path]) -> Dict[Path, Dataset]:
+    def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
 
         def update(dataset):
             logging.info(

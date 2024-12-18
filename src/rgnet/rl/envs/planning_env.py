@@ -2,7 +2,7 @@ import abc
 import dataclasses
 import warnings
 from itertools import cycle
-from typing import Generic, List, Optional, Tuple, Type, TypeVar
+from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar
 
 import pymimir as mi
 import torch
@@ -231,9 +231,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     def get_reward_and_done(
         self,
-        actions: List[mi.Transition],
-        current_states: List[mi.State],
-        instances: List[InstanceType] | None = None,
+        actions: Iterable[mi.Transition],
+        current_states: Sequence[mi.State],
+        instances: Sequence[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the reward and done signal for the current state and actions taken.

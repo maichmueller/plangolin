@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import pymimir as mi
 import torch
@@ -135,7 +135,7 @@ class ActorCritic(torch.nn.Module):
 
     @staticmethod
     def _select_action(
-        action_idx: torch.Tensor, transitions: List[List[mi.Transition]]
+        action_idx: torch.Tensor, transitions: Sequence[List[mi.Transition]]
     ) -> List[mi.Transition]:
 
         assert len(transitions) == len(action_idx)
@@ -143,7 +143,7 @@ class ActorCritic(torch.nn.Module):
         return [t[idx] for t, idx in zip(transitions, action_idx.tolist())]
 
     def _sample_distribution(
-        self, batched_probs: List[torch.Tensor]
+        self, batched_probs: Iterable[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward the normalized probabilities to the ProbabilisticTensorDictModule.

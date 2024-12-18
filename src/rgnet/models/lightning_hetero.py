@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from argparse import ArgumentParser
 from collections import defaultdict
 from typing import Dict, List, Optional
@@ -14,7 +16,6 @@ from .hetero_gnn import ValueHeteroGNN
 
 
 class LightningHetero(LightningModule):
-
     DEFAULT_LEARNING_RATE = 0.001
     DEFAULT_WEIGHT_DECAY = 5e-4
     DEFAULT_LOSS = "L1Loss"

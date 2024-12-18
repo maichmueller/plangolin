@@ -1,6 +1,6 @@
 import abc
 import logging
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import pymimir as mi
 import torch
@@ -10,7 +10,7 @@ from torch import Generator
 class Policy(abc.ABC):
 
     @abc.abstractmethod
-    def __call__(self, state: mi.State, applicable_actions: List[mi.Action]):
+    def __call__(self, state: mi.State, applicable_actions: Sequence[mi.Action]):
         pass
 
     def run(
@@ -42,7 +42,7 @@ class RandomPolicy(Policy):
         self.rng.manual_seed(seed)
 
     def __call__(
-        self, state: mi.State, applicable_actions: List[mi.Action]
+        self, state: mi.State, applicable_actions: Sequence[mi.Action]
     ) -> Tuple[mi.Action, mi.State]:
         action_targets = [(a, a.apply(state)) for a in applicable_actions]
         idx = torch.randint(0, len(action_targets), (1,), generator=self.rng)[0]
@@ -56,7 +56,7 @@ class ValuePolicy(Policy):
         self.value_function = value_function
 
     def __call__(
-        self, state: mi.State, applicable_actions: List[mi.Action]
+        self, state: mi.State, applicable_actions: Sequence[mi.Action]
     ) -> Tuple[mi.Action, mi.State]:
         action_targets = [(a, a.apply(state)) for a in applicable_actions]
         return min(action_targets, key=lambda a_t: self.value_function(a_t[1]))

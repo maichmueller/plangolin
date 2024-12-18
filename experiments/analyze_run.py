@@ -1,6 +1,8 @@
 import dataclasses
 import logging
-from typing import Dict, List, Optional
+import pathlib
+import re
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -19,7 +21,7 @@ from rgnet.utils import get_device_cuda_if_possible
 from rgnet.utils.plan import parse_fd_plan
 
 
-def plot_prediction_for_label(pred_for_label: Dict[int, List[Tensor]], label):
+def plot_prediction_for_label(pred_for_label: Dict[int, Sequence[Tensor]], label):
     """Plot the distribution of predicted labels for a given expected label."""
     predictions = Tensor(pred_for_label[label]).numpy()
     values, counts = np.unique(predictions, return_counts=True)
