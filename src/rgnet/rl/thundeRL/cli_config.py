@@ -17,17 +17,20 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
-from pymimir import Domain
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
-from rgnet.encoding import (
+# avoids specifying full class_path for encoder in cli
+from rgnet.encoding import (  # noqa: F401
     ColorGraphEncoder,
     DirectGraphEncoder,
     GraphEncoderBase,
     HeteroGraphEncoder,
 )
-from rgnet.models import HeteroGNN, VanillaGNN
+from rgnet.encoding.base_encoder import EncoderFactory
+
+# avoids specifying full class_path for model.gnn in cli
+from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
@@ -35,7 +38,7 @@ from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 
 # Import before the cli makes it possible to specify only the class and not the
-# full class path in the cli config.
+# full class path for model.validation_hooks in the cli config.
 from rgnet.rl.thundeRL.validation import (  # noqa: F401
     CriticValidation,
     PolicyEntropy,
