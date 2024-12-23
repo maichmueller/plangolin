@@ -107,8 +107,8 @@ class AllActionsValueEstimator(TD0Estimator):
             reward, done = self._env.get_reward_and_done(
                 transitions[time],
                 # we can use the same state and instance for all outgoing transitions
-                current_states[time : time + 1],
-                instances[time : time + 1],
+                current_states=current_states[time : time + 1],
+                instances=instances[time : time + 1],
             )
             # td0_return_estimate() but with expected value instead v(current_state)
             value_targets = reward + gamma * successor_values.squeeze() * ~done

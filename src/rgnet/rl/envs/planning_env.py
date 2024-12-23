@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import dataclasses
 import warnings
@@ -231,8 +233,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     def get_reward_and_done(
         self,
-        actions: Iterable[mi.Transition],
-        current_states: Sequence[mi.State],
+        transitions: Iterable[mi.Transition],
+        *,
+        current_states: Sequence[mi.State] | None = None,
         instances: Sequence[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -240,14 +243,16 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         The method is typically called from step, therefore current_states refers to the states
         before the actions are taken.
         The batch dimension can be over the environment batch size or the time.
-        :param actions: The actions taken by the agent.
-        :param current_states: Just for convenience, the states before the actions are taken.
-            current_states == [transition.source for transition in actions]
+        :param transitions: The actions taken by the agent.
+        :param current_states: the states before the actions are taken. If None the states are taken from transitions.
         :param instances the instances from which actions and current states stem from.
             This parameter can be used to get the rewards and done signals after a rollout was already finished.
             Defaults to self._active_instances.
         :return A tuple containing the rewards and done signal for the actions
         """
+        if current_states is None:
+            current_states = [transition.source for transition in transitions]
+
         instances = instances or self._active_instances
         is_goal: torch.Tensor = torch.tensor(
             [
@@ -259,7 +264,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
 
         is_dead_end: torch.Tensor = torch.tensor(
-            [self.is_dead_end_transition(a) for a in actions],
+            [self.is_dead_end_transition(a) for a in transitions],
             dtype=torch.bool,
             device=self.device,
         )
