@@ -26,19 +26,17 @@ def build_mdp_graph_with_prob(
      - the action schema name (edge attribute "action")
     """
     mdp_graph = nx.DiGraph()
-    for idx, state in enumerate(state_space.get_states()):
+    for state_idx, state in enumerate(state_space.get_states()):
         node_type = (
             "goal"
             if state_space.is_goal_state(state)
             else ("initial" if state_space.get_initial_state() == state else "default")
         )
-        assert state_space.get_unique_id(state) == idx
         mdp_graph.add_node(
             state_space.get_unique_id(state),
             ntype=node_type,
             dist=state_space.get_distance_to_goal_state(state),
         )
-    for state_idx, state in enumerate(state_space.get_states()):
         t_probs: List[float] = transition_probabilities[state_idx].tolist()
         reward = 0.0 if state_space.is_goal_state(state) else -1.0
         for t_idx, t in enumerate(state_space.get_forward_transitions(state)):
