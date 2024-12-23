@@ -23,7 +23,8 @@ from rgnet.utils.object_embeddings import (
 
 
 def embed_transition_targets(
-    batched_transitions: List[List[mi.Transition]], embedding_module: EmbeddingModule
+    batched_transitions: Iterable[Iterable[mi.Transition]],
+    embedding_module: EmbeddingModule,
 ) -> ObjectEmbedding:
     """
     Calculate embeddings for the targets for each transition. This will only
@@ -67,7 +68,7 @@ class ActorCritic(torch.nn.Module):
     ):
         """
         The Agent class creates all components necessary for an actor-critic policy.
-        Due to high amount of bugs in the beta and the untypical use-case we have
+        Due to high amount of bugs in the beta and the untypical use-case we have,
         we do not use ProbabilisticActor with only TensorDictModules.
 
         Attributes:

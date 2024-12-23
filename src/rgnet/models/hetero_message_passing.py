@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import operator
 from collections import defaultdict
 from functools import singledispatchmethod
 from typing import Any, Dict, List, Optional, Union
@@ -43,7 +44,7 @@ class HeteroRouting(torch.nn.Module):
     @abc.abstractmethod
     def _internal_forward(self, x, edges_index, edge_type: EdgeType): ...
 
-    def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
         for key, value in out_dict.items():
             # `hetero_conv.group` does not yet support Aggregation modules
@@ -83,17 +84,24 @@ class HeteroRouting(torch.nn.Module):
             out = self._internal_forward(x, edge_index_dict[edge_type], edge_type)
             out_dict[dst].append(out)
 
-        return self._group_out(dict(out_dict))
+        return self._group_output(dict(out_dict))
 
 
 class FanOutMP(HeteroRouting):
     """
-    Update the embeddings of the destination nodes based on the embeddings of the source nodes.
+    Perform the 'fanout' phase of message passing in a heterogeneous STRIPS-based graph (batch).
+
+    Fanout refers to the number of outgoing edges of a node in the context of message passing.
+    While this module can be used with generic relationships, we describe it in the STRIPS-graph case,
+    the fanout refers to the first step of relational-message passing:
+    Object-nodes pass their embeddings to the connected atom-nodes.
+
+    We refer to this step also as the message-creation step of a Relational Graph Neural Network,
+    since atom-embeddings store the created-messages with which object-nodes will be updated.
 
     Accepts `EdgeType`s whose attr `src` matches the parameter `src_type`.
-
     Processes the incoming edges by:
-        1. For each destination concatenate all embeddings of the source.
+        1. For each destination, i.e. predicate, concatenate all incoming (object-)embeddings.
         2. Apply the destination specific Module to the concatenated embeddings.
         3. Save the new embedding under the destination key.
 
@@ -113,7 +121,7 @@ class FanOutMP(HeteroRouting):
         """ """
         super().__init__()
         self.update_modules = ModuleDict(update_modules)
-        self.simple = SimpleConv()
+        self.static_simple_conv = SimpleConv()
         self.src_type = src_type
 
     def _accepts_edge(self, edge_type: EdgeType) -> bool:
@@ -122,19 +130,20 @@ class FanOutMP(HeteroRouting):
 
     def _internal_forward(self, x, edge_index, edge_type: EdgeType):
         position = int(edge_type[1])
-        out = self.simple(x, edge_index)
+        out = self.static_simple_conv(x, edge_index)
         return position, out
 
-    def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         grouped = dict()
-        for dst, value in out_dict.items():
-            sorted_out = sorted(value, key=lambda tpl: tpl[0])
-            stacked = torch.cat([out for _, out in sorted_out], dim=1)
-            grouped[dst] = self.update_modules[dst](stacked)
+        for predicate, value in out_dict.items():
+            sorted_out = sorted(value, key=operator.itemgetter(0))
+            stacked = torch.cat(tuple(out for _, out in sorted_out), dim=1)
+            grouped[predicate] = self.update_modules[predicate](stacked)
         return grouped
 
 
 class FanInMP(HeteroRouting):
+    """ """
 
     def __init__(
         self,
@@ -180,7 +189,7 @@ class SelectMP(pyg.nn.MessagePassing):
             aggr,
             aggr_kwargs=aggr_kwargs,
         )
-        self.hidden = hidden_size
+        self.hidden_size = hidden_size
 
     def forward(
         self, x: Union[Tensor, OptPairTensor], edge_index: Adj, position: int
@@ -192,9 +201,12 @@ class SelectMP(pyg.nn.MessagePassing):
     def message(self, x_j: Tensor, position: int) -> Tensor:
         # Take the i-th hidden-number of elements from the last dimension
         # e.g from [1, 2, 3, 4, 5, 6] with hidden=2 and position=1 -> [3, 4]
-        # alternatively split = torch.split(x_j, self.hidden, dim=-1)
-        #               split[self.position]
-        sliced = x_j[..., position * self.hidden : (position + 1) * self.hidden]
+        # alternatively:
+        #   split = torch.split(x_j, self.hidden_size, dim=-1)
+        #   return split[position]
+        sliced = x_j[
+            ..., position * self.hidden_size : (position + 1) * self.hidden_size
+        ]
         return sliced
 
     def aggregate(
