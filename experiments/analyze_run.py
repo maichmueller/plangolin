@@ -1,8 +1,6 @@
 import dataclasses
 import logging
-import pathlib
-import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -12,11 +10,11 @@ import torch
 import torch_geometric as pyg
 from torch import Tensor
 
-from experiments.data_layout import DataLayout, DatasetType
 from experiments.policy import Policy, ValuePolicy
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import LightningHetero
 from rgnet.supervised import MultiInstanceSupervisedSet
+from rgnet.supervised.data_layout import DataLayout, DatasetType
 from rgnet.utils import get_device_cuda_if_possible
 from rgnet.utils.plan import parse_fd_plan
 
