@@ -7,12 +7,48 @@ import torch_geometric as pyg
 from tensordict import TensorDict
 from torch import Tensor
 
+from rgnet.utils.reshape import unsqueeze_right_like
+
 
 class ObjectEmbedding:
     dense_embedding: Tensor
     padding_mask: Tensor
 
     def __init__(self, dense_embedding: Tensor, padding_mask: Tensor) -> None:
+        """
+        An abstraction for object embeddings of a batch with potentially different numbers of objects per element.
+
+        These masks are created when using `torch_geometric`'s `to_dense_batch` function.
+        If all batch-elements have the same number of objects, the padding mask is a
+        boolean tensor of shape [N, O] with all True values.
+        If the number of objects varies, the padding mask is a boolean tensor of shape [N, O]
+        with False values at the padded locations.
+        A padding mask M highlights at entry M[n, o] whether the object embedding
+        at object-index `o` of batch-element `n` is a padded embedding or a real one.
+
+        :param dense_embedding: The dense object embeddings.
+            Shape: [N, O, (F, ...)], where...
+                N is the number elements (states) in a batch,
+                O is the number of objects,
+                F is the embedding feature shape (e.g. a single dimension of size F).
+        :param padding_mask: A boolean mask indicating which object embeddings are real and which are paddings.
+            A truthy value means a real embedding at this location.
+            Shape: [N, O] with dtype bool.
+        """
+        if not padding_mask.ndim == 2:
+            raise ValueError(
+                f"Padding mask must have 2 dimensions, but has {padding_mask.ndim = }."
+            )
+        if dense_embedding.size(0) != padding_mask.size(0):
+            raise ValueError(
+                f"Batch size of dense_embedding and padding_mask do not match: "
+                f"{dense_embedding.size(0)} != {padding_mask.size(0)}"
+            )
+        if dense_embedding.size(1) != padding_mask.size(1):
+            raise ValueError(
+                f"Number of objects of dense_embedding and padding_mask do not match: "
+                f"{dense_embedding.size(1)} != {padding_mask.size(1)}"
+            )
         self.dense_embedding = dense_embedding
         self.padding_mask = padding_mask
 
@@ -23,6 +59,17 @@ class ObjectEmbedding:
                 "padding_mask": self.padding_mask,
             },
             batch_size=(self.dense_embedding.size(0),),
+        )
+
+    def to_masked_tensor(self):
+        """
+        Convert the object_embedding to a masked tensor.
+        """
+        unsqueezed_mask = unsqueeze_right_like(self.padding_mask, self.dense_embedding)
+        return torch.masked.MaskedTensor(
+            self.dense_embedding,
+            unsqueezed_mask.expand_as(self.dense_embedding),
+            requires_grad=self.dense_embedding.requires_grad,
         )
 
     @staticmethod
