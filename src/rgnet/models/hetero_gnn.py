@@ -97,14 +97,14 @@ class HeteroGNN(PyGHeteroModule):
             aggr=aggr,
         )
 
-    def encoding_layer(self, x_dict: Dict[str, Tensor]):
+    def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
         # Resize everything by the hidden_size
         # embedding-dims of objects = hidden_size
         # embedding-dims of atoms = (arity of predicate) * hidden_size
-        for k, v in x_dict.items():
-            assert v.dim() == 2
-            x_dict[k] = torch.zeros(
-                v.shape[0], v.shape[1] * self.hidden_size, device=v.device
+        for key, x in x_dict.items():
+            assert x.dim() == 2
+            x_dict[key] = torch.zeros(
+                x.shape[0], x.shape[1] * self.hidden_size, device=x.device
             )
         return x_dict
 
@@ -152,7 +152,9 @@ class HeteroGNN(PyGHeteroModule):
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
 
-        x_dict = self.encoding_layer(x_dict)  # Resize everything by the hidden_size
+        x_dict = self.initialize_embeddings(
+            x_dict
+        )  # Resize everything by the hidden_size
 
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)
