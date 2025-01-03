@@ -4,10 +4,11 @@ from typing import Callable, Optional, Union
 
 import torch
 import torch_geometric as pyg
+from skimage.restoration.tests.test_unwrap import dim_axis
 from tensordict import TensorDict
 from torch import Tensor
 
-from rgnet.utils.reshape import unsqueeze_right_like
+from rgnet.utils.reshape import unsqueeze_right, unsqueeze_right_like
 
 
 class ObjectEmbedding:
@@ -35,22 +36,29 @@ class ObjectEmbedding:
             A truthy value means a real embedding at this location.
             Shape: [N, O] with dtype bool.
         """
-        if not padding_mask.ndim == 2:
+        padding_dim = padding_mask.ndim
+        if (dim_diff := 2 - padding_dim) > 0:
+            padding_mask = unsqueeze_right(padding_mask, dim_diff)
+        embedding_dim = dense_embedding.ndim
+        if embedding_dim < 2:
             raise ValueError(
-                f"Padding mask must have 2 dimensions, but has {padding_mask.ndim = }."
+                f"Embeddings tensor must have at least 2 dimensions. Got {embedding_dim}."
             )
-        if dense_embedding.size(0) != padding_mask.size(0):
-            raise ValueError(
-                f"Batch size of dense_embedding and padding_mask do not match: "
-                f"{dense_embedding.size(0)} != {padding_mask.size(0)}"
-            )
-        if dense_embedding.size(1) != padding_mask.size(1):
-            raise ValueError(
-                f"Number of objects of dense_embedding and padding_mask do not match: "
-                f"{dense_embedding.size(1)} != {padding_mask.size(1)}"
-            )
+        elif embedding_dim == 2:
+            dense_embedding = dense_embedding.unsqueeze(1)
         self.dense_embedding = dense_embedding
         self.padding_mask = padding_mask
+        self._assert_dim_match(0, 1)
+
+    def _assert_dim_match(self, *dims: int):
+        dense_embedding = self.dense_embedding
+        padding_mask = self.padding_mask
+        for dim in dims:
+            if dense_embedding.size(dim) != padding_mask.size(dim):
+                raise ValueError(
+                    f"Sizes of 'dense_embedding' and 'padding_mask' at dimension {dim} do not match: "
+                    f"{dense_embedding.size(dim)} != {padding_mask.size(dim)}"
+                )
 
     def to_tensordict(self) -> TensorDict:
         return TensorDict(
@@ -66,7 +74,7 @@ class ObjectEmbedding:
         Convert the object_embedding to a masked tensor.
         """
         unsqueezed_mask = unsqueeze_right_like(self.padding_mask, self.dense_embedding)
-        return torch.masked.MaskedTensor(
+        return torch.masked.masked_tensor(
             self.dense_embedding,
             unsqueezed_mask.expand_as(self.dense_embedding),
             requires_grad=self.dense_embedding.requires_grad,

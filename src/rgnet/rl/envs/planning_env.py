@@ -374,7 +374,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
         applicable_transitions = self.get_applicable_transitions(next_states)
         # We terminate if either we came from a goal or from a dead end.
-        reward, done = self.get_reward_and_done(actions, current_states)
+        reward, done = self.get_reward_and_done(actions, current_states=current_states)
         assert reward.shape == done.shape
 
         return self.create_td(
