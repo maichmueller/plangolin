@@ -44,18 +44,6 @@ class HeteroRouting(torch.nn.Module):
     @abc.abstractmethod
     def _internal_forward(self, x, edges_index, edge_type: EdgeType): ...
 
-    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
-        aggregated: Dict[str, Tensor] = {}
-        for key, value in out_dict.items():
-            # `hetero_conv.group` does not yet support Aggregation modules
-            if isinstance(self.aggr, Aggregation):
-                out = torch.stack(value, dim=0)
-                out = self.aggr(out, dim=0).squeeze(0)
-            else:
-                out = group(value, self.aggr)
-            aggregated[key] = out
-        return aggregated
-
     def forward(self, x_dict, edge_index_dict):
         """
         Apply message passing to each edge_index key if the edge-type is accepted.
@@ -85,6 +73,18 @@ class HeteroRouting(torch.nn.Module):
             out_dict[dst].append(out)
 
         return self._group_output(dict(out_dict))
+
+    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+        aggregated: Dict[str, Tensor] = {}
+        for key, value in out_dict.items():
+            # `hetero_conv.group` does not yet support Aggregation modules
+            if isinstance(self.aggr, Aggregation):
+                out = torch.stack(value, dim=0)
+                out = self.aggr(out, dim=0).squeeze(0)
+            else:
+                out = group(value, self.aggr)
+            aggregated[key] = out
+        return aggregated
 
 
 class FanOutMP(HeteroRouting):
