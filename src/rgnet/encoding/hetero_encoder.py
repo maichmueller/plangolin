@@ -56,8 +56,15 @@ class HeteroGraphEncoder(GraphEncoderBase):
         self.obj_type_id: str = obj_type_id
         self.node_factory: NodeFactory = node_factory or NodeFactory()
         self.predicates: List[Predicate] = domain.predicates
-
+        self.type_to_name_dict = {
+            t: type_name for (type_name, t) in domain.get_type_map().items()
+        }
+        # Types get treated like a predicate, e.g., cell is just another (static) predicate
+        # and cell(a) is an atom true for every state.
         self.arity_dict = make_arity_dict(self.predicates, self.node_factory)
+        self.arity_dict.update(
+            {type_name: 1 for type_name in sorted(self.type_to_name_dict.values())}
+        )
         # Generate all possible edge types
         self.all_edge_types: List[EdgeType] = []
         for predicate, arity in self.arity_dict.items():
@@ -80,7 +87,17 @@ class HeteroGraphEncoder(GraphEncoderBase):
         graph = nx.Graph(encoding=self, state=state)
 
         for obj in problem.objects:
-            graph.add_node(self.node_factory(obj), type=self.obj_type_id)
+            obj_node = self.node_factory(obj)
+            graph.add_node(obj_node, type=self.obj_type_id)
+            # Add the type (and all its parents) of node as atom-like node
+            # Ignore "object" type
+            current_type = obj.type
+            while current_type is not None and current_type.name != "object":
+                type_name = self.type_to_name_dict[current_type]
+                obj_type_node = self.node_factory(type_name, obj=obj)
+                graph.add_node(obj_type_node, type=type_name)
+                graph.add_edge(obj_node, obj_type_node, position=0)
+                current_type = current_type.base
 
         atom_or_literal: Atom | Literal
         for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
@@ -96,15 +113,24 @@ class HeteroGraphEncoder(GraphEncoderBase):
             for pos, obj in enumerate(atom.terms):
                 # Connect predicate node to object node
                 graph.add_edge(self.node_factory(obj), atom_node, position=pos)
+
         return graph
 
     @check_encoded_by_this
     def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
-        del graph.graph["encoding"]
-        del graph.graph["state"]
+
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)
         for node, node_type in nx.get_node_attributes(graph, "type").items():
-            nodes_dict[node_type].append(node)
+            if node_type != self.obj_type_id:
+                nodes_dict[node_type].append(node)
+
+        # Make sure all objects of the problem are present in every state.
+        state: State = graph.graph["state"]
+        object_nodes = [self.node_factory(o) for o in state.get_problem().objects]
+        assert all(object_node in graph is not None for object_node in object_nodes)
+        # The order of objects should be consistent across all states of a problem.
+        # Using `get_node_attributes` dones not guarantee insertion order.
+        nodes_dict[self.obj_type_id] = object_nodes
 
         node_idx_dict: Dict[NodeType, Dict[Node, int]] = {
             ntype: {node: i for i, node in enumerate(nodes)}

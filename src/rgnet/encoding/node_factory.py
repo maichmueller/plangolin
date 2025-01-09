@@ -39,6 +39,10 @@ class NodeFactory:
         return f"{atom.get_name()}:{pos}"
 
     @__call__.register
+    def type_node(self, type_name: str, obj: Object, *args, **kwargs):
+        return f"{type_name}_{self(obj, *args, **kwargs)}"
+
+    @__call__.register
     def predicate_node(
         self,
         predicate: Predicate,
