@@ -9,6 +9,9 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
     # optimal[i] = {j},  0 <= j < len(space.get_forward_transitions(space.get_states()[i]))
     optimal: Dict[int, Set[int]] = dict()
     for i, state in enumerate(space.get_states()):
+        if len(space.get_forward_transitions(state)) == 0:
+            optimal[i] = set()
+            continue
         best_distance = min(
             space.get_distance_to_goal_state(t.target)
             for t in space.get_forward_transitions(state)
@@ -18,6 +21,7 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
             for idx, t in enumerate(space.get_forward_transitions(state))
             if space.get_distance_to_goal_state(t.target) == best_distance
         )
+
         optimal[i] = best_actions
     return optimal
 
