@@ -35,7 +35,6 @@ def simple_mlp(
 
 
 class HeteroGNN(PyGHeteroModule):
-
     def __init__(
         self,
         hidden_size: int,
@@ -98,7 +97,7 @@ class HeteroGNN(PyGHeteroModule):
         )
 
     def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
-        # Resize everything by the hidden_size
+        # Initialize embeddings for objects and atoms with 0s.
         # embedding-dims of objects = hidden_size
         # embedding-dims of atoms = (arity of predicate) * hidden_size
         for key, x in x_dict.items():
@@ -133,7 +132,7 @@ class HeteroGNN(PyGHeteroModule):
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
-    ) -> ObjectEmbedding:
+    ) -> tuple[Tensor, Tensor]:
         """
         Compute object embeddings for each state.
         The states represent graphs and their objects represent nodes.
@@ -152,9 +151,8 @@ class HeteroGNN(PyGHeteroModule):
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
 
-        x_dict = self.initialize_embeddings(
-            x_dict
-        )  # Resize everything by the hidden_size
+        # Resize everything by the hidden_size
+        self.initialize_embeddings(x_dict)
 
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)
@@ -165,11 +163,10 @@ class HeteroGNN(PyGHeteroModule):
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
-        return ObjectEmbedding.from_sparse(obj_emb, batch)
+        return obj_emb, batch
 
 
 class ValueHeteroGNN(HeteroGNN):
-
     def __init__(
         self,
         hidden_size: int,

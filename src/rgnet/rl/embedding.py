@@ -90,7 +90,9 @@ class EmbeddingTransform(Transform):
 
     def _apply_transform(self, states: NonTensorWrapper) -> TensorDictBase:
         """This function will be called by _call for every in-key."""
-        return self.embedding_module(states).to_tensordict()
+        return ObjectEmbedding.from_sparse(
+            *self.embedding_module(states)
+        ).to_tensordict()
 
     def _reset(
         self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase

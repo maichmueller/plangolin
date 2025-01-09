@@ -62,9 +62,13 @@ class PolicyGradientModule(lightning.LightningModule):
         slices = num_successors.cumsum(dim=0).long()[:-1]
 
         # Shape batch_size x embedding_size
-        object_embeddings: ObjectEmbedding = self.gnn(states_data)
+        object_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
+            *self.gnn(states_data)
+        )
         # shape (batch_size * num_successor[i]) x embedding_size
-        successor_embeddings: ObjectEmbedding = self.gnn(successors_flattened)
+        successor_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
+            *self.gnn(successors_flattened)
+        )
 
         # Sample actions from the agent
         batched_probs: List[torch.Tensor]  # probability for each transition
