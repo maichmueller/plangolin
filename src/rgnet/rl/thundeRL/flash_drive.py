@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Type, Union
+from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
 import pymimir as mi
 import torch
@@ -9,7 +9,7 @@ from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.separate import separate
 from tqdm import tqdm
 
-from rgnet.encoding import GraphEncoderBase, HeteroGraphEncoder
+from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 
@@ -112,9 +112,13 @@ class FlashDrive(InMemoryDataset):
             data.targets = tuple(
                 state_to_idx[transition.target] for transition in transitions
             )
-            data.distance_to_goal = torch.tensor(
-                space.get_distance_to_goal_state(state), dtype=torch.long
+            # pymimir returns -1 for states where to goal is not reachable
+            distance_to_goal = (
+                abs(self.custom_dead_end_reward)
+                if space.is_dead_end_state(state)
+                else space.get_distance_to_goal_state(state)
             )
+            data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[i] = data
         return batched_data
 
