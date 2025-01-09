@@ -1,5 +1,13 @@
 seed_everything: true
 
+data:
+  batch_size: 26
+  parallel: False
+  balance_by_distance_to_goal: True
+
+encoder:
+  class_path: HeteroGraphEncoder
+
 value_estimator:
   gamma: 0.9
 
@@ -14,13 +22,8 @@ data_layout:
   input_data:
     domain_name: blocks
     instances: [ small, medium ]
-    validation_instances: null
+    validation_instances: [ small ]
   root_dir: null
-
-hetero_gnn:
-  hidden_size: 8
-  num_layer: 3
-  aggr: softmax
 
 trainer:
   accelerator: auto
@@ -33,5 +36,10 @@ trainer:
       group: rl-test
       offline: True
 
-data:
-  batch_size: 26
+model:
+  gnn:
+    class_path: HeteroGNN
+    init_args:
+      num_layer: 8
+      hidden_size: 3
+      aggr: logsumexp

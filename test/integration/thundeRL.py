@@ -13,7 +13,10 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
-from rgnet.rl.thundeRL import run_lightning_fast
+
+# TODO experiments is not a source module
+from experiments.rl.thundeRL import run_lightning_fast
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 from ..supervised.test_data import hetero_data_equal
@@ -211,6 +214,7 @@ def test_full_epoch(tmp_path, small_blocks, medium_blocks):
             problem_path=problem,
             custom_dead_end_reward=-(1.0 / 1.0 - 0.9),
             root_dir=str(dataset_dir),
+            encoder_factory=HeteroGraphEncoder,
         )
         for problem in problem_dir.iterdir()
     ]
