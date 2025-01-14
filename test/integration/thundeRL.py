@@ -27,7 +27,7 @@ def setup_multiprocessing():
     torch.multiprocessing.set_start_method("fork", force=True)
 
 
-class PolicyGradientModuleMock:
+class PolicyGradientLitModuleMock:
 
     def __init__(self):
         super().__init__()
@@ -74,7 +74,7 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        rgnet.rl.thundeRL.lightning_adapter.PolicyGradientModule,
+        rgnet.rl.thundeRL.lightning_adapter.PolicyGradientLitModule,
         "training_step",
         training_step_mock,
     )
@@ -156,7 +156,7 @@ def validate_successor_batch(
 def _validate_done_reward_num_transitions(
     small_space: mi.StateSpace,
     medium_space: mi.StateSpace,
-    mock: PolicyGradientModuleMock,
+    mock: PolicyGradientLitModuleMock,
 ):
     assert len(mock.batched_list) == 5
     # we assert that every state of both problems was encountered once
@@ -222,7 +222,7 @@ def test_full_epoch(tmp_path, small_blocks, medium_blocks):
     ]
 
     assert small_space.num_states() + medium_space.num_states() == 130
-    mock = PolicyGradientModuleMock()
+    mock = PolicyGradientLitModuleMock()
     # args are specified in config.yaml
     config_file = Path(__file__).parent / "config.yaml"
     launch_thundeRL(

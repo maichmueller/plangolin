@@ -8,7 +8,7 @@ from torchrl.objectives import ValueEstimators
 from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
-from rgnet.rl.thundeRL.lightning_adapter import PolicyGradientModule
+from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
@@ -50,9 +50,7 @@ def test_training_step(fresh_drive, medium_blocks):
     current_embeddings_batch = torch.arange(BATCH_SIZE).repeat_interleave(
         num_objects_per_state
     )
-    current_embeddings = ObjectEmbedding.from_sparse(
-        current_embeddings_flat, current_embeddings_batch
-    )
+    current_embeddings = (current_embeddings_flat, current_embeddings_batch)
     assert current_embeddings.dense_embedding.requires_grad
     # last object of first state is fake
     assert not current_embeddings.padding_mask[0, -1]
@@ -83,11 +81,11 @@ def test_training_step(fresh_drive, medium_blocks):
     assert successors_batch.numel() == total_num_successors_objects
     assert successors_batch.max().item() == total_successors - 1
 
-    successor_embeddings = ObjectEmbedding.from_sparse(
-        successor_embeddings_flat, successors_batch
-    )
+    successor_embeddings = (successor_embeddings_flat, successors_batch)
     assert torch.allclose(
-        ObjectPoolingModule(pooling="add")(successor_embeddings),
+        ObjectPoolingModule(pooling="add")(
+            ObjectEmbedding.from_sparse(*successor_embeddings)
+        ),
         torch.ones(size=(total_successors,)),
     )
 
@@ -149,7 +147,7 @@ def test_training_step(fresh_drive, medium_blocks):
     loss.make_value_estimator(ValueEstimators.TD0, gamma=GAMMA)
     optimizer_mock = mockito.mock(spec=torch.optim.Optimizer)
 
-    adapter = PolicyGradientModule(
+    adapter = PolicyGradientLitModule(
         gnn_mock, actor_critic_mock, loss=loss, optim=optimizer_mock
     )
 

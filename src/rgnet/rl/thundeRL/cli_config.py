@@ -35,7 +35,7 @@ from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
-from rgnet.rl.thundeRL.lightning_adapter import PolicyGradientModule
+from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
@@ -171,7 +171,7 @@ class ThundeRLCLI(LightningCLI):
         run: bool = True,
     ) -> None:
         super().__init__(
-            PolicyGradientModule,
+            PolicyGradientLitModule,
             ThundeRLDataModule,
             save_config_callback,
             save_config_kwargs,
@@ -382,7 +382,10 @@ class ThundeRLCLI(LightningCLI):
         LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
         Therefore, we manually add our model callbacks to the extra callbacks.
         """
-        if isinstance(self.model, PolicyGradientModule) and self.model.validation_hooks:
+        if (
+            isinstance(self.model, PolicyGradientLitModule)
+            and self.model.validation_hooks
+        ):
             model_callbacks = self.model.validation_hooks
             extra_callbacks = [
                 self._get(self.config_init, c)
