@@ -267,8 +267,12 @@ class ActorCritic(torch.nn.Module):
             transitions, self._embedding_module
         )
 
-        # should be on cpu because it is solely used to split tensors
-        num_successors = torch.tensor(list(map(len, transitions)), dtype=torch.long)
+        # We need num_successors both on the GPU and CPU default to GPU.
+        num_successors = torch.tensor(
+            list(map(len, transitions)),
+            dtype=torch.long,
+            device=self.embedding_module.device,
+        )
 
         batched_probs, action_indices, log_probs = self.embedded_forward(
             current_embedding, successor_embeddings, num_successors=num_successors

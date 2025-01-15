@@ -112,15 +112,16 @@ class EmbeddingTransform(Transform):
         new_observation_spec = observation_spec.clone()
         embedding_shape: List[int] = list(observation_spec.shape)
         embedding_shape.append(self.embedding_module.hidden_size)
+        device = self.embedding_module.device
         new_observation_spec[self.current_embedding_key] = CompositeSpec(
             dense_embedding=UnboundedContinuousTensorSpec(
-                shape=torch.Size(embedding_shape)
+                shape=torch.Size(embedding_shape), device=device
             ),
             is_real_mask=UnboundedContinuousTensorSpec(
-                shape=torch.Size(embedding_shape)
+                shape=torch.Size(embedding_shape), device=device
             ),
             shape=observation_spec.shape,
-            device=self.embedding_module.device,
+            device=device,
         )
         return new_observation_spec
 
