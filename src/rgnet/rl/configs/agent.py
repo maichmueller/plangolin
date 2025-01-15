@@ -262,7 +262,7 @@ class AgentAndLossConfig:
             loss=loss,
             parameter_critic=agent.value_operator.parameters(),
             parameter_actor=chain(
-                agent.actor_net_probs.parameters(), agent.actor_net_probs.parameters()
+                agent.actor_net_probs.parameters(), agent.actor_objects_net.parameters()
             ),
             parameter_embedding=self.embedding.parameters(),
         )
