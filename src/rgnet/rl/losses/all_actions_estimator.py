@@ -142,7 +142,7 @@ class KeyBasedProvider(RewardDoneProvider):
 
 
 class AllActionsValueEstimator(TD0Estimator):
-    """
+    r"""
     Model-based value estimator that evaluates the agent over all possible actions instead
     of only the sampled action. This assumes that the environment provides all potential successor states
     along with reward and done signals for each possible transition.

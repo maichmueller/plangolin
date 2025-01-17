@@ -45,10 +45,6 @@ class AllActionsLoss(CriticLoss):
             clone_tensordict=clone_tensordict,
             keys=keys,
         )
-        assert isinstance(self.value_estimator, AllActionsValueEstimator), (
-            "AllActionsLoss only works with AllActionsValueEstimator,"
-            " because the advantage of all available actions is required."
-        )
 
     @property
     def loss_components(self):

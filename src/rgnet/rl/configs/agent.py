@@ -231,6 +231,7 @@ class AgentAndLossConfig:
             hidden_size=self.embedding.hidden_size,
             embedding_module=self.embedding,
             value_net=self.value_net,
+            add_successor_embeddings=self.use_all_actions,
         )
         policy = agent.as_td_module(
             self.env_keys.state,
