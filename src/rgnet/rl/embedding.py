@@ -56,7 +56,7 @@ class EmbeddingModule(torch.nn.Module):
             [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
         )
         as_batch = as_batch.to(self.device)
-        return self.gnn(as_batch)
+        return ObjectEmbedding.from_sparse(*self.gnn(as_batch))
 
 
 class EmbeddingTransform(Transform):
@@ -90,9 +90,7 @@ class EmbeddingTransform(Transform):
 
     def _apply_transform(self, states: NonTensorWrapper) -> TensorDictBase:
         """This function will be called by _call for every in-key."""
-        return ObjectEmbedding.from_sparse(
-            *self.embedding_module(states)
-        ).to_tensordict()
+        return self.embedding_module(states).to_tensordict()
 
     def _reset(
         self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase

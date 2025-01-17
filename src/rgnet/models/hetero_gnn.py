@@ -196,5 +196,7 @@ class ValueHeteroGNN(HeteroGNN):
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
     ) -> torch.Tensor:
-        object_embeddings = super().forward(x_dict, edge_index_dict, batch_dict)
+        object_embeddings = ObjectEmbedding.from_sparse(
+            *super().forward(x_dict, edge_index_dict, batch_dict)
+        )
         return self.readout(self.pooling(object_embeddings)).view(-1)

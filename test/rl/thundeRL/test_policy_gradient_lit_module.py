@@ -51,9 +51,10 @@ def test_training_step(fresh_drive, medium_blocks):
         num_objects_per_state
     )
     current_embeddings = (current_embeddings_flat, current_embeddings_batch)
-    assert current_embeddings.dense_embedding.requires_grad
+    current_object_embeddings = ObjectEmbedding.from_sparse(*current_embeddings)
+    assert current_object_embeddings.dense_embedding.requires_grad
     # last object of first state is fake
-    assert not current_embeddings.padding_mask[0, -1]
+    assert not current_object_embeddings.padding_mask[0, -1]
 
     # Successors have the same number of objects as source state.
     total_num_successors_objects: int = num_objects_per_state.dot(
@@ -82,16 +83,17 @@ def test_training_step(fresh_drive, medium_blocks):
     assert successors_batch.max().item() == total_successors - 1
 
     successor_embeddings = (successor_embeddings_flat, successors_batch)
+    successor_object_embeddings = ObjectEmbedding.from_sparse(*successor_embeddings)
     assert torch.allclose(
-        ObjectPoolingModule(pooling="add")(
-            ObjectEmbedding.from_sparse(*successor_embeddings)
-        ),
+        ObjectPoolingModule(pooling="add")(successor_object_embeddings),
         torch.ones(size=(total_successors,)),
     )
 
     # Expected values for current_states is sum aggregation of current_embeddings
     # shape [batch_size, 1]
-    expected_current_values = current_embeddings.dense_embedding.nansum(dim=1).squeeze()
+    expected_current_values = current_object_embeddings.dense_embedding.nansum(
+        dim=1
+    ).squeeze()
 
     def gnn_forward(batch):
         x_dict, edge_index_dict, batch_dict = PyGHeteroModule.unpack(batch)
@@ -122,8 +124,8 @@ def test_training_step(fresh_drive, medium_blocks):
         num_successors: torch.Tensor,
     ):
         assert (num_successors == real_num_successors).all()
-        assert current_embedding is current_embeddings
-        assert successor_embedding is successor_embeddings
+        assert current_embedding == current_object_embeddings
+        assert successor_embedding == successor_object_embeddings
         batched_probs = [
             torch.rand(
                 (num_successors[i].item(),), dtype=torch.float, requires_grad=True
