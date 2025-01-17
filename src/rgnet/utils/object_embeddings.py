@@ -14,7 +14,11 @@ class ObjectEmbedding:
     dense_embedding: Tensor
     padding_mask: Tensor
 
-    def __init__(self, dense_embedding: Tensor, padding_mask: Tensor) -> None:
+    def __init__(
+        self,
+        dense_embedding: Tensor,
+        padding_mask: Tensor,
+    ) -> None:
         """
         An abstraction for object embeddings of a batch with potentially different numbers of objects per element.
 
@@ -41,7 +45,7 @@ class ObjectEmbedding:
         embedding_dim = dense_embedding.ndim
         if embedding_dim < 2:
             raise ValueError(
-                f"Embeddings tensor must have at least 2 dimensions. Got {embedding_dim}."
+                f"Embeddings tensor must have at least 2 dimensions. Got {dense_embedding.shape}."
             )
         elif embedding_dim == 2:
             dense_embedding = dense_embedding.unsqueeze(1)
@@ -58,6 +62,17 @@ class ObjectEmbedding:
                     f"Sizes of 'dense_embedding' and 'padding_mask' at dimension {dim} do not match: "
                     f"{dense_embedding.size(dim)} != {padding_mask.size(dim)}"
                 )
+
+    def __eq__(self, other: object):
+        if not isinstance(other, ObjectEmbedding):
+            return NotImplemented
+        return torch.equal(
+            self.dense_embedding[self.padding_mask],
+            other.dense_embedding[other.padding_mask],
+        )
+
+    def __repr__(self):
+        return f"ObjectEmbedding(dense_embedding={self.dense_embedding}, padding_mask={self.padding_mask})"
 
     def to_tensordict(self) -> TensorDict:
         return TensorDict(
