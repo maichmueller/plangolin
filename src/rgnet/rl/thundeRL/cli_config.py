@@ -31,8 +31,15 @@ from rgnet.encoding.base_encoder import EncoderFactory
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
+from rgnet.rl.losses import (  # noqa: F401
+    ActorCriticLoss,
+    AllActionsLoss,
+    AllActionsValueEstimator,
+    CriticLoss,
+)
+from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
@@ -93,25 +100,11 @@ class OptimizerSetup:
         self.optimizer = optimizer(lr_parameters)
 
 
-class ValueEstimatorConfig:
-
-    def __init__(
-        self, gamma: float, estimator_type: ValueEstimators = ValueEstimators.TD0
-    ):
-        self.gamma = gamma
-        self.estimator = estimator_type
-
-
 @dataclasses.dataclass
 class WandbExtraParameter:
     watch_model: Optional[bool] = True  # whether to watch the model gradients
     log_frequency: int = 100  # the frequency for watch
     log_code: bool = False  # whether to save the code as wandb artifact
-
-
-def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
-    loss.make_value_estimator(value_type=estimator.estimator, gamma=estimator.gamma)
-    return loss
 
 
 def optimal_policy_dict(input_data: InputData):
@@ -243,9 +236,6 @@ class ThundeRLCLI(LightningCLI):
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
-        parser.add_class_arguments(
-            ValueEstimatorConfig, "value_estimator", as_positional=True
-        )
         parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
 
         # Link arguments
@@ -272,7 +262,11 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
         )
-        parser.link_arguments("value_estimator.gamma", "data.gamma", apply_on="parse")
+        parser.link_arguments(
+            "model.loss.init_args.value_estimator.init_args.gamma",
+            "data.gamma",
+            apply_on="parse",
+        )
         parser.link_arguments(
             "agent.value_operator", "ac_loss.critic_network", apply_on="instantiate"
         )
@@ -280,19 +274,27 @@ class ThundeRLCLI(LightningCLI):
         # Model links
         parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
 
-        parser.link_arguments(
-            ("ac_loss", "value_estimator"),
-            "model.loss",
-            apply_on="instantiate",
-            compute_fn=configure_loss,
-        )
-
         parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
         parser.link_arguments(
             "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"
         )
         parser.link_arguments(
             "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
+        )
+        # Loss links
+        parser.link_arguments(
+            "agent.value_operator",
+            "model.loss.init_args.critic_network",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "agent",
+            "model.loss.init_args.value_estimator.init_args.reward_done_provider",
+            apply_on="instantiate",
+            compute_fn=lambda agent: KeyBasedProvider(
+                LightningAdapter.default_keys.all_rewards,
+                LightningAdapter.default_keys.all_dones,
+            ),
         )
 
         # Trainer / logger links
@@ -329,7 +331,7 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source=("data_layout.input_data", "value_estimator.gamma"),
+            source=("data_layout.input_data", "data.gamma"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
@@ -350,7 +352,7 @@ class ThundeRLCLI(LightningCLI):
 
         # PolicyEvaluationValidation
         parser.link_arguments(
-            source=("data_layout.input_data", "value_estimator.gamma"),
+            source=("data_layout.input_data", "data.gamma"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
@@ -361,9 +363,9 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            "value_estimator.gamma",
+            "data.gamma",
             "model.validation_hooks.init_args.gamma",
-            apply_on="parse",
+            apply_on="instantiate",
         )
 
         # ProbsStoreCallback, PolicyEvaluationValidation

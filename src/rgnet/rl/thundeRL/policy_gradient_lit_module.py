@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional, Tuple, Union
+import dataclasses
+from typing import List, Optional, Tuple, Union
 
 import lightning
 import torch
@@ -7,28 +8,39 @@ from tensordict import LazyStackedTensorDict, TensorDict
 from torch.nn import ModuleList
 from torch_geometric.data import Batch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
-from torchrl.objectives import LossModule
 
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
+from rgnet.rl.losses import AllActionsLoss, CriticLoss
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 class PolicyGradientLitModule(lightning.LightningModule):
+    @dataclasses.dataclass
+    class _AcceptedKeys:
+        all_rewards: str = "all_rewards"
+        all_dones: str = "all_dones"
+        idx_in_space: str = "idx_in_space"
+
+    default_keys = _AcceptedKeys()
+
     def __init__(
         self,
         gnn: Union[PyGModule, PyGHeteroModule],
         actor_critic: ActorCritic,
-        loss: LossModule,
+        loss: CriticLoss,
         optim: torch.optim.Optimizer,
         validation_hooks: Optional[List[ValidationCallback]] = None,
+        add_all_rewards_and_done: bool = False,
+        add_successor_embeddings: bool = False,
+        keys: _AcceptedKeys = default_keys,
     ) -> None:
         super().__init__()
         assert isinstance(actor_critic, ActorCritic)
-        assert isinstance(loss, LossModule)
+        assert isinstance(loss, CriticLoss)
         assert isinstance(optim, torch.optim.Optimizer)
         if not isinstance(gnn, PyGHeteroModule) and not isinstance(gnn, PyGModule):
             raise ValueError(f"Unknown GNN type: {gnn}")
@@ -37,6 +49,10 @@ class PolicyGradientLitModule(lightning.LightningModule):
         self.loss = loss
         self.optim = optim
         self.validation_hooks = ModuleList(validation_hooks or [])
+        is_all_actions = isinstance(loss, AllActionsLoss)
+        self.add_all_rewards_and_done = add_all_rewards_and_done or is_all_actions
+        self.add_successor_embeddings = add_successor_embeddings or is_all_actions
+        self.keys = keys
 
     @staticmethod
     def _get_rewards_and_done(
@@ -59,7 +75,8 @@ class PolicyGradientLitModule(lightning.LightningModule):
     ) -> TensorDict:
         # Required to group the flattened tensors by each state.
         # E.g., group all the embeddings for each successor state
-        slices = num_successors.cumsum(dim=0).long()[:-1]
+        successor_start_indices = num_successors.cumsum(dim=0).long()[:-1]
+        successor_start_indices_cpu = successor_start_indices.cpu()
 
         # Shape batch_size x embedding_size
         object_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
@@ -77,10 +94,13 @@ class PolicyGradientLitModule(lightning.LightningModule):
         )
         # We map the action_indices which are per state into the successor tensor
         # which contains the concatenation of all successor object embeddings.
-        # slices[i] is the position where the successors of state i start.
-        # so slices[i] + actions_indices[i] is the i-th successor in the continuous successor tensor.
+        # successor_start_indices[i] is the position where the successors of state i start.
+        # so successor_start_indices[i] + actions_indices[i] is the i-th successor in the continuous successor tensor.
         successor_action_indices = torch.cat(
-            [torch.tensor([0], device=slices.device), slices]
+            [
+                torch.tensor([0], device=successor_start_indices.device),
+                successor_start_indices,
+            ]
         )
         successor_action_indices = successor_action_indices + action_indices
         rewards, terminated = self._get_rewards_and_done(
@@ -108,15 +128,35 @@ class PolicyGradientLitModule(lightning.LightningModule):
             batch_size=(states_data.batch_size,),
         )
 
+        td_dict = {
+            env_keys.action: action_indices,
+            ac_keys.current_embedding: object_embeddings.to_tensordict(),
+            ac_keys.log_probs: log_probs,
+            ac_keys.probs: as_non_tensor_stack(batched_probs),
+            self.keys.idx_in_space: states_data.idx,  # torch.Tensor int64
+            "next": next_td,
+        }
+        if self.add_all_rewards_and_done:
+            all_rewards: List[torch.Tensor] = list(
+                states_data.reward.tensor_split(successor_start_indices_cpu)
+            )
+            all_dones: List[torch.Tensor] = list(
+                states_data.done.tensor_split(successor_start_indices_cpu)
+            )
+            td_dict |= {
+                self.keys.all_rewards: as_non_tensor_stack(all_rewards),
+                self.keys.all_dones: as_non_tensor_stack(all_dones),
+            }
+        if self.add_successor_embeddings:
+            split_embeddings: List[ObjectEmbedding] = successor_embeddings.tensor_split(
+                successor_start_indices_cpu
+            )
+            td_dict[self.actor_critic.keys.successor_embeddings] = as_non_tensor_stack(
+                map(lambda s: s.to_tensordict(), split_embeddings)
+            )
+
         td = TensorDict(
-            {
-                env_keys.action: action_indices,
-                ac_keys.current_embedding: object_embeddings.to_tensordict(),
-                ac_keys.log_probs: log_probs,
-                ac_keys.probs: as_non_tensor_stack(batched_probs),
-                "idx_in_space": states_data.idx,  # torch.Tensor int64
-                "next": next_td,
-            },
+            source=td_dict,
             batch_size=(states_data.batch_size,),
         )
         # Most losses / value estimators expect a time dimension.

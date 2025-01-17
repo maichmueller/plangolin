@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable, Literal, Optional, Union
+import logging
+from typing import Callable, List, Literal, Union
 
 import torch
-import torch_geometric
 import torch_geometric as pyg
 from tensordict import TensorDict
 from torch import Tensor
@@ -83,6 +83,20 @@ class ObjectEmbedding:
             },
             batch_size=(self.dense_embedding.size(0),),
         )
+
+    def tensor_split(self, split_indices_tensor: torch.Tensor) -> List[ObjectEmbedding]:
+        if not split_indices_tensor.is_cpu:
+            logging.info(
+                "Received split tensor that was on the GPU."
+                " Torch requires it to be on the CPU."
+                " Performing implicit device move."
+            )
+            split_indices_tensor = split_indices_tensor.cpu()
+        split_dense = self.dense_embedding.tensor_split(split_indices_tensor)
+        split_mask = self.padding_mask.tensor_split(split_indices_tensor)
+        return [
+            ObjectEmbedding(dense, mask) for dense, mask in zip(split_dense, split_mask)
+        ]
 
     def to_masked_tensor(self):
         """
