@@ -4,7 +4,6 @@ from typing import Callable, Optional, Union
 
 import torch
 import torch_geometric as pyg
-from skimage.restoration.tests.test_unwrap import dim_axis
 from tensordict import TensorDict
 from torch import Tensor
 
