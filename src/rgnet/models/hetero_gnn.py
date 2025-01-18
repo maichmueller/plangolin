@@ -73,7 +73,7 @@ class HeteroGNN(PyGHeteroModule):
             pred: ResidualModule(
                 simple_mlp(
                     *([hidden_size * arity] * 3),
-                    act=activation,
+                    activation=activation,
                 )
             )
             for pred, arity in arity_dict.items()
