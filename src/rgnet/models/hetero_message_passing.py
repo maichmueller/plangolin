@@ -163,7 +163,7 @@ class FanInMP(HeteroRouting):
     def _internal_forward(self, x, edges_index, edge_type):
         return self.select(x, edges_index, int(edge_type[1]))
 
-    def _group_out(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated = {}
         for dst, values in out_dict.items():
             if dst == self.dst_name:
