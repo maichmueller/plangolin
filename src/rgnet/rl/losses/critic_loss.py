@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
@@ -9,22 +9,9 @@ from tensordict.nn import TensorDictModule
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule, ValueEstimators, distance_loss
 from torchrl.objectives.utils import _reduce
-from torchrl.objectives.value import (
-    GAE,
-    TD0Estimator,
-    TD1Estimator,
-    TDLambdaEstimator,
-    ValueEstimatorBase,
-)
+from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
 
 from rgnet.rl.losses import AllActionsValueEstimator
-
-# You can either provide a fully instantiated value estimator, where the value_network
-# is already configured, or a partially instantiated value estimator where the value_network
-# is missing.
-ValueEstimatorStub = Optional[
-    ValueEstimatorBase | Callable[[ValueOperator], ValueEstimatorBase]
-]
 
 
 class CriticLoss(LossModule):
@@ -47,7 +34,6 @@ class CriticLoss(LossModule):
         critic_network: ValueOperator,
         reduction: Optional[str] = None,
         loss_critic_type: str = "l2",
-        value_estimator: ValueEstimatorStub = None,
         clone_tensordict: bool = True,
         keys: _AcceptedKeys = default_keys,
     ):
@@ -55,12 +41,6 @@ class CriticLoss(LossModule):
         self.critic_network = critic_network
         self.reduction: str = reduction or "mean"
         self.loss_critic_type: str = loss_critic_type
-        if value_estimator is not None:
-            if isinstance(value_estimator, ValueEstimatorBase):
-                self._value_estimator = value_estimator
-            else:
-                assert isinstance(value_estimator, Callable)
-                self._value_estimator = value_estimator(self.critic_network)
         self.clone_tensordict: bool = clone_tensordict
         self._tensor_keys: CriticLoss._AcceptedKeys = keys
 

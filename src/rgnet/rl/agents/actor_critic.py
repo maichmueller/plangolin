@@ -14,7 +14,6 @@ from tensordict.nn import (
     TensorDictModule,
 )
 from torch import Tensor
-from torchrl.envs.utils import ExplorationType
 from torchrl.modules.tensordict_module import ValueOperator
 
 from rgnet.models.hetero_gnn import simple_mlp

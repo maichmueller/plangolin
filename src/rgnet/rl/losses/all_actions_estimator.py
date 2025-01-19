@@ -182,6 +182,7 @@ class AllActionsValueEstimator(TD0Estimator):
         gamma: float | torch.Tensor,
         compute_successor_advantages: bool = True,
         keys: _AcceptedKeys = default_keys,
+        **estimator_kwargs,
     ):
         """
 
@@ -193,13 +194,7 @@ class AllActionsValueEstimator(TD0Estimator):
             If this estimator is used with AllActionsLoss the compute_successor_advantages should be set to true, otherwise
             the estimator can be solely used for a more informed value target for v(s).
         """
-        super().__init__(
-            value_network=value_network,
-            gamma=gamma,
-            shifted=True,
-            average_rewards=False,
-            differentiable=False,
-        )
+        super().__init__(value_network=value_network, gamma=gamma, **estimator_kwargs)
         self._reward_done_provider = reward_done_provider
         self.compute_successor_advantages = compute_successor_advantages
         self._tensor_keys = keys

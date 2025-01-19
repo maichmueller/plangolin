@@ -5,7 +5,7 @@ from functools import cache
 from itertools import chain
 from os import PathLike
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
 
 import torch
 from lightning import Trainer
@@ -130,6 +130,38 @@ def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str
     return {i: p.name for i, p in enumerate(input_data.validation_problems)}
 
 
+class ValueEstimatorConfig:
+
+    def __init__(
+        self,
+        gamma: float,
+        value_type: (
+            ValueEstimators | Literal["AllActionsValueEstimator"]
+        ) = ValueEstimators.TD0,
+    ):
+        self.gamma = gamma
+        self.estimator_type = value_type
+
+
+def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):
+    """
+    We need to configure the estimator after the loss was instantiated via make_value_estimator.
+    This is why we have the estimator and loss as separate keys and link them together for
+    configuring `model.loss`.
+    """
+    hyperparameter = dict()
+    if estimator_config.estimator_type == "AllActionsValueEstimator":
+        hyperparameter["reward_done_provider"] = KeyBasedProvider(
+            reward_key=LightningAdapter.default_keys.all_rewards,
+            done_key=LightningAdapter.default_keys.all_dones,
+        )
+    hyperparameter["shifted"] = True
+    hyperparameter["gamma"] = estimator_config.gamma
+
+    loss.make_value_estimator(estimator_config.estimator_type, **hyperparameter)
+    return loss
+
+
 @dataclasses.dataclass
 class TestSetup:
     """
@@ -224,12 +256,17 @@ class ThundeRLCLI(LightningCLI):
             InputData, "data_layout.input_data", as_positional=True
         )
         parser.add_dataclass_arguments(OutputData, "data_layout.output_data")
+
         parser.add_class_arguments(
-            ActorCriticLoss,
-            "ac_loss",
+            ValueEstimatorConfig, as_positional=True, nested_key="estimator_config"
+        )
+        parser.add_subclass_arguments(
+            CriticLoss,
             as_positional=True,
+            nested_key="loss",
             skip={"clone_tensordict", "keys"},
         )
+
         parser.add_class_arguments(
             ActorCritic, "agent", as_positional=True, skip={"keys"}
         )
@@ -263,12 +300,9 @@ class ThundeRLCLI(LightningCLI):
             "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
         )
         parser.link_arguments(
-            "model.loss.init_args.value_estimator.init_args.gamma",
+            "estimator_config.gamma",
             "data.gamma",
             apply_on="parse",
-        )
-        parser.link_arguments(
-            "agent.value_operator", "ac_loss.critic_network", apply_on="instantiate"
         )
 
         # Model links
@@ -284,17 +318,28 @@ class ThundeRLCLI(LightningCLI):
         # Loss links
         parser.link_arguments(
             "agent.value_operator",
-            "model.loss.init_args.critic_network",
+            "loss.init_args.critic_network",
             apply_on="instantiate",
         )
         parser.link_arguments(
-            "agent",
-            "model.loss.init_args.value_estimator.init_args.reward_done_provider",
+            ("loss", "estimator_config"),
+            "model.loss",
             apply_on="instantiate",
-            compute_fn=lambda agent: KeyBasedProvider(
-                LightningAdapter.default_keys.all_rewards,
-                LightningAdapter.default_keys.all_dones,
-            ),
+            compute_fn=configure_loss,
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_all_rewards_and_done",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_successor_embeddings",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
         )
 
         # Trainer / logger links

@@ -230,6 +230,7 @@ class TestAllActionsValueEstimator:
             critic_mock,
             KeyBasedProvider("all_rewards", "all_dones"),
             gamma=self.GAMMA,
+            shifted=True,
             compute_successor_advantages=True,
         )
         result = estimator(in_data)

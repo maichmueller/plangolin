@@ -11,10 +11,6 @@ from torchrl.objectives.utils import _reduce
 from rgnet.rl import ActorCritic
 from rgnet.rl.losses import AllActionsValueEstimator, CriticLoss
 
-AllActionsStubType = Optional[
-    Callable[[ValueOperator], AllActionsValueEstimator] | AllActionsValueEstimator
-]
-
 
 class AllActionsLoss(CriticLoss):
     @dataclass(frozen=True)
@@ -33,7 +29,6 @@ class AllActionsLoss(CriticLoss):
         critic_network: ValueOperator,
         reduction: Optional[Literal["mean", "sum", "max"]] = None,
         loss_critic_type: str = "l2",
-        value_estimator: AllActionsStubType = None,
         clone_tensordict: bool = True,
         keys: _AcceptedKeys = default_keys,
     ):
@@ -41,7 +36,6 @@ class AllActionsLoss(CriticLoss):
             critic_network,
             reduction,
             loss_critic_type,
-            value_estimator=value_estimator,
             clone_tensordict=clone_tensordict,
             keys=keys,
         )

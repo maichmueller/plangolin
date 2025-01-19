@@ -48,7 +48,7 @@ class TestAllActionsLoss:
         return critic
 
     def data(self) -> Tuple[TensorDict, torch.Tensor, torch.Tensor]:
-        """
+        r"""
         batch_size = 1, num_successors = [2], gamma=0.999
 
         One state with two successors
@@ -112,11 +112,11 @@ class TestAllActionsLoss:
 
         loss = AllActionsLoss(
             critic_network=critic_mock,
-            value_estimator=all_actions_estimator_mock,
             loss_critic_type="l2",
             reduction="mean",
             clone_tensordict=True,
         )
+        loss._value_estimator = all_actions_estimator_mock
         assert loss.loss_components == ["loss_critic", "loss_actor"]
 
         loss_output = loss(

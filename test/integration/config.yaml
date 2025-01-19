@@ -3,13 +3,10 @@ seed_everything: true
 data:
   batch_size: 26
   parallel: False
-  balance_by_distance_to_goal: True
+  balance_by_distance_to_goal: False
 
 encoder:
   class_path: HeteroGraphEncoder
-
-value_estimator:
-  gamma: 0.9
 
 optimizer_setup:
   optimizer:
@@ -35,6 +32,13 @@ trainer:
       project: rgnet
       group: rl-test
       offline: True
+
+loss:
+  class_path: ActorCriticLoss
+
+estimator_config:
+  value_type: TD0
+  gamma: 0.9
 
 model:
   gnn:
