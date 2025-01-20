@@ -207,7 +207,7 @@ class ActorCritic(torch.nn.Module):
             current_embeddings.dense_embedding,
             current_embeddings.padding_mask,
         )
-        dense_successor, is_real_successor = (
+        dense_successor, padding_mask_successor = (
             successor_embeddings.dense_embedding,
             successor_embeddings.padding_mask,
         )
@@ -215,11 +215,11 @@ class ActorCritic(torch.nn.Module):
         repeated_dense = dense.repeat_interleave(repeats=num_successors, dim=0)
 
         pairs_with_fake = torch.cat([repeated_dense, dense_successor], dim=2)
-        pairs = pairs_with_fake[is_real_successor]
+        pairs = pairs_with_fake[padding_mask_successor]
         # [N, 2*hidden]
         object_diffs: torch.Tensor = self.actor_objects_net(pairs)
 
-        successor_batch = mask_to_batch_indices(is_real_successor)
+        successor_batch = mask_to_batch_indices(padding_mask_successor)
         # [batch_size * num_successor, 2 * hidden]
         aggregated_embeddings: torch.Tensor = pyg.nn.global_add_pool(
             object_diffs, successor_batch
