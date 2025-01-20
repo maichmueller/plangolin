@@ -4,12 +4,10 @@ from typing import Callable, Dict, Optional, Union, final
 
 import torch
 import torch_geometric as pyg
-from ase.test.calculator.gamess_us.test_gamess_us import kwargs
 from torch import Tensor
 from torch_geometric.nn.aggr import SoftmaxAggregation
 from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
-from triton.profiler import finalize
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
