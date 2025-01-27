@@ -10,7 +10,7 @@ from torchrl.objectives import LossModule
 from torchrl.record.loggers import Logger
 from tqdm import tqdm
 
-from rgnet.rl import RolloutCollector
+from rgnet.rl.rollout_collector import RolloutCollector
 
 
 class Trainer(torchrl.trainers.Trainer):

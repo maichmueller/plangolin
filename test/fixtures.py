@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist

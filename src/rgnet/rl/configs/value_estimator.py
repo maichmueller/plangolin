@@ -6,8 +6,9 @@ from typing import Optional
 import torch
 from torchrl.objectives import ValueEstimators
 
-from rgnet.rl import ActorCritic, EmbeddingModule, NonTensorTransformedEnv
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData
+from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.losses.all_actions_estimator import EnvironmentBasedRewardProvider

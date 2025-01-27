@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
@@ -8,7 +8,7 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 from torchrl.objectives.utils import _reduce
 
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.losses import AllActionsValueEstimator, CriticLoss
 
 

@@ -31,7 +31,7 @@ from rgnet.encoding.base_encoder import EncoderFactory
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,

@@ -13,7 +13,7 @@ from tensordict import LazyStackedTensorDict, NonTensorStack, TensorDict
 from torch import tensor
 from torchrl.modules import ValueOperator
 
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import MultiInstanceStateSpaceEnv, PlanningEnvironment
 from rgnet.rl.losses import AllActionsValueEstimator
 from rgnet.rl.losses.all_actions_estimator import (

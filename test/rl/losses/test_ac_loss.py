@@ -13,13 +13,14 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.embedding import (
     EmbeddingTransform,
     NonTensorTransformedEnv,
     build_embedding_and_gnn,
 )
 from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.losses import ActorCriticLoss
 
 
 @pytest.fixture
@@ -85,7 +86,7 @@ def actor_mock(hidden_size=3):
 def test_forward(critic_mock, actor_mock, rollout_not_done):
     gamma = 0.9
     loss = ActorCriticLoss(critic_mock, reduction="mean")
-    loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=True)
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=False)
 
     optim = torch.optim.SGD(chain(critic_mock.parameters(), actor_mock.parameters()))
 

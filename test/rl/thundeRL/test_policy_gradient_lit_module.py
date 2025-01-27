@@ -6,7 +6,8 @@ from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
 from rgnet.models import HeteroGNN, PyGHeteroModule
-from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl.agents import ActorCritic
+from rgnet.rl.losses import ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule

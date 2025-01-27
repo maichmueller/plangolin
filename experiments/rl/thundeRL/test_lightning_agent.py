@@ -26,13 +26,13 @@ from tqdm import tqdm
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
-from rgnet.rl import (
-    ActorCritic,
+from rgnet.rl.agents import ActorCritic
+from rgnet.rl.data_layout import InputData, OutputData
+from rgnet.rl.embedding import (
     EmbeddingModule,
     EmbeddingTransform,
     NonTensorTransformedEnv,
 )
-from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.envs import (
     ExpandedStateSpaceEnv,
     PlanningEnvironment,
