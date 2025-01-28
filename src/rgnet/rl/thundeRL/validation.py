@@ -537,7 +537,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         """
         We need to transfer the graphs to device which are non-tensors, so we can't use register_buffer().
         The functions to(...) or cuda(...) are actually never called because the callbacks
-        are only nested within lightning_adapter so this seems to be the only way to
+        are only nested within policy_gradient_lit_module so this seems to be the only way to
         catch the device transfer.
         """
         if recurse:

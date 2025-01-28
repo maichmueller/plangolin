@@ -74,7 +74,7 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        rgnet.rl.thundeRL.lightning_adapter.PolicyGradientLitModule,
+        rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule,
         "training_step",
         training_step_mock,
     )

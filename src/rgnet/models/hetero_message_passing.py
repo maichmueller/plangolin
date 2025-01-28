@@ -4,7 +4,6 @@ import abc
 import logging
 import operator
 from collections import defaultdict
-from functools import singledispatchmethod
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch

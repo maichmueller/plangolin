@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, Union, final
+from typing import Callable, Dict, Optional, Union
 
 import torch
 import torch_geometric as pyg
