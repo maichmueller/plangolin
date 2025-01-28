@@ -165,6 +165,5 @@ class PolicyGradientLitModule(lightning.LightningModule):
                         "validation/" + key, value, batch_size=batch_tuple[0].batch_size
                     )
 
-    # TODO: why is the return type a scheduler and we return the optimizer?
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim
