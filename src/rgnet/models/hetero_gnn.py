@@ -123,7 +123,7 @@ class HeteroGNN(PyGHeteroModule):
             torch.cat([x_dict[self.obj_type_id], object_msgs], dim=1)
         )
         # residual update (current + updates)
-        x_dict[self.obj_type_id] += updated_obj_emb
+        x_dict[self.obj_type_id] = x_dict[self.obj_type_id] + updated_obj_emb
 
     def forward(
         self,
