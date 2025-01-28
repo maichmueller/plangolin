@@ -29,7 +29,7 @@ class ObjectEmbedding:
         If the number of objects varies, the padding mask is a boolean tensor of shape [N, O]
         with False values at the padded locations.
         A padding mask M highlights at entry M[n, o] whether the object embedding
-        at object-index `o` of batch-element `n` is a padded embedding or a real one.
+        at object-index `o` of batch-element `n` is a real (True) or padded embedding (False).
 
         :param dense_embedding: The dense object embeddings.
             Shape: [N, O, (F, ...)], where...
