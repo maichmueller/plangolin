@@ -37,8 +37,8 @@ def optimal_policy_tensors(space: mi.StateSpace) -> list[Tensor]:
             [space.get_distance_to_goal_state(t.target) for t in transitions],
             dtype=torch.int,
         )
-        best_distances = torch.argmin(distances).view(-1)
-        policy = torch.zeros((len(transitions),), dtype=torch.int)
+        best_distances, _ = torch.where(distances == torch.min(distances))
+        policy = torch.zeros((len(transitions),), dtype=torch.float)
         policy[best_distances] = 1.0 / len(best_distances)
         optimal[i] = policy
     return optimal
