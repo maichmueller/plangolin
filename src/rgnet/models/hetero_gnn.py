@@ -143,7 +143,8 @@ class HeteroGNN(PyGHeteroModule):
         :return: A tuple containing:
         - The first tensor contains object embeddings with shape [N, hidden_size], where N is the total number of objects across all states in the batch.
         - The second tensor contains batch indices with shape [N], mapping each object (node) to its corresponding state (graph).
-        Note that the number of objects is not necessarily equal for each state.
+        Note that the number of objects is not necessarily equal for each state. This tuple can be used to instantiate an `ObjectEmbedding`.
+        We do not return this object directly since pytorch would refuse to accept hooks with this return type.
         """
         # Filter out dummies
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
