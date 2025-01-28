@@ -141,19 +141,19 @@ class ObjectPoolingModule(torch.nn.Module):
 
     @staticmethod
     def sum(dense_embedding: Tensor):
-        return torch.sum(dense_embedding, dim=-2)
+        return torch.sum(dense_embedding, dim=1)
 
     @staticmethod
     def add(dense_embedding: Tensor):
-        return torch.sum(dense_embedding, dim=-2)
+        return torch.sum(dense_embedding, dim=1)
 
     @staticmethod
     def mean(dense_embedding: Tensor):
-        return torch.mean(dense_embedding, dim=-2)
+        return torch.mean(dense_embedding, dim=1)
 
     @staticmethod
     def max(dense_embedding: Tensor):
-        return torch.amax(dense_embedding, dim=-2)
+        return torch.amax(dense_embedding, dim=1)
 
     def __init__(
         self,
