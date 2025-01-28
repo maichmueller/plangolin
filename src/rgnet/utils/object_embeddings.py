@@ -6,6 +6,7 @@ import torch
 import torch_geometric as pyg
 from tensordict import TensorDict
 from torch import Tensor
+from torch.masked import MaskedTensor
 
 from rgnet.utils.reshape import unsqueeze_right, unsqueeze_right_like
 
@@ -139,42 +140,43 @@ def mask_to_batch_indices(mask: torch.Tensor):
 class ObjectPoolingModule(torch.nn.Module):
 
     @staticmethod
-    def nansum(dense_embedding: Tensor, _ignored: Tensor):
-        return torch.nansum(dense_embedding, dim=-2)
+    def sum(dense_embedding: Tensor):
+        return torch.sum(dense_embedding, dim=-2)
 
     @staticmethod
-    def nanmean(dense_embedding: Tensor, _ignored: Tensor):
-        return torch.nansum(dense_embedding, dim=-2)
+    def add(dense_embedding: Tensor):
+        return torch.sum(dense_embedding, dim=-2)
 
     @staticmethod
-    def nanmax(dense_embedding: Tensor, _ignored: Tensor):
-        return dense_embedding.nan_to_num(torch.finfo(dense_embedding.dtype).min).max(
-            dim=-2
-        )
+    def mean(dense_embedding: Tensor):
+        return torch.mean(dense_embedding, dim=-2)
+
+    @staticmethod
+    def max(dense_embedding: Tensor):
+        return torch.amax(dense_embedding, dim=-2)
 
     def __init__(
         self,
-        pooling: Union[str, Callable[[Tensor, Tensor], Tensor]] = "add",
+        pooling: Union[
+            str,
+            Callable[[MaskedTensor], Tensor],
+            Callable[[Tensor, Tensor], Tensor],
+        ] = "add",
     ) -> None:
         super().__init__()
-        self.pooling: Callable[[Tensor, Tensor], Tensor]
         if isinstance(pooling, str):
-            if pooling in ("add", "sum"):
-                self.pooling = ObjectPoolingModule.nansum
-            elif pooling == "mean":
-                self.pooling = ObjectPoolingModule.nanmean
-            elif pooling == "max":
-                self.pooling = ObjectPoolingModule.nanmax
-            else:
+            options = ["sum", "mean", "max", "add"]
+            if pooling not in options:
                 raise ValueError(
-                    f"Unknown pooling function: {pooling}. Choose from [add, mean, max]."
+                    f"Invalid pooling function: {pooling}. Choose from {options}."
                 )
-            self.handles_mask = False
+            self.pooling = vars(ObjectPoolingModule)[pooling]
+            self.raw_tensor_based = False
         else:
-            self.handles_mask = True
+            self.raw_tensor_based = True
             self.pooling = pooling
 
-    def forward(self, object_embedding: ObjectEmbedding | TensorDict | torch.Tensor):
+    def forward(self, object_embedding):
         """
         Pool the object embeddings.
 
@@ -191,19 +193,22 @@ class ObjectPoolingModule(torch.nn.Module):
 
         :return: The pooled embeddings.
         """
+
         if isinstance(object_embedding, torch.Tensor):
-            return self.pooling(object_embedding, torch.empty((0,)))
+            object_embedding = torch.masked.masked_tensor(
+                object_embedding, torch.isnan(object_embedding)
+            )
+
+        if isinstance(object_embedding, MaskedTensor):
+            assert self.raw_tensor_based
+            return self.pooling(object_embedding)
 
         if isinstance(object_embedding, TensorDict):
             object_embedding = ObjectEmbedding.from_tensordict(object_embedding)
 
         dense_embedding = object_embedding.dense_embedding
         assert dense_embedding.dim() >= 2
-
-        if self.handles_mask:
-            return self.pooling(
-                dense_embedding[object_embedding.padding_mask],
-                mask_to_batch_indices(object_embedding.padding_mask),
-            )
-        else:
-            return self.pooling(dense_embedding, torch.empty((0,)))
+        return self.pooling(
+            dense_embedding[object_embedding.padding_mask],
+            mask_to_batch_indices(object_embedding.padding_mask),
+        )
