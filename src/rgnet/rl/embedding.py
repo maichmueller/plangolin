@@ -1,4 +1,6 @@
-from typing import List, Optional
+from __future__ import annotations
+
+from typing import Iterable, List, Optional
 
 import pymimir as mi
 import torch
@@ -46,7 +48,7 @@ class EmbeddingModule(torch.nn.Module):
         self.gnn = gnn
         self.encoder: HeteroGraphEncoder = encoder
 
-    def forward(self, states: List[mi.State] | NonTensorWrapper) -> ObjectEmbedding:
+    def forward(self, states: Iterable[mi.State] | NonTensorWrapper) -> ObjectEmbedding:
         states = tolist(states)
         assert isinstance(states, List)
 
@@ -54,7 +56,7 @@ class EmbeddingModule(torch.nn.Module):
             [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
         )
         as_batch = as_batch.to(self.device)
-        return self.gnn(as_batch.x_dict, as_batch.edge_index_dict, as_batch.batch_dict)
+        return ObjectEmbedding.from_sparse(*self.gnn(as_batch))
 
 
 class EmbeddingTransform(Transform):
@@ -117,7 +119,7 @@ class EmbeddingTransform(Transform):
             dense_embedding=UnboundedContinuousTensorSpec(
                 shape=torch.Size(embedding_shape), device=device
             ),
-            is_real_mask=UnboundedContinuousTensorSpec(
+            padding_mask=UnboundedContinuousTensorSpec(
                 shape=torch.Size(embedding_shape), device=device
             ),
             shape=observation_spec.shape,

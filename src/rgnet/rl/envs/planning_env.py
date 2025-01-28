@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import abc
 import dataclasses
 import warnings
 from itertools import cycle
-from typing import Generic, List, Optional, Tuple, Type, TypeVar
+from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar
 
 import pymimir as mi
 import torch
@@ -231,23 +233,26 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     def get_reward_and_done(
         self,
-        actions: List[mi.Transition],
-        current_states: List[mi.State],
-        instances: List[InstanceType] | None = None,
+        transitions: Iterable[mi.Transition],
+        *,
+        current_states: Sequence[mi.State] | None = None,
+        instances: Sequence[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the reward and done signal for the current state and actions taken.
         The method is typically called from step, therefore current_states refers to the states
         before the actions are taken.
         The batch dimension can be over the environment batch size or the time.
-        :param actions: The actions taken by the agent.
-        :param current_states: Just for convenience, the states before the actions are taken.
-            current_states == [transition.source for transition in actions]
+        :param transitions: The actions taken by the agent.
+        :param current_states: the states before the actions are taken. If None the states are taken from transitions.
         :param instances the instances from which actions and current states stem from.
             This parameter can be used to get the rewards and done signals after a rollout was already finished.
             Defaults to self._active_instances.
         :return A tuple containing the rewards and done signal for the actions
         """
+        if current_states is None:
+            current_states = [transition.source for transition in transitions]
+
         instances = instances or self._active_instances
         is_goal: torch.Tensor = torch.tensor(
             [
@@ -259,7 +264,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
 
         is_dead_end: torch.Tensor = torch.tensor(
-            [self.is_dead_end_transition(a) for a in actions],
+            [self.is_dead_end_transition(a) for a in transitions],
             dtype=torch.bool,
             device=self.device,
         )
@@ -369,7 +374,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
         applicable_transitions = self.get_applicable_transitions(next_states)
         # We terminate if either we came from a goal or from a dead end.
-        reward, done = self.get_reward_and_done(actions, current_states)
+        reward, done = self.get_reward_and_done(actions, current_states=current_states)
         assert reward.shape == done.shape
 
         return self.create_td(

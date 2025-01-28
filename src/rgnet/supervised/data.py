@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple, Type, Union
@@ -111,7 +113,9 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         return torch.bincount(self.y.int())
 
     def __getattr__(self, key: str) -> Any:
-        """InMemoryDataset forgot the poor HeteroData objects, logic is equivalent."""
+        """
+        InMemoryDataset forgot the poor HeteroData objects, logic is equivalent.
+        """
         data = self.__dict__.get("_data")
         if isinstance(data, HeteroData) and key in data:
             if self._indices is None and data.__inc__(key, data[key]) == 0:

@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import dataclasses
-from typing import List
+from typing import List, Sequence
 
 import pymimir as mi
 import torch
@@ -77,18 +79,18 @@ class AllActionsValueEstimator(TD0Estimator):
 
     def value_estimate_batch_entry(
         self,
-        transitions: List[List[mi.Transition]] | List[mi.Transition],
-        current_states: List[mi.State] | mi.State,
-        instances: List[InstanceType] | InstanceType,
-        transition_probability: List[torch.Tensor] | torch.Tensor,
+        transitions: Sequence[Sequence[mi.Transition]] | Sequence[mi.Transition],
+        current_states: Sequence[mi.State] | mi.State,
+        instances: Sequence[InstanceType] | InstanceType,
+        transition_probability: Sequence[torch.Tensor] | torch.Tensor,
     ) -> tuple[Tensor, NonTensorStack]:
         gamma = self.gamma.to(self._env.device)
 
         assert (
-            isinstance(transitions, list)
-            and isinstance(current_states, list)
-            and isinstance(instances, list)
-            and isinstance(transition_probability, list)
+            isinstance(transitions, Sequence)
+            and isinstance(current_states, Sequence)
+            and isinstance(instances, Sequence)
+            and isinstance(transition_probability, Sequence)
         )
         time_steps = len(transitions)
         assert time_steps == len(instances) == len(transition_probability)
@@ -107,8 +109,8 @@ class AllActionsValueEstimator(TD0Estimator):
             reward, done = self._env.get_reward_and_done(
                 transitions[time],
                 # we can use the same state and instance for all outgoing transitions
-                current_states[time : time + 1],
-                instances[time : time + 1],
+                current_states=current_states[time : time + 1],
+                instances=instances[time : time + 1],
             )
             # td0_return_estimate() but with expected value instead v(current_state)
             value_targets = reward + gamma * successor_values.squeeze() * ~done

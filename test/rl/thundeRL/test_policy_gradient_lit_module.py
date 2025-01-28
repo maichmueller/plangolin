@@ -8,16 +8,16 @@ from torchrl.objectives import ValueEstimators
 from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl import ActorCritic, ActorCriticLoss
 from rgnet.rl.thundeRL.collate import collate_fn
-from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
+from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def test_training_step(fresh_drive, medium_blocks):
     """
-    Integration test for the training step of the LightningAdapter.
+    Integration test for the training step of the PolicyGradientModule.
     Mocked: HeteroGNN, ActorCritic, ValueOperator
-    Tested: ActorCriticLoss, LightningAdapter
-    Tests he exact loss of LightningAdapter::training_step.
+    Tested: ActorCriticLoss, PolicyGradientModule
+    Tests he exact loss of PolicyGradientModule::training_step.
     Setup:
     We use a fixed batch size of five states.
     The done and reward signals are fixed such that only the first state is terminal.
@@ -50,12 +50,11 @@ def test_training_step(fresh_drive, medium_blocks):
     current_embeddings_batch = torch.arange(BATCH_SIZE).repeat_interleave(
         num_objects_per_state
     )
-    current_embeddings = ObjectEmbedding.from_sparse(
-        current_embeddings_flat, current_embeddings_batch
-    )
-    assert current_embeddings.dense_embedding.requires_grad
+    current_embeddings = (current_embeddings_flat, current_embeddings_batch)
+    current_object_embeddings = ObjectEmbedding.from_sparse(*current_embeddings)
+    assert current_object_embeddings.dense_embedding.requires_grad
     # last object of first state is fake
-    assert not current_embeddings.is_real_mask[0, -1]
+    assert not current_object_embeddings.padding_mask[0, -1]
 
     # Successors have the same number of objects as source state.
     total_num_successors_objects: int = num_objects_per_state.dot(
@@ -83,17 +82,18 @@ def test_training_step(fresh_drive, medium_blocks):
     assert successors_batch.numel() == total_num_successors_objects
     assert successors_batch.max().item() == total_successors - 1
 
-    successor_embeddings = ObjectEmbedding.from_sparse(
-        successor_embeddings_flat, successors_batch
-    )
+    successor_embeddings = (successor_embeddings_flat, successors_batch)
+    successor_object_embeddings = ObjectEmbedding.from_sparse(*successor_embeddings)
     assert torch.allclose(
-        ObjectPoolingModule(pooling="add")(successor_embeddings),
+        ObjectPoolingModule(pooling="add")(successor_object_embeddings),
         torch.ones(size=(total_successors,)),
     )
 
     # Expected values for current_states is sum aggregation of current_embeddings
     # shape [batch_size, 1]
-    expected_current_values = current_embeddings.dense_embedding.nansum(dim=1).squeeze()
+    expected_current_values = current_object_embeddings.dense_embedding.nansum(
+        dim=1
+    ).squeeze()
 
     def gnn_forward(batch):
         x_dict, edge_index_dict, batch_dict = PyGHeteroModule.unpack(batch)
@@ -124,8 +124,8 @@ def test_training_step(fresh_drive, medium_blocks):
         num_successors: torch.Tensor,
     ):
         assert (num_successors == real_num_successors).all()
-        assert current_embedding is current_embeddings
-        assert successor_embedding is successor_embeddings
+        assert current_embedding == current_object_embeddings
+        assert successor_embedding == successor_object_embeddings
         batched_probs = [
             torch.rand(
                 (num_successors[i].item(),), dtype=torch.float, requires_grad=True
@@ -144,12 +144,12 @@ def test_training_step(fresh_drive, medium_blocks):
         spec=ActorCritic,
     )
 
-    # Setup Loss and LightningAdapter
+    # Setup Loss and PolicyGradientModule
     loss = ActorCriticLoss(operator_mock, reduction="mean", loss_critic_type="l2")
     loss.make_value_estimator(ValueEstimators.TD0, gamma=GAMMA)
     optimizer_mock = mockito.mock(spec=torch.optim.Optimizer)
 
-    adapter = LightningAdapter(
+    adapter = PolicyGradientLitModule(
         gnn_mock, actor_critic_mock, loss=loss, optim=optimizer_mock
     )
 

@@ -2,6 +2,7 @@ from functools import singledispatch
 from typing import List, Sequence, Union
 
 from tensordict import NonTensorData, NonTensorStack
+from torch_geometric.data.batch import Batch
 
 NonTensorWrapper = Union[NonTensorData, NonTensorStack]
 
@@ -31,3 +32,8 @@ def _(input_: list, *, ensure_copy: bool = False, **kwargs) -> List:
 @tolist.register(NonTensorData)
 def _(input_: NonTensorWrapper, **kwargs) -> List:
     return input_.tolist()
+
+
+@tolist.register(Batch)
+def _(input_: Batch, **kwargs) -> List:
+    return input_.to_data_list()

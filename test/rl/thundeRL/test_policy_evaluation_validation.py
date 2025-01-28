@@ -167,7 +167,7 @@ class TestPolicyEvaluationValidation:
         """
         Test on_validation_epoch_end with valid and invalid data.
         All other side effects are mocked:
-            compute_values, ProbsCollector, Trainer and LightningAdapter.
+            compute_values, ProbsCollector, Trainer and PolicyGradientModule.
         """
         spaces = [medium_blocks[0]]
         validator = PolicyEvaluationValidation(

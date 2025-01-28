@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import pymimir as mi
 import torch
@@ -23,7 +23,8 @@ from rgnet.utils.object_embeddings import (
 
 
 def embed_transition_targets(
-    batched_transitions: List[List[mi.Transition]], embedding_module: EmbeddingModule
+    batched_transitions: Iterable[Iterable[mi.Transition]],
+    embedding_module: EmbeddingModule,
 ) -> ObjectEmbedding:
     """
     Calculate embeddings for the targets for each transition. This will only
@@ -67,7 +68,7 @@ class ActorCritic(torch.nn.Module):
     ):
         """
         The Agent class creates all components necessary for an actor-critic policy.
-        Due to high amount of bugs in the beta and the untypical use-case we have
+        Due to high amount of bugs in the beta and the untypical use-case we have,
         we do not use ProbabilisticActor with only TensorDictModules.
 
         Attributes:
@@ -135,7 +136,7 @@ class ActorCritic(torch.nn.Module):
 
     @staticmethod
     def _select_action(
-        action_idx: torch.Tensor, transitions: List[List[mi.Transition]]
+        action_idx: torch.Tensor, transitions: Sequence[List[mi.Transition]]
     ) -> List[mi.Transition]:
 
         assert len(transitions) == len(action_idx)
@@ -143,7 +144,7 @@ class ActorCritic(torch.nn.Module):
         return [t[idx] for t, idx in zip(transitions, action_idx.tolist())]
 
     def _sample_distribution(
-        self, batched_probs: List[torch.Tensor]
+        self, batched_probs: Iterable[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward the normalized probabilities to the ProbabilisticTensorDictModule.
@@ -202,23 +203,23 @@ class ActorCritic(torch.nn.Module):
             == successor_embeddings.dense_embedding.shape[1:]
         )
 
-        dense, is_real_mask = (
+        dense, padding_mask = (
             current_embeddings.dense_embedding,
-            current_embeddings.is_real_mask,
+            current_embeddings.padding_mask,
         )
-        dense_successor, is_real_successor = (
+        dense_successor, padding_mask_successor = (
             successor_embeddings.dense_embedding,
-            successor_embeddings.is_real_mask,
+            successor_embeddings.padding_mask,
         )
         # repeat the current embeddings for each successor.
         repeated_dense = dense.repeat_interleave(repeats=num_successors, dim=0)
 
         pairs_with_fake = torch.cat([repeated_dense, dense_successor], dim=2)
-        pairs = pairs_with_fake[is_real_successor]
+        pairs = pairs_with_fake[padding_mask_successor]
         # [N, 2*hidden]
         object_diffs: torch.Tensor = self.actor_objects_net(pairs)
 
-        successor_batch = mask_to_batch_indices(is_real_successor)
+        successor_batch = mask_to_batch_indices(padding_mask_successor)
         # [batch_size * num_successor, 2 * hidden]
         aggregated_embeddings: torch.Tensor = pyg.nn.global_add_pool(
             object_diffs, successor_batch

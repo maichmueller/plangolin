@@ -17,7 +17,7 @@ from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
-class LightningAdapter(lightning.LightningModule):
+class PolicyGradientLitModule(lightning.LightningModule):
     def __init__(
         self,
         gnn: Union[PyGModule, PyGHeteroModule],
@@ -62,9 +62,13 @@ class LightningAdapter(lightning.LightningModule):
         slices = num_successors.cumsum(dim=0).long()[:-1]
 
         # Shape batch_size x embedding_size
-        object_embeddings: ObjectEmbedding = self.gnn(states_data)
+        object_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
+            *self.gnn(states_data)
+        )
         # shape (batch_size * num_successor[i]) x embedding_size
-        successor_embeddings: ObjectEmbedding = self.gnn(successors_flattened)
+        successor_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
+            *self.gnn(successors_flattened)
+        )
 
         # Sample actions from the agent
         batched_probs: List[torch.Tensor]  # probability for each transition
@@ -86,26 +90,30 @@ class LightningAdapter(lightning.LightningModule):
         # Select the next-states by the action index chosen for each batch entry
         next_object_embeddings = ObjectEmbedding(
             successor_embeddings.dense_embedding[successor_action_indices],
-            is_real_mask=successor_embeddings.is_real_mask[successor_action_indices],
+            padding_mask=successor_embeddings.padding_mask[successor_action_indices],
         )
 
+        ac_keys = self.actor_critic.keys
+        # TODO: can we decouple this through an argument as well or is this class tightly coupled with PlanningEnvironment?
+        #  if so, we should clarify this somewhere (ie docstring or class name etc)
+        env_keys = PlanningEnvironment.default_keys
         # Data corresponding to the next state -> the result of applying the actions
         next_td = TensorDict(
             {
-                ActorCritic.default_keys.current_embedding: next_object_embeddings.to_tensordict(),
-                PlanningEnvironment.default_keys.reward: rewards,
-                PlanningEnvironment.default_keys.done: terminated,
-                PlanningEnvironment.default_keys.terminated: terminated,
+                ac_keys.current_embedding: next_object_embeddings.to_tensordict(),
+                env_keys.reward: rewards,
+                env_keys.done: terminated,
+                env_keys.terminated: terminated,
             },
             batch_size=(states_data.batch_size,),
         )
 
         td = TensorDict(
             {
-                PlanningEnvironment.default_keys.action: action_indices,
-                ActorCritic.default_keys.current_embedding: object_embeddings.to_tensordict(),
-                self.actor_critic.keys.log_probs: log_probs,
-                self.actor_critic.keys.probs: as_non_tensor_stack(batched_probs),
+                env_keys.action: action_indices,
+                ac_keys.current_embedding: object_embeddings.to_tensordict(),
+                ac_keys.log_probs: log_probs,
+                ac_keys.probs: as_non_tensor_stack(batched_probs),
                 "idx_in_space": states_data.idx,  # torch.Tensor int64
                 "next": next_td,
             },
@@ -117,17 +125,17 @@ class LightningAdapter(lightning.LightningModule):
         stacked.refine_names(..., "time")
         return stacked
 
-    def _apply_loss(self, td: TensorDict) -> tuple[TensorDict, torch.Tensor]:
-        # Apply the loss and return the loss components and combined loss
-        losses_td = self.loss(td)
-        losses = losses_td.named_apply(
-            lambda key, value: value if key.startswith("loss_") else None
-        )
-        return losses, losses.sum(reduce=True)
+    @staticmethod
+    def _loss_filter(key: str, value):
+        return value if key.startswith("loss_") else None
 
-    def _common_step(self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]):
+    def _common_step(
+        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]
+    ) -> tuple[TensorDict, torch.Tensor]:
         out: TensorDict = self(*batch_tuple)
-        return self._apply_loss(out)
+        losses_td = self.loss(out)
+        losses = losses_td.named_apply(self._loss_filter)
+        return losses, losses.sum(reduce=True)
 
     def training_step(
         self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]

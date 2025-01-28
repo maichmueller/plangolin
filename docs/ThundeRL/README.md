@@ -43,7 +43,7 @@ interaction.
     - Iterate over each state of each training problem once per epoch.
     - Use a custom collate function (`thundeRL.collate.collate_fn`) to create batches by
       flattening successor states into a single batch object.
-    - Run the agent using `LightningAdapter`:
+    - Run the agent using `PolicyGradientModule`:
         1. Compute the embeddings of the current states and successor states with
            a `HeteroGNN`
         2. Use the `ActorCritic` agent to compute the transition probabilities and

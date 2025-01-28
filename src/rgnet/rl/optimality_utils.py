@@ -2,6 +2,7 @@ from typing import Dict, Set
 
 import pymimir as mi
 import torch
+from torch import Tensor
 
 
 def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
@@ -23,6 +24,23 @@ def optimal_policy(space: mi.StateSpace) -> Dict[int, Set[int]]:
         )
 
         optimal[i] = best_actions
+    return optimal
+
+
+def optimal_policy_tensors(space: mi.StateSpace) -> list[Tensor]:
+    # index of state to distribution over successor states as ordered in the state space object
+    optimal: list[Tensor] = [None] * space.num_states()
+    for i, transitions in enumerate(
+        map(space.get_forward_transitions, space.get_states())
+    ):
+        distances = torch.tensor(
+            [space.get_distance_to_goal_state(t.target) for t in transitions],
+            dtype=torch.int,
+        )
+        best_distances, _ = torch.where(distances == torch.min(distances))
+        policy = torch.zeros((len(transitions),), dtype=torch.float)
+        policy[best_distances] = 1.0 / len(best_distances)
+        optimal[i] = policy
     return optimal
 
 

@@ -13,6 +13,7 @@ from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
+from rgnet.models.residual import ResidualModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
@@ -31,26 +32,7 @@ def simple_mlp(
     return torch.nn.Sequential(*layer)
 
 
-class ResidualBlock(torch.nn.Module):
-    def __init__(
-        self,
-        hidden_size: int,
-        activation: Union[str, Callable, None] = None,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.hidden_size = hidden_size
-        self.mlp = simple_mlp(
-            hidden_size, hidden_size, hidden_size, activation=activation
-        )
-
-    def forward(self, input_tensor: torch.Tensor):
-        return input_tensor + self.mlp(input_tensor)
-
-
 class HeteroGNN(PyGHeteroModule):
-
     def __init__(
         self,
         hidden_size: int,
@@ -86,55 +68,69 @@ class HeteroGNN(PyGHeteroModule):
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object.
-            pred: ResidualBlock(hidden_size * arity, activation=activation)
+            pred: ResidualModule(
+                simple_mlp(
+                    *([hidden_size * arity] * 3),
+                    activation=activation,
+                )
+            )
             for pred, arity in arity_dict.items()
             if arity > 0
         }
 
-        self.obj_to_atom = FanOutMP(mlp_dict, src_name=obj_type_id)
+        self.objects_to_atom_mp = FanOutMP(mlp_dict, src_type=obj_type_id)
 
         # Updates object embedding from embedding of last iteration and current iteration.
-        self.obj_update = simple_mlp(
+        self.embedding_updater = simple_mlp(
             in_size=2 * hidden_size,
             hidden_size=2 * hidden_size,
             out_size=hidden_size,
             activation=activation,
         )
         # Messages from atoms flow to objects
-        self.atom_to_obj = FanInMP(
-            hidden_size=hidden_size, dst_name=obj_type_id, aggr=aggr
+        self.atoms_to_object_mp = FanInMP(
+            hidden_size=hidden_size,
+            dst_name=obj_type_id,
+            aggr=aggr,
         )
 
-    def encoding_layer(self, x_dict: Dict[str, Tensor]):
-        # Resize everything by the hidden_size
-        # embedding of objects = hidden_size
-        # embedding of atoms = arity of predicate * hidden_size
-        for k, v in x_dict.items():
-            assert v.dim() == 2
-            x_dict[k] = torch.zeros(
-                v.shape[0], v.shape[1] * self.hidden_size, device=v.device
+    def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
+        # Initialize embeddings for objects and atoms with 0s.
+        # embedding-dims of objects = hidden_size
+        # embedding-dims of atoms = (arity of predicate) * hidden_size
+        for key, x in x_dict.items():
+            assert x.dim() == 2
+            x_dict[key] = torch.zeros(
+                x.shape[0], x.shape[1] * self.hidden_size, device=x.device
             )
         return x_dict
 
     def layer(self, x_dict, edge_index_dict):
-        # Groups object embeddings that are part of an atom and
-        # applies predicate-specific MLP based on the edge type.
-        out = self.obj_to_atom(x_dict, edge_index_dict)
-        x_dict.update(out)  # update atom embeddings
-        # Distribute the atom embeddings back to the corresponding objects.
-        out = self.atom_to_obj(x_dict, edge_index_dict)
-        # Update the object embeddings using a shared update-MLP.
-        previous_obj_emb = x_dict[self.obj_type_id]
-        obj_emb = torch.cat([previous_obj_emb, out[self.obj_type_id]], dim=1)
-        obj_emb = self.obj_update(obj_emb)
-        x_dict[self.obj_type_id] = previous_obj_emb + obj_emb
+        """
+        # Groups object embeddings that are part of an atom and applies predicate-specific Module (e.g. MLP) based on the edge type.
+        """
+        # Spread the object embeddings to the atoms via message passing.
+        # Note: unlike object embeddings, atom embeddings are always simply replaced, instead of updated.
+        atom_msgs = self.objects_to_atom_mp(x_dict, edge_index_dict)
+        x_dict |= atom_msgs
+
+        # Distribute the atom embeddings back to the corresponding objects via message passing.
+        object_msgs = self.atoms_to_object_mp(x_dict, edge_index_dict)[self.obj_type_id]
+        # perform update step of message passing, but for object-nodes only.
+        # The object embeddings are updated based on the previous embedding `X_o` and final object message `m_o`.
+        # In formula: `X_o = comb([X_o, m_o])`
+        updated_obj_emb = self.embedding_updater(
+            torch.cat([x_dict[self.obj_type_id], object_msgs], dim=1)
+        )
+        # residual update (current + updates)
+        x_dict[self.obj_type_id] = x_dict[self.obj_type_id] + updated_obj_emb
 
     def forward(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
-    ) -> ObjectEmbedding:
+    ) -> tuple[Tensor, Tensor]:
         """
         Compute object embeddings for each state.
         The states represent graphs and their objects represent nodes.
@@ -147,13 +143,15 @@ class HeteroGNN(PyGHeteroModule):
         :return: A tuple containing:
         - The first tensor contains object embeddings with shape [N, hidden_size], where N is the total number of objects across all states in the batch.
         - The second tensor contains batch indices with shape [N], mapping each object (node) to its corresponding state (graph).
-        Note that the number of objects is not necessarily equal for each state.
+        Note that the number of objects is not necessarily equal for each state. This tuple can be used to instantiate an `ObjectEmbedding`.
+        We do not return this object directly since pytorch would refuse to accept hooks with this return type.
         """
         # Filter out dummies
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
 
-        x_dict = self.encoding_layer(x_dict)  # Resize everything by the hidden_size
+        # Resize everything by the hidden_size
+        self.initialize_embeddings(x_dict)
 
         for _ in range(self.num_layer):
             self.layer(x_dict, edge_index_dict)
@@ -164,11 +162,10 @@ class HeteroGNN(PyGHeteroModule):
             if batch_dict is not None
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
-        return ObjectEmbedding.from_sparse(obj_emb, batch)
+        return obj_emb, batch
 
 
 class ValueHeteroGNN(HeteroGNN):
-
     def __init__(
         self,
         hidden_size: int,
@@ -198,5 +195,7 @@ class ValueHeteroGNN(HeteroGNN):
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
     ) -> torch.Tensor:
-        object_embeddings = super().forward(x_dict, edge_index_dict, batch_dict)
+        object_embeddings = ObjectEmbedding.from_sparse(
+            *super().forward(x_dict, edge_index_dict, batch_dict)
+        )
         return self.readout(self.pooling(object_embeddings)).view(-1)

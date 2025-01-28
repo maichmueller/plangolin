@@ -40,11 +40,11 @@ from rgnet.rl.envs import (
 )
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
-from rgnet.rl.thundeRL.lightning_adapter import LightningAdapter
 from rgnet.rl.thundeRL.policy_evaluation import (
     build_mdp_graph_with_prob,
     mdp_graph_as_pyg_data,
 )
+from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.manual_transition import MTransition
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
@@ -166,7 +166,7 @@ class RlExperimentAnalyzer:
 
     def __init__(
         self,
-        lightning_agent: LightningAdapter,
+        lightning_agent: PolicyGradientLitModule,
         in_data: InputData,
         out_data: OutputData,
         test_setup: TestSetup,
@@ -182,7 +182,7 @@ class RlExperimentAnalyzer:
         self._model_for_checkpoint: Dict[Path, RlExperimentAnalyzer.ModelResults] = (
             dict()
         )
-        self._lightning_adapter = lightning_agent
+        self._policy_gradient_lit_module = lightning_agent
 
         if checkpoints_paths is None:
             checkpoints_paths, last_checkpoint = resolve_checkpoints(out_data)
@@ -225,13 +225,13 @@ class RlExperimentAnalyzer:
 
         def __init__(
             self,
-            lightning_adapter: LightningAdapter,
+            policy_gradient_lit_module: PolicyGradientLitModule,
             checkpoint_path: Path,
             experiment_analyzer,
         ):
             self._parent: RlExperimentAnalyzer = experiment_analyzer
 
-            adapter = copy.deepcopy(lightning_adapter)
+            adapter = copy.deepcopy(policy_gradient_lit_module)
             checkpoint = torch.load(checkpoint_path, map_location=self._parent.device)
             adapter.load_state_dict(checkpoint["state_dict"])
             embedding = EmbeddingModule(
@@ -242,7 +242,7 @@ class RlExperimentAnalyzer:
             self.agent: ActorCritic = adapter.actor_critic
             # TODO fix embedding from agent, can't mix properties and torch.nn.Module
             self.agent._embedding_module = embedding
-            self.adapter: LightningAdapter = adapter
+            self.adapter: PolicyGradientLitModule = adapter
             self.gnn: HeteroGNN = self.adapter.gnn
             self.policy: TensorDictModule = self.agent.as_td_module(
                 self._parent.env_keys.state,
@@ -358,7 +358,7 @@ class RlExperimentAnalyzer:
     def load_checkpoint(self, checkpoint_path: Path):
         if checkpoint_path not in self._model_for_checkpoint:
             model = RlExperimentAnalyzer.ModelResults(
-                self._lightning_adapter, checkpoint_path, self
+                self._policy_gradient_lit_module, checkpoint_path, self
             )
             self._model_for_checkpoint[checkpoint_path] = model
         self._current_checkpoint = checkpoint_path
@@ -720,7 +720,7 @@ class TestThundeRLCLI(ThundeRLCLI):
 
 
 def test_lightning_agent(
-    lightning_adapter: LightningAdapter,
+    policy_gradient_lit_module: PolicyGradientLitModule,
     logger: Logger,
     input_data: InputData,
     output_data: OutputData,
@@ -738,7 +738,7 @@ def test_lightning_agent(
     The output is saved as csv under the out directory of OutputData as results_{epoch}_{step}.csv
     referencing the epoch and step form the loaded checkpoint.
 
-    :param lightning_adapter: An agent instance. The weights for the agent will be loaded from a checkpoint.
+    :param policy_gradient_lit_module: An agent instance. The weights for the agent will be loaded from a checkpoint.
     :param logger: If a WandbLogger is passed, the results are uploaded as table.
     :param input_data: InputData which should specify at least one test_problem.
     :param output_data: OutputData pointing to the checkpoint containing the learned weights for the agent.
@@ -748,7 +748,7 @@ def test_lightning_agent(
         raise ValueError("No test instances provided")
 
     analyzer = RlExperimentAnalyzer(
-        lightning_adapter,
+        policy_gradient_lit_module,
         in_data=input_data,
         out_data=output_data,
         test_setup=test_setup,
@@ -810,12 +810,12 @@ def test_lightning_agent_cli():
     sys.argv.append("--trainer.logger.init_args.resume")
     sys.argv.append("true")
     cli = TestThundeRLCLI(run=False)
-    lightning_adapter: LightningAdapter = cli.model
+    policy_gradient_lit_module: PolicyGradientLitModule = cli.model
     in_data: InputData = cli.datamodule.data
     out_data = cli.config_init["data_layout.output_data"]
     test_setup: TestSetup = cli.config_init["test_setup"]
     test_lightning_agent(
-        lightning_adapter=lightning_adapter,
+        policy_gradient_lit_module=policy_gradient_lit_module,
         logger=cli.trainer.logger,
         input_data=in_data,
         output_data=out_data,

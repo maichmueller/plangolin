@@ -99,13 +99,12 @@ class FlashDrive(InMemoryDataset):
             data = encoder.to_pyg_data(encoder.encode(state))
             transitions = space.get_forward_transitions(state)
             reward, done = env.get_reward_and_done(
-                actions=transitions,
-                current_states=[t.source for t in transitions],
+                transitions=transitions,
                 instances=[space] * len(transitions),
             )
             data.reward = reward
             # Save the index of the state
-            # NOTE: No element should contain index
+            # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
             # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
             data.idx = i
             data.done = done
@@ -151,7 +150,10 @@ class FlashDrive(InMemoryDataset):
     def get(self, idx: int) -> Union[HeteroData, Data]:
         """
         Get the data object at the given index.
-        Override the base-method to avoid caching previously fetched datapoints and increasing memory usage without gain.
+
+        NOTE:
+            Override the base-method to avoid caching previously fetched datapoints
+             and increasing memory usage without gain.
         """
         return separate(
             cls=self._data.__class__,

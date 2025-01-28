@@ -4,7 +4,7 @@ import logging
 import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Sequence, Type
 
 import torch
 from lightning import LightningDataModule
@@ -27,6 +27,9 @@ class ThundeRLDataModule(LightningDataModule):
         batch_size: int,
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
+        batch_size_validation: Optional[int] = None,
+        num_workers_train: int = 6,
+        num_workers_validation: int = 2,
         parallel: bool = True,
         balance_by_distance_to_goal: bool = True,
     ) -> None:
@@ -35,13 +38,16 @@ class ThundeRLDataModule(LightningDataModule):
         self.data = input_data
         self.gamma = gamma
         self.batch_size = batch_size
+        self.batch_size_validation = batch_size_validation or batch_size
         self.parallel = parallel
+        self.num_workers_train = num_workers_train
+        self.num_workers_val = num_workers_validation
         self.encoder_factory = encoder_factory
         self.balance_by_distance_to_goal = balance_by_distance_to_goal
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
-        self.validation_sets: List[Dataset] = []
+        self.validation_sets: Sequence[Dataset] = []
 
-    def load_datasets(self, problem_paths: List[Path]) -> Dict[Path, Dataset]:
+    def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
 
         def update(dataset):
             logging.info(
@@ -134,30 +140,38 @@ class ThundeRLDataModule(LightningDataModule):
         )
         return ImbalancedSampler(dataset=class_tensor)
 
-    def train_dataloader(self) -> TRAIN_DATALOADERS:
-        return DataLoader(
-            self.dataset,
+    def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
+        defaults = dict(
             sampler=(
                 self._imbalanced_sampler() if self.balance_by_distance_to_goal else None
             ),
-            collate_fn=collate_fn,
             batch_size=self.batch_size,
             shuffle=not self.balance_by_distance_to_goal,
-            num_workers=6,
-            persistent_workers=True,
+            num_workers=self.num_workers_train,
+            persistent_workers=self.num_workers_train > 0,
+        )
+        defaults.update(kwargs)
+        return DataLoader(
+            self.dataset,
+            collate_fn=collate_fn,
+            **defaults,
         )
 
-    def val_dataloader(self) -> TRAIN_DATALOADERS:
+    def val_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         # Order of dataloader has to be equal to order of validation problems in `InputData`.
+        defaults = dict(
+            batch_size=self.batch_size_validation,
+            shuffle=False,
+            num_workers=self.num_workers_val,
+            # as we have multiple loader each individually should get fewer workers
+            persistent_workers=self.num_workers_val > 0,
+        )
+        defaults.update(kwargs)
         return [
             DataLoader(
                 dataset,
                 collate_fn=collate_fn,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=2,
-                # as we have multiple loader each individually should get less worker
-                persistent_workers=True,
+                **defaults,
             )
             for dataset in self.validation_sets
         ]
