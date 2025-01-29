@@ -80,7 +80,7 @@ def launch_thundeRL(
         training_step_mock,
     )
     run_lightning_fast.cli_main()
-    mockito.unstub(rgnet.rl.thundeRL.lightning_adapter.LightningAdapter)
+    mockito.unstub(rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule)
 
 
 def _create_data_setup(tmp_path):

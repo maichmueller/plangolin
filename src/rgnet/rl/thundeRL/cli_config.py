@@ -152,8 +152,8 @@ def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):
     hyperparameter = dict()
     if estimator_config.estimator_type == "AllActionsValueEstimator":
         hyperparameter["reward_done_provider"] = KeyBasedProvider(
-            reward_key=LightningAdapter.default_keys.all_rewards,
-            done_key=LightningAdapter.default_keys.all_dones,
+            reward_key=PolicyGradientLitModule.default_keys.all_rewards,
+            done_key=PolicyGradientLitModule.default_keys.all_dones,
         )
     hyperparameter["shifted"] = True
     hyperparameter["gamma"] = estimator_config.gamma

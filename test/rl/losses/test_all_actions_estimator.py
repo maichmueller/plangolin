@@ -27,7 +27,7 @@ from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 def _object_embedding_of(single_dim_embedding: List[float]):
     return ObjectEmbedding(
         torch.tensor(single_dim_embedding, dtype=torch.float).view(-1, 1, 1),
-        is_real_mask=torch.ones((len(single_dim_embedding), 1), dtype=torch.bool),
+        padding_mask=torch.ones((len(single_dim_embedding), 1), dtype=torch.bool),
     ).to_tensordict()
 
 
