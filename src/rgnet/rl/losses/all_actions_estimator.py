@@ -1,8 +1,7 @@
-import abc
 from __future__ import annotations
 
+import abc
 import dataclasses
-from typing import List
 import itertools
 import warnings
 from typing import List, Sequence, Tuple

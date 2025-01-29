@@ -5,7 +5,7 @@ from tensordict import NestedKey, TensorDict, TensorDictBase
 from torchrl.modules import ValueOperator
 from torchrl.objectives.utils import ValueEstimators, _reduce
 
-from rgnet.rl.losses.critic_loss import CriticLoss
+from .critic_loss import CriticLoss
 
 
 class ActorCriticLoss(CriticLoss):

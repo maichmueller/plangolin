@@ -9,7 +9,9 @@ from torchrl.objectives import ValueEstimators
 from torchrl.objectives.utils import _reduce
 
 from rgnet.rl.agents import ActorCritic
-from rgnet.rl.losses import AllActionsValueEstimator, CriticLoss
+
+from .all_actions_estimator import AllActionsValueEstimator
+from .critic_loss import CriticLoss
 
 
 class AllActionsLoss(CriticLoss):
