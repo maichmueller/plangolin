@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Optional, Union
 
 import torch_geometric as pyg
 from torch import Tensor, nn

@@ -1,9 +1,7 @@
 import dataclasses
 import enum
-import logging
-import pathlib
 from pathlib import Path
-from typing import Iterator, Literal, Optional
+from typing import Iterator, Optional
 
 from rgnet.supervised import MultiInstanceSupervisedSet
 

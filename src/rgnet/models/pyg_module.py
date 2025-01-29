@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import singledispatchmethod
-from typing import Dict, Mapping, Optional, Union
+from typing import Dict, Optional, Union
 
 from torch import Tensor
 from torch.nn import Module

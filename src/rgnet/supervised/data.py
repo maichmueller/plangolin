@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
-from torch_geometric.data.data import BaseData
 
 from rgnet.encoding import GraphEncoderBase
 
