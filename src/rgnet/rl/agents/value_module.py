@@ -18,7 +18,9 @@ class ValueModule(torch.nn.Module):
         self,
         embedding: EmbeddingModule,
         value_net: torch.nn.Module | None = None,
-        pooling: Union[str, Callable[[Tensor, Tensor], Tensor]] = "add",
+        pooling: Union[
+            Literal["add", "sum", "max", "mean"], Callable[[Tensor, Tensor], Tensor]
+        ] = "add",
     ):
         super().__init__()
         self._embedding_module = embedding
