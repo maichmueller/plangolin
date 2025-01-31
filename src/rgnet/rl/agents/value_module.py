@@ -1,4 +1,4 @@
-from typing import Callable, List, Tuple, Union
+from typing import Callable, List, Literal, Tuple, Union
 
 import pymimir as mi
 import torch.nn
@@ -19,7 +19,7 @@ class ValueModule(torch.nn.Module):
         embedding: EmbeddingModule,
         value_net: torch.nn.Module | None = None,
         pooling: Union[
-            Literal["add", "sum", "max", "mean"], Callable[[Tensor, Tensor], Tensor]
+            Literal["add", "sum", "max", "mean"], Callable[[Tensor], Tensor]
         ] = "add",
     ):
         super().__init__()
