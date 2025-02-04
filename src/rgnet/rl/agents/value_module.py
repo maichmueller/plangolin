@@ -1,11 +1,11 @@
 from typing import Callable, List, Literal, Tuple, Union
 
-import pymimir as mi
 import torch.nn
 from tensordict.nn import TensorDictModule
 from torch import Tensor
 from torch_geometric.nn import MLP
 
+import xmimir as xmi
 from rgnet.rl.agents.actor_critic import embed_transition_targets
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
@@ -37,9 +37,9 @@ class ValueModule(torch.nn.Module):
         self.value_net = torch.nn.Sequential(ObjectPoolingModule(pooling), value_net)
 
     def forward(
-        self, transitions_in: List[List[mi.Transition]] | NonTensorWrapper
-    ) -> List[mi.Transition] | NonTensorWrapper:
-        transitions: List[List[mi.Transition]] = tolist(transitions_in)
+        self, transitions_in: List[List[xmi.XTransition]] | NonTensorWrapper
+    ) -> List[xmi.XTransition] | NonTensorWrapper:
+        transitions: List[List[xmi.XTransition]] = tolist(transitions_in)
         with torch.no_grad():
             # We don't want gradient for the next values and next embeddings.
             # The value net will be updated by a ValueEstimator like TD0Estimator.
@@ -56,7 +56,7 @@ class ValueModule(torch.nn.Module):
             indices_of_best: List[int] = [
                 torch.argmax(sv, dim=0).item() for sv in successor_values
             ]
-            actions: List[mi.Transition] = [
+            actions: List[xmi.XTransition] = [
                 ts[idx_of_best]
                 for (idx_of_best, ts) in zip(indices_of_best, transitions)
             ]

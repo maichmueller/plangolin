@@ -8,7 +8,7 @@ from rgnet.rl.thundeRL.collate import collate_fn
 
 def test(tmp_path, medium_blocks, fresh_drive):
     space = medium_blocks[0]
-    assert space.num_states() == 125
+    assert len(space) == 125
 
     loader = torch.utils.data.DataLoader(
         fresh_drive, collate_fn=collate_fn, batch_size=25
@@ -20,4 +20,4 @@ def test(tmp_path, medium_blocks, fresh_drive):
     flattened_indices = itertools.chain.from_iterable(
         [batch[0].idx.tolist() for batch in batches]
     )
-    assert set(flattened_indices) == set(range(space.num_states()))
+    assert set(flattened_indices) == set(range(len(space)))

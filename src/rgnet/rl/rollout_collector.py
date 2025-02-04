@@ -2,7 +2,6 @@ from collections import OrderedDict
 from math import ceil
 from typing import Callable, Iterator, List, Optional
 
-import pymimir as mi
 import torch
 from tensordict import TensorDictBase
 from tensordict.nn import TensorDictModule
@@ -13,6 +12,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset, WeightedRandomReset
+from xmimir import XStateSpace
 
 
 class RolloutCollector(DataCollectorBase):
@@ -115,7 +115,7 @@ class RolloutCollector(DataCollectorBase):
 
 
 def build_from_spaces(
-    spaces: mi.StateSpace | List[mi.StateSpace],
+    spaces: XStateSpace | List[XStateSpace],
     batch_size: int,
     rollout_length: int = 1,
     num_batches: int | None = None,
@@ -131,7 +131,7 @@ def build_from_spaces(
     """
     if env_kwargs is None:
         env_kwargs = {}
-    spaces = [spaces] if isinstance(spaces, mi.StateSpace) else spaces
+    spaces = [spaces] if isinstance(spaces, XStateSpace) else spaces
 
     env: MultiInstanceStateSpaceEnv
     # test if all spaces in the list are the same object
@@ -152,9 +152,7 @@ def build_from_spaces(
     env.make_replacement_strategy(WeightedRandomReset)
 
     if num_batches is None:
-        num_batches = ceil(
-            sum(space.num_states() for space in spaces) / float(batch_size)
-        )
+        num_batches = ceil(sum(len(space) for space in spaces) / float(batch_size))
 
     return RolloutCollector(
         environment=env,

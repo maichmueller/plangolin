@@ -4,7 +4,6 @@ import dataclasses
 import itertools
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-import pymimir as mi
 import torch
 import torch_geometric as pyg
 from tensordict import NestedKey, NonTensorStack, TensorDict
@@ -16,6 +15,7 @@ from tensordict.nn import (
 from torch import Tensor
 from torchrl.modules.tensordict_module import ValueOperator
 
+import xmimir as xmi
 from rgnet.models.hetero_gnn import simple_mlp
 from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
@@ -27,7 +27,7 @@ from rgnet.utils.object_embeddings import (
 
 
 def embed_transition_targets(
-    batched_transitions: Iterable[Iterable[mi.Transition]],
+    batched_transitions: Iterable[Iterable[xmi.XTransition]],
     embedding_module: EmbeddingModule,
 ) -> ObjectEmbedding:
     """
@@ -142,8 +142,8 @@ class ActorCritic(torch.nn.Module):
 
     @staticmethod
     def _select_action(
-        action_idx: torch.Tensor, transitions: Sequence[List[mi.Transition]]
-    ) -> List[mi.Transition]:
+        action_idx: torch.Tensor, transitions: Sequence[List[xmi.XTransition]]
+    ) -> List[xmi.XTransition]:
 
         assert len(transitions) == len(action_idx)
         # NOTE with .tolist() we assume that the transitions are on the CPU
@@ -266,8 +266,8 @@ class ActorCritic(torch.nn.Module):
 
     def forward(
         self,
-        state: NonTensorWrapper | List[mi.State],
-        transitions: NonTensorWrapper | List[List[mi.Transition]],
+        state: NonTensorWrapper | List[xmi.State],
+        transitions: NonTensorWrapper | List[List[xmi.XTransition]],
         current_embedding: Optional[ObjectEmbedding | TensorDict] = None,
     ) -> Tuple[
         NonTensorStack,
@@ -277,7 +277,7 @@ class ActorCritic(torch.nn.Module):
         Optional[NonTensorStack],
     ]:
 
-        transitions: List[List[mi.Transition]] = tolist(transitions)
+        transitions: List[List[xmi.XTransition]] = tolist(transitions)
         assert all(
             len(ts) > 0 for ts in transitions
         ), "Found empty transition, environment should reset on dead-end states."

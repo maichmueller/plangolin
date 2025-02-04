@@ -6,13 +6,13 @@ import itertools
 import warnings
 from typing import List, Sequence, Tuple
 
-import pymimir as mi
 import torch
 from tensordict import NestedKey, NonTensorStack, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
 from torchrl.objectives.value import TD0Estimator
 
+import xmimir as xmi
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack

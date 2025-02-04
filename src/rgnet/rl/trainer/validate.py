@@ -1,11 +1,11 @@
 from typing import Callable, Dict, List, Set
 
-import pymimir as mi
 import torch
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
+import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
@@ -13,8 +13,8 @@ from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 class SupervisedValueLoss(torch.nn.Module):
     def __init__(
         self,
-        optimal_values: Dict[mi.StateSpace, torch.Tensor],
-        value_module: Callable[[List[mi.State]], torch.Tensor],
+        optimal_values: Dict[xmi.XStateSpace, torch.Tensor],
+        value_module: Callable[[List[xmi.XState]], torch.Tensor],
         device: torch.device,
         loss_function=torch.nn.functional.mse_loss,
         log_name: str = "value_loss",
@@ -29,7 +29,7 @@ class SupervisedValueLoss(torch.nn.Module):
     def forward(self):
         losses = dict()
         for space, values in self.optimal_values.items():
-            prediction = self.module(space.get_states()).squeeze(dim=-1)
+            prediction = self.module(list(space.states_iter())).squeeze(dim=-1)
             values = values.to(prediction.device)
             loss = self.loss_function(prediction, values)
             losses[f"{self.log_name}/{space.problem.name}"] = loss
@@ -39,7 +39,7 @@ class SupervisedValueLoss(torch.nn.Module):
 class PolicyQuality(torch.nn.Module):
     def __init__(
         self,
-        spaces: List[mi.StateSpace],
+        spaces: List[xmi.XStateSpace],
         policy: TensorDictModule,
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
         log_name: str = "policy_quality",
@@ -49,36 +49,35 @@ class PolicyQuality(torch.nn.Module):
         self.test_data = {
             space: TensorDict(
                 {
-                    keys.state: as_non_tensor_stack(space.get_states()),
+                    keys.state: as_non_tensor_stack(space),
                     keys.transitions: as_non_tensor_stack(
-                        [space.get_forward_transitions(s) for s in space.get_states()]
+                        [space.forward_transitions(s) for s in space]
                     ),
                 },
-                batch_size=torch.Size((space.num_states(),)),
+                batch_size=torch.Size((len(space),)),
             )
             for space in spaces
         }
         self.optimal_transitions: Dict[
-            mi.StateSpace, Dict[mi.State, Set[mi.Transition]]
+            xmi.XStateSpace, Dict[xmi.XState, Set[xmi.XTransition]]
         ] = {
-            space: {
-                s: PolicyQuality.optimal_actions(space, s) for s in space.get_states()
-            }
+            space: {s: PolicyQuality.optimal_actions(space, s) for s in space}
             for space in spaces
         }
         self.keys = keys
         self.log_name = log_name
 
     @staticmethod
-    def optimal_actions(space: mi.StateSpace, state: mi.State) -> Set[mi.Transition]:
+    def optimal_actions(
+        space: xmi.XStateSpace, state: xmi.XState
+    ) -> Set[xmi.XTransition]:
         best_distance = min(
-            space.get_distance_to_goal_state(t.target)
-            for t in space.get_forward_transitions(state)
+            space.goal_distance(t.target) for t in space.forward_transitions(state)
         )
         return set(
             t
-            for t in space.get_forward_transitions(state)
-            if space.get_distance_to_goal_state(t.target) == best_distance
+            for t in space.forward_transitions(state)
+            if space.goal_distance(t.target) == best_distance
         )
 
     @torch.no_grad()
@@ -90,19 +89,17 @@ class PolicyQuality(torch.nn.Module):
 
             for space in self.test_data.keys():
                 num_correct_actions = self.num_correct_actions(space)
-                policy_precision: float = num_correct_actions / float(
-                    space.num_states()
-                )
+                policy_precision: float = num_correct_actions / float(len(space))
                 losses[f"{self.log_name}/{space.problem.name}"] = policy_precision
 
             self.policy.train()
             return losses
 
-    def num_correct_actions(self, space: mi.StateSpace):
-        actions: List[mi.Transition] = self.policy(self.test_data[space])[
+    def num_correct_actions(self, space: xmi.XStateSpace):
+        actions: List[xmi.XTransition] = self.policy(self.test_data[space])[
             self.keys.action
         ]
-        optimal_actions: Dict[mi.State, Set[mi.Transition]] = self.optimal_transitions[
-            space
-        ]
+        optimal_actions: Dict[xmi.XState, Set[xmi.XTransition]] = (
+            self.optimal_transitions[space]
+        )
         return sum(action in optimal_actions[action.source] for action in actions)

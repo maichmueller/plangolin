@@ -6,7 +6,6 @@ import warnings
 from itertools import cycle
 from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar
 
-import pymimir as mi
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
@@ -19,6 +18,7 @@ from torchrl.data import (
 )
 from torchrl.envs import EnvBase
 
+import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
 from rgnet.utils.manual_transition import MTransition
 
@@ -193,8 +193,8 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     @abc.abstractmethod
     def transitions_for(
-        self, active_instance: InstanceType, state: mi.State
-    ) -> List[mi.Transition]:
+        self, active_instance: InstanceType, state: xmi.XState
+    ) -> List[xmi.XTransition]:
         """
         Return all transitions that can be taken from the state.
         :param active_instance: The instance the state is part of.
@@ -205,7 +205,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     @abc.abstractmethod
     def initial_for(
         self, active_instance: InstanceType
-    ) -> Tuple[mi.State, List[mi.Literal]]:
+    ) -> Tuple[xmi.XState, List[xmi.XLiteral]]:
         """
         :param active_instance: The instance after this batch entry was reset.
         :return: the new initial state and goals for the newly reset instance.
@@ -213,7 +213,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         pass
 
     @abc.abstractmethod
-    def is_goal(self, active_instance: InstanceType, state: mi.State) -> bool:
+    def is_goal(self, active_instance: InstanceType, state: xmi.XState) -> bool:
         """
         :param active_instance: The instance the state is part of.
         :param state: The state which should be checked against the goal.
@@ -228,14 +228,14 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         return TensorDict(source or {}, batch_size=self.batch_size, device=self.device)
 
     @staticmethod
-    def is_dead_end_transition(transition: mi.Transition) -> bool:
+    def is_dead_end_transition(transition: xmi.XTransition) -> bool:
         return transition.action is None
 
     def get_reward_and_done(
         self,
-        transitions: Iterable[mi.Transition],
+        transitions: Iterable[xmi.XTransition],
         *,
-        current_states: Sequence[mi.State] | None = None,
+        current_states: Sequence[xmi.XState] | None = None,
         instances: Sequence[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -297,12 +297,13 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         return rewards, is_goal | is_dead_end
 
     def get_applicable_transitions(
-        self, states: List[mi.State]
-    ) -> List[List[mi.Transition]]:
+        self, states: List[xmi.XState]
+    ) -> List[List[xmi.XTransition]]:
         # We don't want empty transitions, therefore we add an artificial transition,
         # whenever we encounter dead-end states.
         return [
-            self.transitions_for(instance, state) or [MTransition(state, None, state)]
+            self.transitions_for(instance, state)
+            or [xmi.XTransition(state, state, None)]
             for (instance, state) in zip(self._active_instances, states)
         ]
 
@@ -339,10 +340,13 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def _apply_transition_or_stay(
         self,
         idx: int,
-        transition: Optional[mi.Transition],
-        current_states: List[mi.State],
+        transition: Optional[xmi.XTransition],
+        current_states: List[xmi.State],
     ):
-        if transition:
+        if transition is not None:
+            # TODO: remove this debugging if again.
+            if not isinstance(transition, xmi.XTransition):
+                raise ValueError("Expected a Transition object.")
             return transition.target
         else:
             # Check that there were no transitions available.
@@ -361,9 +365,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         :returns TensorDict: Output TensorDict.
         """
 
-        current_states: List[mi.State] = tensordict[self._keys.state]
+        current_states: List[xmi.State] = tensordict[self._keys.state]
 
-        actions: List[Optional[mi.Transition]] = tensordict[self._keys.action]
+        actions: List[Optional[xmi.XTransition]] = tensordict[self._keys.action]
         assert isinstance(actions, list)  # batch of chosen-transitions
 
         # Apply the transition or stay in the current state if none are available.
@@ -401,7 +405,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def _reset(
         self,
         tensordict: Optional[TensorDict],
-        states: List[mi.State] | NonTensorWrapper | None = None,
+        states: List[xmi.State] | NonTensorWrapper | None = None,
         **kwargs,
     ) -> TensorDict:
 

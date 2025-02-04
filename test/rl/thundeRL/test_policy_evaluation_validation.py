@@ -1,18 +1,18 @@
-from test.fixtures import medium_blocks, request_cuda_for_test
+from test.fixtures import medium_blocks, request_accelerator_for_test
 
 import mockito
-import pymimir as mi
 import pytest
 import torch
 from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor
 
+import xmimir as xmi
 from rgnet.rl.thundeRL.validation import PolicyEvaluationValidation
 
 
 class TestPolicyEvaluationValidation:
-    device = request_cuda_for_test("TestPolicyEvaluationValidation")
+    device = request_accelerator_for_test("TestPolicyEvaluationValidation")
 
     @pytest.fixture
     def mock_probs_collector(self):
@@ -26,7 +26,7 @@ class TestPolicyEvaluationValidation:
         return {0: torch.tensor([-1.0, -0.8, -0.6])}
 
     def test_initialization(self, medium_blocks, mock_probs_collector, optimal_values):
-        space_that_not_be_used = mock(spec=mi.StateSpace, strict=True)
+        space_that_not_be_used = mock(spec=xmi.StateSpace, strict=True)
         medium_space = medium_blocks[0]
         spaces = [medium_space, space_that_not_be_used]
         validator = PolicyEvaluationValidation(
@@ -111,12 +111,10 @@ class TestPolicyEvaluationValidation:
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
-        num_transitions = [
-            len(space.get_forward_transitions(s)) for s in space.get_states()
-        ]
+        num_transitions = [space.forward_transition_count(s) for s in space]
         # Test bad probs that don't match state space
         with pytest.raises(AssertionError):
-            bad_probs = [torch.zeros((2,))] * space.num_states()
+            bad_probs = [torch.zeros((2,))] * len(space)
             validator.compute_values(bad_probs, 0)
         # Test bad probs of correct form but with extra dimension
         with pytest.raises(AssertionError):
@@ -151,9 +149,7 @@ class TestPolicyEvaluationValidation:
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
-        num_transitions = [
-            len(space.get_forward_transitions(s)) for s in space.get_states()
-        ]
+        num_transitions = [space.forward_transition_count(s) for s in space]
         probs = [torch.rand((num_t,)).softmax(dim=-1) for num_t in num_transitions]
         spy2(validator.message_passing.forward)
         validator.compute_values(probs, 0)
@@ -184,10 +180,7 @@ class TestPolicyEvaluationValidation:
         mock_pl_module = mock(strict=True)
 
         # Mock the collected probabilities for the epoch
-        num_transitions = [
-            len(spaces[0].get_forward_transitions(state))
-            for state in spaces[0].get_states()
-        ]
+        num_transitions = [spaces[0].forward_transition_count(s) for s in spaces[0]]
         collected_probs = [
             torch.rand((num_trans,)).softmax(dim=-1) for num_trans in num_transitions
         ]

@@ -4,12 +4,12 @@ from enum import StrEnum, auto
 from math import ceil
 from typing import Dict, List
 
-import pymimir as mi
 import torch
 from torch.optim import SGD, Adam
 from torchrl.envs import EnvBase
 from torchrl.record.loggers import Logger
 
+import xmimir as xmi
 from rgnet.rl.configs.agent import Agent
 from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
 from rgnet.rl.data_layout import InputData
@@ -183,7 +183,7 @@ def _resolve_collector(
 ):
     batches_per_epoch = getattr(parser_args, Parameter.batches_per_epoch)
     if batches_per_epoch is None:
-        total_states = sum([space.num_states() for space in data_resolver.spaces])
+        total_states = sum([space.get_num_vertices() for space in data_resolver.spaces])
         batches_per_epoch = ceil(total_states / float(env.batch_size[0]))
     rollout_length = getattr(parser_args, Parameter.rollout_length)
     return RolloutCollector(
@@ -218,7 +218,7 @@ def from_parser_args(
             self.embedding = agent.embedding
             self.critic = agent.critic
 
-        def forward(self, states: List[mi.State]):
+        def forward(self, states: List[xmi.State]):
             embedding = self.embedding(states)
             return self.critic(embedding)
 

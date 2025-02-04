@@ -1,14 +1,15 @@
 from test.fixtures import small_blocks
 from typing import List, Tuple
 
-import pymimir as mi
 import pytest
 import torch
 
+import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
+from xmimir import XLiteral, XState, XStateSpace
 
 
-class DeadEndGoalEnv(PlanningEnvironment[mi.StateSpace]):
+class DeadEndGoalEnv(PlanningEnvironment[XStateSpace]):
     """This environment will return a goal state that is a dead end."""
 
     def __init__(
@@ -31,18 +32,18 @@ class DeadEndGoalEnv(PlanningEnvironment[mi.StateSpace]):
         self.is_goal_state = is_goal
 
     def transitions_for(
-        self, active_instance: mi.StateSpace, state: mi.State
-    ) -> List[mi.Transition]:
+        self, active_instance: XStateSpace, state: XState
+    ) -> List[xmi.XTransition]:
         return (
-            [] if self.is_dead_end else active_instance.get_forward_transitions(state)
+            [] if self.is_dead_end else list(active_instance.forward_transitions(state))
         )
 
     def initial_for(
-        self, active_instance: mi.StateSpace
-    ) -> Tuple[mi.State, List[mi.Literal]]:
-        return active_instance.get_initial_state(), active_instance.problem.goal
+        self, active_instance: XStateSpace
+    ) -> Tuple[XState, List[XLiteral]]:
+        return active_instance.initial_state(), list(active_instance.problem.goal())
 
-    def is_goal(self, active_instance: mi.StateSpace, state: mi.State) -> bool:
+    def is_goal(self, active_instance: XStateSpace, state: XState) -> bool:
         return self.is_goal_state
 
 
@@ -66,8 +67,8 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
     )
 
     td = env.reset()
-    assert td[env.keys.goals] == [space.problem.goal] * batch_size
-    batched_transitions: List[List[mi.Transition]] = td[env.keys.transitions]
+    assert td[env.keys.goals] == [list(space.problem.goal())] * batch_size
+    batched_transitions: List[List[xmi.XTransition]] = td[env.keys.transitions]
     if is_dead_end:
         assert all(len(ts) == 1 for ts in batched_transitions)
         assert all(ts[0].action is None for ts in batched_transitions)
@@ -78,7 +79,7 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
     if is_dead_end or is_goal:
         assert td[("next", env.keys.done)].all()
         assert td[("next", env.keys.terminated)].all()
-        assert next_td[env.keys.state] == [space.get_initial_state()] * batch_size
+        assert next_td[env.keys.state] == [space.initial_state()] * batch_size
         if is_dead_end:  # we expect to stay in the same state
             assert td[("next", env.keys.state)] == td[env.keys.state]
         else:

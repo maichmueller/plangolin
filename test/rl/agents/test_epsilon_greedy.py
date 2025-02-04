@@ -42,7 +42,7 @@ def test_forward(small_blocks, batch_size):
     )
     assert batch_size == 2
     # select non-goal states with 2 transitions
-    initial_states = space.get_states()[0:2]
+    initial_states = space[0:2]
     td = env.reset(states=initial_states)
     td[env.keys.action] = as_non_tensor_stack(
         [ts[1] for ts in td[env.keys.transitions]]

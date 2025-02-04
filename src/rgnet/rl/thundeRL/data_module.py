@@ -9,7 +9,6 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Type
 import torch
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
-from pymimir import Domain
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
@@ -17,6 +16,7 @@ from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
+from xmimir import Domain
 
 
 class ThundeRLDataModule(LightningDataModule):

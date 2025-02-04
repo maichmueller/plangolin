@@ -1,7 +1,7 @@
 from test.fixtures import (  # noqa: F401
     expanded_state_space_env,
     medium_blocks,
-    request_cuda_for_test,
+    request_accelerator_for_test,
 )
 from typing import List
 
@@ -82,7 +82,7 @@ def tensor_list_eq(l1: List[torch.Tensor], l2: List[torch.Tensor]):
 
 
 class TestProbsCollector:
-    device = request_cuda_for_test("TestProbsCollector")
+    device = request_accelerator_for_test("TestProbsCollector")
 
     @pytest.fixture
     def collector(self) -> ProbsCollector:

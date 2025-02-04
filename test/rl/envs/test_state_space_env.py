@@ -92,7 +92,7 @@ def _test_rollout_soundness(
     for time_step in range(0, rollout_length):
         for batch_idx in range(0, batch_size):
             current_state = batched_curr_state[batch_idx][time_step]
-            transitions = space.get_forward_transitions(current_state)
+            transitions = list(space.forward_transitions(current_state))
             assert batched_transitions[batch_idx][time_step] == transitions
             assert batched_actions[batch_idx][time_step] in transitions
             if time_step == rollout_length - 1:
@@ -111,7 +111,7 @@ def _test_rollout_soundness(
                 and available_transitions[0].action is None
             )
             if (
-                space.is_goal_state(rollout[keys.action][batch_idx][time_step].source)
+                space.is_goal(rollout[keys.action][batch_idx][time_step].source)
                 or is_dead_end
             ):
                 assert rollout["next", keys.done][batch_idx][time_step]
@@ -164,8 +164,8 @@ def test_rollout_reset(small_blocks, batch_size):
     """
     space, environment = create_state_space(batch_size, small_blocks)
 
-    initial_state = space.get_initial_state()
-    goal_state = space.get_goal_states()[0]
+    initial_state = space.initial_state()
+    goal_state = next(space.goal_states_iter())
 
     initial_states = [initial_state] * batch_size
     initial_states[0] = goal_state

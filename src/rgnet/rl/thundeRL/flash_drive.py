@@ -2,16 +2,17 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
-import pymimir as mi
 import torch
-from pymimir import Domain
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.separate import separate
 from tqdm import tqdm
 
+import xmimir as xmi
 from rgnet.encoding import GraphEncoderBase
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
+from xmimir import XStateSpace, XTransition
 
 
 class FlashDrive(InMemoryDataset):
@@ -20,7 +21,7 @@ class FlashDrive(InMemoryDataset):
         domain_path: Path,
         problem_path: Path,
         custom_dead_end_reward: float,
-        encoder_factory: Optional[Callable[[Domain], GraphEncoderBase]] = None,
+        encoder_factory: Optional[EncoderFactory] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
@@ -64,12 +65,10 @@ class FlashDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        domain = mi.DomainParser(str(self.domain_file.absolute())).parse()
-        problem = mi.ProblemParser(str(self.problem_path.absolute())).parse(domain)
-        space = mi.StateSpace.new(
-            problem,
-            mi.GroundedSuccessorGenerator(problem),
-            self.max_expanded or 1_000_000,
+        space = xmi.XStateSpace.create(
+            str(self.domain_file.absolute()),
+            str(self.problem_path.absolute()),
+            max_num_states=self.max_expanded or 1_000_000,
         )
         env = ExpandedStateSpaceEnv(
             space,
@@ -77,7 +76,10 @@ class FlashDrive(InMemoryDataset):
             reset_strategy=IteratingReset(),
             custom_dead_end_reward=self.custom_dead_end_reward,
         )
-        data_list = self._build(env, self.encoder_factory(domain))
+        data_list = self._build(
+            env,
+            self.encoder_factory(space.problem.domain),
+        )
         self.save(data_list, self.processed_paths[0])
 
     def _build(
@@ -86,18 +88,17 @@ class FlashDrive(InMemoryDataset):
         encoder: GraphEncoderBase,
     ) -> List[HeteroData]:
         out = env.reset()
-        space: mi.StateSpace = out[env.keys.instance][0]
-        nr_states: int = space.num_states()
+        space: xmi.XStateSpace = out[env.keys.instance][0]
+        nr_states: int = len(space)
         self._log_build_start(space)
         # Each data object represents one state
         batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
-        state_to_idx = {state: i for i, state in enumerate(space.get_states())}
-        state_iter = state_to_idx.items()
+        space_iter = space.states_iter()
         if self.show_progress:
-            state_iter = tqdm(state_iter, total=nr_states, desc="Encoding states")
-        for state, i in state_iter:
+            space_iter = tqdm(space_iter, total=nr_states, desc="Encoding states")
+        for state in space_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
-            transitions = space.get_forward_transitions(state)
+            transitions: list[XTransition] = list(space.forward_transitions(state))
             reward, done = env.get_reward_and_done(
                 transitions=transitions,
                 instances=[space] * len(transitions),
@@ -106,22 +107,24 @@ class FlashDrive(InMemoryDataset):
             # Save the index of the state
             # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
             # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
-            data.idx = i
+
+            # this index needs to be guaranteed to be the same each time a StateSpace is created from the same problem.
+            # We need to verify if this is the case for the current implementation of pymimir.
+            data.idx = state.index
             data.done = done
-            data.targets = tuple(
-                state_to_idx[transition.target] for transition in transitions
-            )
+            # Same index concerns for transition.target.index
+            data.targets = tuple(t.target.index for t in transitions)
             # pymimir returns -1 for states where to goal is not reachable
             distance_to_goal = (
                 abs(self.custom_dead_end_reward)
-                if space.is_dead_end_state(state)
-                else space.get_distance_to_goal_state(state)
+                if space.is_deadend(state)
+                else space.goal_distance(state)
             )
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
-            batched_data[i] = data
+            batched_data[state.index] = data
         return batched_data
 
-    def _log_build_start(self, space):
+    def _log_build_start(self, space: XStateSpace) -> None:
         if self.logging_kwargs is not None:
             logger = logging.getLogger(f"thread-{self.logging_kwargs['thread_id']}")
             logger.setLevel(self.logging_kwargs["log_level"])
@@ -129,7 +132,7 @@ class FlashDrive(InMemoryDataset):
             logger = logging.getLogger("root")
         logger.info(
             f"Building {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #states: {space.num_states()})"
+            f"(problem: {space.problem.name}, #space: {space})"
         )
         del self.logging_kwargs
 

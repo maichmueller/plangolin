@@ -7,7 +7,6 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
-import pymimir as mi
 import torch
 import torch_geometric as pyg
 import tqdm
@@ -16,7 +15,8 @@ from tensordict import NestedKey, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.agents import ActorCritic
+import xmimir as xmi
+from rgnet.rl import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.thundeRL.policy_evaluation import (
     PolicyEvaluationMessagePassing,
@@ -470,7 +470,7 @@ class PolicyEvaluationValidation(ValidationCallback):
 
     def __init__(
         self,
-        spaces: List[mi.StateSpace],
+        spaces: List[xmi.XStateSpace],
         discounted_optimal_values: Dict[int, torch.Tensor],
         probs_collector: ProbsCollector,
         gamma: float,
@@ -518,8 +518,8 @@ class PolicyEvaluationValidation(ValidationCallback):
             ):
                 continue
             placeholder_probs = [
-                torch.ones((len(state_space.get_forward_transitions(state)),))
-                for state in state_space.get_states()
+                torch.ones((state_space.forward_transition_count(state),))
+                for state in state_space
             ]
             nx_graph = build_mdp_graph_with_prob(state_space, placeholder_probs)
 
@@ -554,7 +554,7 @@ class PolicyEvaluationValidation(ValidationCallback):
 
         :param probs_list: The sorted transition probabilities for each state.
             Len(probs_list) = space.get_states() for state space of dataloader_idx
-            probs_list[i].numel() == len(space.get_forward_transitions(space.get_states()[i]))
+            probs_list[i].numel() == len(space.iter_forward_transitions(space.get_states()[i]))
         :param dataloader_idx: Required if the validator is used with multiple spaces at the same time.
         :return: A one-dimensional tensor with the values under the provided probabilities.
         """

@@ -5,22 +5,23 @@ import mockito
 from supervised.test_data import assert_hetero_stores
 from torch_geometric.data import HeteroData
 
+import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
 def validate_drive(drive, space):
-    assert len(drive) == space.num_states()
+    assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
-    for i, state in enumerate(space.get_states()):
-        num_transitions = len(space.get_forward_transitions(state))
+    for i, state in enumerate(space):
+        num_transitions = space.forward_transition_count(state)
         data: HeteroData = drive[i]
         assert data.idx == i
         assert data.done.numel() == num_transitions
         assert data.reward.numel() == num_transitions
         assert len(data.targets) == num_transitions
-        if space.is_goal_state(state):
+        if space.is_goal(state):
             assert data.done.all()
         else:
             assert not drive.done.all()
