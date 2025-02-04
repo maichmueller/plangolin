@@ -6,6 +6,7 @@ import torch.nn.functional
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
 from rgnet.utils.object_embeddings import ObjectPoolingModule
 
@@ -33,7 +34,7 @@ def test_hetero_gnn(hetero_encoded_state):
 def test_value_hetero_gnn_backward(tmp_path):
     dataset = create_dataset("small", tmp_path)
     batch = Batch.from_data_list(dataset)
-    encoder = dataset.encoder
+    encoder = dataset.state_encoder
     model = ValueHeteroGNN(
         hidden_size=2,
         num_layer=1,
@@ -59,7 +60,7 @@ def test_hetero_gnn_backward(tmp_path):
     dataset = create_dataset("small", tmp_path)
     batch = Batch.from_data_list(dataset)
     assert len(batch) == 5, "If this fails the underlying test data has changed!"
-    encoder = dataset.encoder
+    encoder = dataset.state_encoder
     model = HeteroGNN(
         hidden_size=5,
         num_layer=1,
@@ -85,7 +86,7 @@ def test_hetero_gnn_backward(tmp_path):
 
 def test_hetero_batched(tmp_path):
     dataset = create_dataset("small", tmp_path)
-    encoder = dataset.encoder
+    encoder = dataset.state_encoder
     loader = DataLoader(dataset, batch_size=3)
     for batch in loader:
         model = ValueHeteroGNN(
