@@ -6,17 +6,18 @@ from test.fixtures import medium_blocks, small_blocks
 from typing import Any, List, Tuple
 
 import mockito
-import pymimir as mi
 import pytest
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
+import xmimir as xmi
 
 # TODO experiments is not a source module
 from experiments.rl.thundeRL import run_lightning_fast
 from rgnet.encoding import HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils import get_device_cuda_if_possible
 
@@ -155,8 +156,8 @@ def validate_successor_batch(
 
 
 def _validate_done_reward_num_transitions(
-    small_space: mi.StateSpace,
-    medium_space: mi.StateSpace,
+    small_space: xmi.XStateSpace,
+    medium_space: xmi.XStateSpace,
     mock: PolicyGradientLitModuleMock,
 ):
     assert len(mock.batched_list) == 5
@@ -177,7 +178,7 @@ def _validate_done_reward_num_transitions(
     # Verify done information
     def get_goal_transitions(space):
         return sum(
-            [len(space.get_forward_transitions(s)) for s in space.get_goal_states()]
+            [len(space.forward_transitions(s)) for s in space.goal_states_iter()]
         )
 
     goal_transitions = get_goal_transitions(small_space) + get_goal_transitions(
@@ -190,7 +191,9 @@ def _validate_done_reward_num_transitions(
     # assert that the rewards are 0 for all done_indices
     assert flattened_reward[done_indices].sum() == 0
     # assert that the rewards are 1 for all other indices
-    all_transitions = small_space.num_transitions() + medium_space.num_transitions()
+    all_transitions = (
+        small_space.total_transition_count + medium_space.total_transition_count
+    )
     assert torch.allclose(
         flattened_reward.sum().abs(),
         torch.tensor(
@@ -207,8 +210,8 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
     which simply records all incoming data.
     This test might take a bit longer, you can exclude it by adding `--ignore=test/integration` to your pytest script
     """
-    small_space: mi.StateSpace
-    medium_space: mi.StateSpace
+    small_space: xmi.StateSpace
+    medium_space: xmi.StateSpace
     small_space, domain, small_problem = small_blocks
     medium_space, _, medium_problem = medium_blocks
 
@@ -222,12 +225,12 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
             problem_path=problem,
             custom_dead_end_reward=-(1.0 / 1.0 - 0.9),
             root_dir=str(dataset_dir),
-            encoder_factory=HeteroGraphEncoder,
+            encoder_factory=EncoderFactory(HeteroGraphEncoder),
         )
         for problem in problem_dir.iterdir()
     ]
 
-    assert small_space.num_states() + medium_space.num_states() == 130
+    assert small_space.get_num_vertices() + medium_space.get_num_vertices() == 130
     mock = PolicyGradientLitModuleMock()
     # args are specified in config.yaml
     config_file = Path(__file__).parent / "config.yaml"
