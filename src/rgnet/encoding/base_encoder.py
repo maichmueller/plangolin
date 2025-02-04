@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import functools
+import itertools
 from abc import ABC, abstractmethod
-from typing import Optional, Type
+from typing import Iterable, Optional, Type
 
 import networkx as nx
 import torch_geometric as pyg
-from pymimir import Domain, State
+
+from xmimir import (
+    Domain,
+    PDDLRepositories,
+    Problem,
+    State,
+    StaticLiteral,
+    XAtom,
+    XCategory,
+    XDomain,
+    XLiteral,
+    XProblem,
+    XState,
+)
+
+
+def _patch_as_nongoal(literal: StaticLiteral) -> XLiteral:
+    # monkey patch the literal to be a non-goal (only for internal use)
+    literal.is_not_goal = True
+    return XLiteral(literal)
 
 
 class GraphEncoderBase(ABC):
@@ -14,18 +34,23 @@ class GraphEncoderBase(ABC):
     The state-graph encoder base class into an associated state-graph.
     """
 
-    def __init__(self, domain: Domain, *args, **kwargs):
+    def __init__(
+        self,
+        domain: XDomain,
+        *args,
+        **kwargs,
+    ):
         self._domain = domain
 
     @property
-    def domain(self) -> Domain:
+    def domain(self):
         return self._domain
 
     @abstractmethod
     def __eq__(self, other): ...
 
     @abstractmethod
-    def encode(self, state: State) -> nx.Graph | nx.DiGraph:
+    def encode(self, state: XState) -> nx.Graph | nx.DiGraph:
         """
         Encodes the state into a networkx-graph representation.
 
@@ -40,7 +65,9 @@ class GraphEncoderBase(ABC):
         ...
 
     @abstractmethod
-    def to_pyg_data(self, encoded_graph: nx.DiGraph) -> pyg.data.Data:
+    def to_pyg_data(
+        self, encoded_graph: nx.DiGraph
+    ) -> pyg.data.Data | pyg.data.HeteroData:
         """
         Converts the encoded state into a torch-geometric data object.
         Parameters
@@ -58,6 +85,16 @@ class GraphEncoderBase(ABC):
             hasattr(graph, "graph")
             and "encoding" in graph.graph
             and graph.graph["encoding"] == self
+        )
+
+    def _atoms_and_goals_iterator(self, state: XState) -> Iterable[XLiteral | XAtom]:
+        return itertools.chain(
+            (
+                XLiteral(_patch_as_nongoal(l))
+                for l in state.problem.base.get_static_initial_literals()
+            ),
+            state.problem.goal(XCategory.fluent, XCategory.derived),
+            state.atoms(),
         )
 
 
@@ -78,5 +115,5 @@ class EncoderFactory:
         self.encoder_class = encoder_class
         self.kwargs = kwargs or dict()
 
-    def __call__(self, domain: Domain):
+    def __call__(self, domain: XDomain) -> GraphEncoderBase:
         return self.encoder_class(domain, **self.kwargs)

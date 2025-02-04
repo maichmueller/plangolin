@@ -10,7 +10,7 @@ import pytest
 )
 def test_color_encoding_initial(color_encoded_state):
     graph, encoder = color_encoded_state
-    if encoder.add_predicate_nodes:
+    if encoder.predicate_nodes_enabled:
         # 2 objects,
         # 2 * clear, 2 * ontable, 2 * on(a,b)_g (pos 0/1), 1 * handempty,
         # 2 global predicate nodes (clear, ontable)
@@ -37,7 +37,7 @@ def test_color_encoding_goal(color_encoded_state):
     # 1 * clear, 1 * ontable, 2 * on(a,b)_g, 2* on(a,b), 1 * handempty
     assert len(graph.nodes) == 2 + (1 + 1 + 2 + 2 + 1)
     # on is a goal atom and true in the current state
-    assert "on(a, b)_g:0" in graph.nodes and "on(a, b):0" in graph.nodes
+    assert "(on a b)_g:0" in graph.nodes and "(on a b):0" in graph.nodes
     # the predicate holding is neither in the state nor in the goal
     assert all("holding" not in node_name for node_name in graph.nodes)
     assert all("feature" in attr for _, attr in graph.nodes.data())

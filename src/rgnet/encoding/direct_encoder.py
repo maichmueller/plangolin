@@ -3,15 +3,31 @@ from __future__ import annotations
 import itertools
 from functools import singledispatchmethod
 from types import NoneType
+from typing import Optional
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
-from pymimir import Atom, Domain, Literal, State, Type
 from torch_geometric.data import Data
 
 from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
 from rgnet.encoding.node_factory import Node, NodeFactory
+from xmimir import (
+    Atom,
+    Domain,
+    GroundAtom,
+    GroundLiteral,
+    Literal,
+    PDDLRepositories,
+    Problem,
+    State,
+    XCategory,
+    XDomain,
+    XProblem,
+    XState,
+)
+
+from .featuremap import FeatureMap, FeatureMode
 
 
 class DirectGraphEncoder(GraphEncoderBase):
@@ -35,8 +51,9 @@ class DirectGraphEncoder(GraphEncoderBase):
 
     def __init__(
         self,
-        domain: Domain,
+        domain: XDomain,
         node_factory: NodeFactory = NodeFactory(),
+        feature_map: Optional[FeatureMap] = None,
     ):
         """
         Initialize the direct graph encoder
@@ -45,111 +62,78 @@ class DirectGraphEncoder(GraphEncoderBase):
         ----------
         domain: pymimir.Domain, the domain over which instance-states will be encoded
         """
-        super().__init__(domain)
 
         # register our aux node to the node factory's dispatch
         @node_factory.__call__.register
-        def _(self2, aux: DirectGraphEncoder.aux_node, *args, **kwargs):
+        def _(self_, aux: DirectGraphEncoder.aux_node, *args, **kwargs):
             return str(aux)
 
+        super().__init__(domain)
         self.node_factory = node_factory
-        self._predicates = self.domain.predicates
-        self._types = tuple(typ.name for typ in self.domain.types)
-        self._feature_map = self._build_feature_map()
-
-    def _build_feature_map(self):
-        # times 3 because of augmentation for pred_name * (is normal atom / is goal atom / is negated goal atom)
-        feature_dim = len(self._predicates) * 3 + len(self._types)
-        # one-hot encoding of the (possibly (negated) goal) predicates
-        edge_feature_vectors: np.ndarray = np.eye(feature_dim, dtype=np.int8)
-        # make all views read only
-        edge_feature_vectors.flags.writeable = False
-        return edge_feature_vectors
+        self._feature_map = feature_map or FeatureMap(
+            domain,
+            mode=FeatureMode.one_hot,
+            ignore_arg_position=True,
+        )
+        assert (
+            self._feature_map.mode == FeatureMode.one_hot
+            and self._feature_map.ignore_arg_position
+        ), "Only one-hot encoding without arg-positions supported."
 
     def __eq__(self, other: DirectGraphEncoder):
-        return self._domain == other.domain
-
-    def _type_feature_offset(self):
-        return len(self._predicates) * 3
-
-    @singledispatchmethod
-    def feature(self, item) -> np.ndarray:
-        raise NotImplementedError(f"Type passed not supported: {type(item)}")
-
-    @feature.register
-    def atom_feature_vector(self, atom: Atom) -> np.ndarray:
-        return self._feature_map[self._predicates.index(atom.predicate)]
-
-    @feature.register
-    def literal_feature_vector(self, literal: Literal) -> np.ndarray:
-        return self._feature_map[
-            self._predicates.index(literal.atom.predicate) + 1 + literal.negated
-        ]
-
-    @feature.register
-    def type_feature_vector(self, typ: Type) -> np.ndarray:
-        return self._feature_map[
-            self._type_feature_offset() + self._types.index(typ.name)
-        ]
-
-    @feature.register(NoneType)
-    def none_feature_vector(self, _) -> np.ndarray:
-        return np.zeros(self._feature_map.shape[0], dtype=np.int8)
-
-    @property
-    def domain(self):
-        return self._domain
+        return self.domain == other.domain and self._feature_map == other._feature_map
 
     @staticmethod
     def _emplace_feature(
         graph: nx.DiGraph, source_obj: Node, target_obj: Node, feature: np.ndarray
     ):
         if graph.has_edge(source_obj, target_obj):
-            # in-place add to combine 1s of  the predicate positions that
+            # in-place add to combine 1s of the predicate positions that
             # are enabling communication between the objects
             curr_feature = graph.edges[source_obj, target_obj]["feature"]
             graph.edges[source_obj, target_obj]["feature"] = curr_feature + feature
         else:
             graph.add_edge(source_obj, target_obj, feature=feature)
 
-    def encode(self, state: State):
-        problem = state.get_problem()
+    def encode(self, state: XState):
         graph = nx.DiGraph(encoding=self, state=state)
 
-        objects = problem.objects
+        objects = state.problem.objects
         for obj in objects:
             graph.add_node(
                 self.node_factory(obj),
-                feature=self.feature(obj.type),
-                info=obj.type.name,
+                feature=self._feature_map(None),
             )
         graph.add_node(
-            self.node_factory(self._auxiliary_node), feature=self.feature(None)
+            self.node_factory(self._auxiliary_node), feature=self._feature_map(None)
         )
 
-        for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
-            # only a literal has a member `atom`
+        for atom_or_literal in self._atoms_and_goals_iterator(state):
+            # only a literal has a member `get_atom`
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
-            arity = atom.predicate.arity
+            is_goal = not hasattr(atom_or_literal, "is_not_goal")
+            predicate = atom.predicate
+            arity = predicate.arity
             if arity == 0:
                 # for 0 arity atoms, the aux nodes sends its regards to all objects
                 source_objs = itertools.repeat(self._auxiliary_node)
                 target_objs = objects
             elif arity == 1:
                 # a 1 arity atom creates only self-edges
-                source_objs = atom.terms
+                source_objs = atom.objects
                 target_objs = source_objs
             else:
                 # a 2+ arity atom creates edge chains between successor objects as ordered by the terms list
-                source_objs = atom.terms
+                source_objs = atom.objects
                 target_objs = source_objs[1:]
 
+            feature = self._feature_map(atom_or_literal, is_goal=is_goal)
             for src_obj, tgt_obj in zip(source_objs, target_objs):
                 self._emplace_feature(
                     graph,
                     self.node_factory(src_obj),
                     self.node_factory(tgt_obj),
-                    self.feature(atom_or_literal),
+                    feature,
                 )
         return graph
 
