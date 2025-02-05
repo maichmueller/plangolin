@@ -47,9 +47,7 @@ def build_mdp_graph_with_prob(
             mdp_graph.add_edge(
                 t.source,
                 t.target,
-                action=state_space.problem.domain.actions[
-                    t.action.get_action_index()
-                ].get_name(),
+                action=t.action.name,
                 reward=reward,
                 probs=t_probs[t_idx],
             )

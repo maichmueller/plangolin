@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from functools import cached_property
+from functools import cache, cached_property
 from itertools import chain
-from typing import Any, Iterable, Iterator, List, NamedTuple, Optional, Sequence, Union
+from typing import (
+    Any,
+    Generator,
+    Iterable,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Union,
+)
 
 from multimethod import multimethod
 from pymimir import *
@@ -215,6 +225,77 @@ class XProblem(BaseHashMixin, BaseEqMixin):
         )
 
 
+class XAction(BaseHashMixin, BaseEqMixin):
+    base: GroundAction
+    problem: XProblem
+
+    def __init__(self, action: GroundAction, problem: XProblem):
+        self.base = action
+        self.problem = problem
+
+    def __str__(self):
+        self.base.to_string(self.problem.repositories)
+
+    def str(self, for_plan=True):
+        return getattr(self.base, f"to_string{'_for_plan' if for_plan else ''}")(
+            self.problem.repositories
+        )
+
+    @cached_property
+    def action_schema(self):
+        return self.problem.domain.actions[self.base.get_action_index()]
+
+    @property
+    def name(self) -> str:
+        return self.action_schema.get_name()
+
+    @property
+    def cost(self) -> float:
+        return self.base.get_strips_effect().get_cost()
+
+    def preconditions(
+        self, *category: XCategory, positive: bool = True
+    ) -> Generator[XAtom]:
+        conditions = self.base.get_strips_precondition()
+        if not category:
+            category = XCategory.__members__.values()
+
+        qualifier = "positive" if positive else "negative"
+
+        for category in category:
+            cat_name = category.name
+            atom_callback = getattr(
+                self.problem.repositories, f"get_{cat_name}_ground_atoms_from_indices"
+            )
+            condition_indices = getattr(
+                conditions, f"get_{cat_name}_{qualifier}_condition"
+            )
+            condition_atoms = atom_callback(condition_indices)
+            yield from chain(map(XAtom, condition_atoms))
+
+    def effects(self, *category: XCategory, positive: bool = True) -> Generator[XAtom]:
+        effects = self.base.get_strips_effect()
+        if not category:
+            category = XCategory.__members__.values()
+
+        qualifier = "positive" if positive else "negative"
+
+        for category in category:
+            cat_name = category.name
+            atom_callback = getattr(
+                self.problem.repositories, f"get_{cat_name}_ground_atoms_from_indices"
+            )
+            effect_indices = getattr(effects, f"get_{qualifier}_effects")
+
+            effect_atoms = atom_callback(effect_indices)
+            yield from chain(map(XAtom, effect_atoms))
+
+    @property
+    def objects(self):
+        objs = self.problem.objects
+        return [objs[i] for i in self.base.get_object_indices()]
+
+
 @dataclass(eq=True)
 class XState:
     base: State
@@ -231,7 +312,7 @@ class XState:
 
     @multimethod
     def __init__(self, index: int, space: XStateSpace):
-        self.__init__(space[index], space.problem)
+        self.__init__(space.base.get_vertex(index).get_state(), space.problem)
 
     def __iter__(self):
         return iter(self.atoms())
@@ -315,36 +396,149 @@ class XTransition(BaseHashMixin):
     base: Edge | None
     source: XState
     target: XState
-    action: Optional[GroundAction | Iterable[GroundAction]]
+    action: Optional[XAction | tuple[XAction]]
 
     @multimethod
     def __init__(
         self,
         edge: Edge,
-        space: Optional[StateSpace] = None,
+        space: XStateSpace,
     ):
-        self.base = edge
-        self.source = XState(edge.get_source(), space)
-        self.target = XState(edge.get_target(), space)
-        self.action = edge.get_creating_action()
+        self.__init__(
+            edge,
+            XState(edge.get_source(), space.base),
+            XState(edge.get_target(), space.base),
+            XAction(edge.get_creating_action(), space.problem),
+        )
 
     @multimethod
     def __init__(
         self,
+        edge: Edge | None,
         source: XState,
         target: XState,
-        action: GroundAction | Iterable[GroundAction] | None,
+        action: XAction | Iterable[XAction] | None,
     ):
-        self.base = None
+        self.base = edge
         self.source = source
         self.target = target
-        self.action = action
+        self.action = tuple(action) if hasattr(action, "__iter__") else action
 
     def __iter__(self):
         return iter((self.source, self.target, self.action))
 
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
+
+
+class XActionGenerator:
+    base: Grounder
+    workspace: ApplicableActionGeneratorWorkspace
+    aag: GroundedApplicableActionGenerator
+    problem: XProblem
+
+    @multimethod
+    def __init__(self, problem: XProblem):
+        self.__init__(Grounder(problem.base, problem.repositories))
+
+    @multimethod
+    def __init__(self, base: Grounder):
+        self.base = base
+        self.workspace = ApplicableActionGeneratorWorkspace()
+        self.aag = GroundedApplicableActionGenerator(base.get_action_grounder())
+
+    @property
+    def grounder(self):
+        return self.base
+
+    @property
+    def problem(self):
+        return XProblem(self.base.get_problem(), self.base.get_pddl_repositories())
+
+    def generate_actions(self, state: XState) -> Iterator[XAction]:
+        for action in self.aag.generate_applicable_actions(state.base, self.workspace):
+            yield XAction(action, self.problem)
+
+
+class XSuccessorGenerator:
+    base: Grounder
+    workspace: StateRepositoryWorkspace
+    state_repository: StateRepository
+
+    @multimethod
+    def __init__(self, base: Grounder, state_repository: StateRepository | None = None):
+        self.base = base
+        self.state_repository = state_repository or StateRepository(
+            GroundedAxiomEvaluator(self.base.get_axiom_grounder())
+        )
+        self.workspace = StateRepositoryWorkspace()
+
+    @multimethod
+    def __init__(
+        self,
+        problem: XProblem,
+        state_repository: StateRepository | None = None,
+    ):
+        self.base = Grounder(problem.base, problem.repositories)
+        self.state_repository = state_repository or StateRepository(
+            GroundedAxiomEvaluator(self.base.get_axiom_grounder())
+        )
+        self.workspace = StateRepositoryWorkspace()
+
+    @property
+    def grounder(self):
+        return self.base
+
+    @property
+    def problem(self):
+        return XProblem(self.base.get_problem(), self.base.get_pddl_repositories())
+
+    @property
+    def initial_state(self) -> XState:
+        return XState(
+            self.state_repository.get_or_create_initial_state(self.workspace),
+            self.problem,
+        )
+
+    def successor(self, state: XState, action: XAction) -> XState:
+        return XState(
+            self.state_repository.get_or_create_successor_state(
+                state.base,
+                action.base,
+                self.workspace,
+            )[0],
+            state.problem,
+        )
+
+    def successors(
+        self, state: XState, action_generator: XActionGenerator
+    ) -> Generator[tuple[XAction, XState]]:
+        for action in action_generator.generate_actions(state):
+            yield action, self.successor(state, action)
+
+
+@dataclass(eq=True, unsafe_hash=True)
+class XSearchResult:
+    base: SearchResult
+    start: XState
+    problem: XProblem
+
+    @property
+    def status(self):
+        return self.base.status
+
+    @cached_property
+    def plan(self) -> tuple[XAction, ...] | None:
+        if self.base.plan is not None:
+            plan = self.base.plan
+            return tuple(XAction(action, self.problem) for action in plan.get_actions())
+        return None
+
+    @property
+    def cost(self) -> float | None:
+        if self.base.plan is not None:
+            return self.base.plan.get_cost()
+        return None
 
 
 class XStateSpace(BaseHashMixin, BaseEqMixin):
@@ -475,7 +669,7 @@ class XStateSpace(BaseHashMixin, BaseEqMixin):
 
     def _transitions(self, state: XState, direction: str) -> Iterator[XTransition]:
         return iter(
-            XTransition(edge, self.base)
+            XTransition(edge, self)
             for edge in getattr(self.base, f"get_{direction}_adjacent_transitions")(
                 state.index
             )
@@ -495,50 +689,7 @@ class XStateSpace(BaseHashMixin, BaseEqMixin):
             )
         )
 
-    def breadth_first_search(self, state: XState) -> tuple[int, list[XTransition]]:
-        """
-        Perform a breath-first search from the given state to find the shortest path to a goal state.
-
-        Parameters
-        ----------
-        state: XState,
-            The state to start the search from.
-
-        Returns
-        -------
-        tuple[int, list[XTransition]],
-            A tuple containing the length of the shortest path and the list of transitions.
-        """
-        self.base.get_state_repository()
-        GroundedApplicableActionGenerator()
-        find_solution_brfs(
-            GroundedApplicableActionGenerator(),
-            self.base.get_state_repository(),
-            self.initial_state().base,
-        )
-        goals_left_to_visit = set(self.goal_states_iter())
-        visited = set()
-        queue = deque([(state, 0, [])])
-        shortest_path = []
-        shortest_len = float("inf")
-        while queue:
-            current, length, path = queue.pop(0)
-            if self.is_goal(current):
-                if not goals_left_to_visit:
-                    return length
-                goals_left_to_visit.remove(current)
-                if length < shortest_len:
-                    shortest_len = length
-                    shortest_path = path
-            visited.add(current)
-            for transition in self.forward_transitions(current):
-                if transition.target not in visited:
-                    next_path = path.copy()
-                    next_path.append(transition)
-                    queue.append((transition.target, length + 1, next_path))
-        return shortest_len, shortest_path
-
-    def breadth_first_search_pym(self, state: XState | None = None) -> SearchResult:
+    def breadth_first_search(self, state: XState | None = None) -> SearchResult:
         """
         Perform a breath-first search from the given state to find the shortest path to a goal state.
 
@@ -554,8 +705,9 @@ class XStateSpace(BaseHashMixin, BaseEqMixin):
         """
         if state is None:
             state = self.initial_state()
+
         return find_solution_brfs(
-            GroundedApplicableActionGenerator(),
+            XActionGenerator(self.problem).aag,
             self.base.get_state_repository(),
             state.base,
         )
@@ -574,4 +726,7 @@ __all__ = [
     "XAtom",
     "XPredicate",
     "XCategory",
+    "XAction",
+    "XActionGenerator",
+    "XSuccessorGenerator",
 ]
