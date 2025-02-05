@@ -23,10 +23,10 @@ from xmimir import (
 )
 
 
-def _patch_as_nongoal(literal: StaticLiteral) -> XLiteral:
+def _patch_as_nongoal(literal: StaticLiteral):
     # monkey patch the literal to be a non-goal (only for internal use)
     literal.is_not_goal = True
-    return XLiteral(literal)
+    return literal
 
 
 class GraphEncoderBase(ABC):

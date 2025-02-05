@@ -100,15 +100,21 @@ class HeteroGraphEncoder(GraphEncoderBase):
 
         atom_or_literal: XAtom | XLiteral
         for atom_or_literal in self._atoms_and_goals_iterator(state):
-            # only a literal has a member `get_atom`
-            atom: XAtom = getattr(atom_or_literal, "atom", atom_or_literal)
+            if isinstance(atom_or_literal, XLiteral):
+                atom = atom_or_literal.atom
+                is_goal = not hasattr(atom_or_literal, "is_not_goal")
+            else:
+                atom = atom_or_literal
+                is_goal = False
             predicate = atom.predicate
             arity = predicate.arity
             if arity == 0:
                 continue
 
             atom_node = self.node_factory(atom_or_literal)
-            graph.add_node(atom_node, type=self.node_factory(predicate))
+            graph.add_node(
+                atom_node, type=self.node_factory(predicate, is_goal=is_goal)
+            )
 
             for pos, obj in enumerate(atom.objects):
                 # Connect predicate node to object node
