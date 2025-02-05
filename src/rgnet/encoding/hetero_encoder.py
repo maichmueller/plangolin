@@ -49,7 +49,7 @@ class HeteroGraphEncoder(GraphEncoderBase):
         super().__init__(domain)
         self.obj_type_id: str = obj_type_id
         self.node_factory: NodeFactory = node_factory
-        self.predicates: tuple[XPredicate, ...] = self.domain.predicates
+        self.predicates: tuple[XPredicate, ...] = self.domain.predicates()
         self.arity_dict: Dict[Node, int] = HeteroGraphEncoder.make_arity_dict(
             self.predicates, node_factory
         )

@@ -110,7 +110,7 @@ class XLiteral:
         return hash((self.is_negated, self.atom))
 
 
-@dataclass(slots=True, eq=True, frozen=True)
+@dataclass(eq=True, frozen=True)
 class XDomain(BaseHashMixin, BaseEqMixin):
     base: Domain
 
@@ -122,7 +122,7 @@ class XDomain(BaseHashMixin, BaseEqMixin):
     def filepath(self) -> str:
         return self.base.get_filepath()
 
-    @cached_property
+    @cache
     def predicates(self, *category: XCategory) -> tuple[XPredicate, ...]:
         if not category:
             category = XCategory.__members__.values()

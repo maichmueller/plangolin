@@ -50,7 +50,7 @@ class FeatureMap:
         if self.needs_initialization:
             if not isinstance(mode, FeatureMode):
                 raise ValueError(f"{mode = } not instance of {FeatureMode}.")
-            self._predicates = domain.predicates if domain else predicates
+            self._predicates = domain.predicates() if domain else predicates
             if not self._predicates:
                 raise ValueError(
                     f"No predicates given. Passed arguments for domain and predicates:\n{repr(domain)}\n{repr(predicates)}"
