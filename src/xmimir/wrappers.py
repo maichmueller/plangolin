@@ -359,6 +359,13 @@ class XState:
         """
         return self.base.get_index()
 
+    def is_goal(self) -> bool:
+        for _ in self.unsatisfied_literals(
+            self.problem.goal(XCategory.fluent, XCategory.derived)
+        ):
+            return False
+        return True
+
     def atoms(self) -> Iterable[XAtom]:
         return chain(self.fluent_atoms, self.derived_atoms)
 
