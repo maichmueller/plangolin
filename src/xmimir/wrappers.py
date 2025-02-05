@@ -8,12 +8,14 @@ from itertools import chain
 from typing import (
     Any,
     Generator,
+    Generic,
     Iterable,
     Iterator,
     List,
     NamedTuple,
     Optional,
     Sequence,
+    TypeVar,
     Union,
 )
 
@@ -53,9 +55,39 @@ class BaseEqMixin:
         return self.base == other.base
 
 
-@dataclass(slots=True, unsafe_hash=True)
-class XPredicate(BaseHashMixin, BaseEqMixin):
-    base: Predicate
+def hollow_check(func):
+    def wrapper(self, *args, **kwargs):
+        if self.hollow:
+            raise ValueError(f"Cannot perform operation {func} on hollow object.")
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+T = TypeVar("T")
+
+
+class BaseWrapper(Generic[T]):
+    """
+    A mixin class to provide a base accessor that checks against hollow-ness of the underlying object.
+    """
+
+    _base: T | None
+
+    def __init__(self, base: T | None):
+        self._base = base
+
+    @property
+    def hollow(self):
+        return self._base is None
+
+    @property
+    @hollow_check
+    def base(self) -> T:
+        return self._base
+
+
+class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
     category: XCategory
 
     def __init__(self, predicate: Predicate) -> XPredicate:
@@ -65,7 +97,7 @@ class XPredicate(BaseHashMixin, BaseEqMixin):
             category = XCategory.derived
         else:
             category = XCategory.static
-        self.base = predicate
+        super().__init__(predicate)
         self.category = category
 
     @property
@@ -80,13 +112,11 @@ class XPredicate(BaseHashMixin, BaseEqMixin):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
 
 
-@dataclass(slots=True, unsafe_hash=True)
-class XAtom(BaseHashMixin, BaseEqMixin):
-    base: GroundAtom
+class XAtom(BaseWrapper[GroundAtom], BaseHashMixin, BaseEqMixin):
     predicate: XPredicate
 
     def __init__(self, atom: GroundAtom) -> XAtom:
-        self.base = atom
+        super().__init__(atom)
         self.predicate = XPredicate(atom.get_predicate())
 
     @property
@@ -98,31 +128,35 @@ class XAtom(BaseHashMixin, BaseEqMixin):
         return f"({self.predicate.name} {obj_section})"
 
 
-@dataclass(slots=True, eq=True)
-class XLiteral:
-    base: GroundLiteral | None
+class XLiteral(BaseWrapper[GroundLiteral]):
     atom: XAtom
     is_negated: bool
 
     def __init__(self, literal: GroundLiteral | tuple[bool, XAtom]):
         if isinstance(literal, tuple):
-            self.base = None
+            super().__init__(None)
             self.is_negated, self.atom = literal
         else:
-            self.base = literal
+            super().__init__(literal)
             self.atom = XAtom(literal.get_atom())
             self.is_negated = literal.is_negated()
 
     def __str__(self):
-        return f"{'^' if self.base.is_negated() else ''}{self.atom}"
+        return f"{'-' if self.base.is_negated() else '+'}{self.atom}"
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.is_negated == other.is_negated and self.atom == other.atom
 
     def __hash__(self):
         return hash((self.is_negated, self.atom))
 
 
-@dataclass(eq=True, frozen=True)
-class XDomain(BaseHashMixin, BaseEqMixin):
-    base: Domain
+class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
+
+    def __init__(self, domain: Domain):
+        super().__init__(domain)
 
     @property
     def name(self) -> str:
@@ -159,13 +193,12 @@ class XDomain(BaseHashMixin, BaseEqMixin):
         return self.base.get_requirements()
 
 
-class XProblem(BaseHashMixin, BaseEqMixin):
-    base: Problem
+class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
     repositories: PDDLRepositories
 
     @multimethod
     def __init__(self, problem: Problem, repositories: PDDLRepositories):
-        self.base = problem
+        super().__init__(problem)
         self.repositories = repositories
 
     @multimethod
@@ -200,6 +233,12 @@ class XProblem(BaseHashMixin, BaseEqMixin):
         )
         return (XLiteral(l) for l in iterable)
 
+    def static_atoms(self) -> Iterable[XAtom]:
+        return (
+            XAtom(literal.get_atom())
+            for literal in self.base.get_static_initial_literals()
+        )
+
     def initial_literals(self) -> Iterable[XLiteral]:
         """
         Get the initial literals of the problem definition.
@@ -225,12 +264,11 @@ class XProblem(BaseHashMixin, BaseEqMixin):
         )
 
 
-class XAction(BaseHashMixin, BaseEqMixin):
-    base: GroundAction
+class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
     problem: XProblem
 
     def __init__(self, action: GroundAction, problem: XProblem):
-        self.base = action
+        super().__init__(action)
         self.problem = problem
 
     def __str__(self):
@@ -296,14 +334,12 @@ class XAction(BaseHashMixin, BaseEqMixin):
         return [objs[i] for i in self.base.get_object_indices()]
 
 
-@dataclass(eq=True)
-class XState:
-    base: State
+class XState(BaseWrapper[State]):
     problem: XProblem
 
     @multimethod
     def __init__(self, state: State, problem: XProblem):
-        self.base = state
+        super().__init__(state)
         self.problem = problem
 
     @multimethod
@@ -316,6 +352,11 @@ class XState:
 
     def __iter__(self):
         return iter(self.atoms())
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.base == other.base and self.problem == other.problem
 
     def __hash__(self):
         return hash((self.base, self.problem))
@@ -366,11 +407,12 @@ class XState:
             return False
         return True
 
-    def atoms(self) -> Iterable[XAtom]:
-        return chain(self.fluent_atoms, self.derived_atoms)
-
-    def gather_objects(self) -> set[Object]:
-        return set(chain.from_iterable(atom.objects for atom in self.atoms()))
+    def atoms(self, with_statics: bool = False) -> Iterable[XAtom]:
+        return chain(
+            (self.problem.static_atoms() if with_statics else tuple()),
+            self.fluent_atoms,
+            self.derived_atoms,
+        )
 
     def satisfied_literals(self, literals: Iterable[XLiteral]) -> Iterable[XLiteral]:
         return (lit for lit in literals if self.base.literal_holds(lit.base))
@@ -398,9 +440,7 @@ class XState:
         )
 
 
-@dataclass(slots=True, eq=True, unsafe_hash=True)
-class XTransition(BaseHashMixin):
-    base: Edge | None
+class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
     source: XState
     target: XState
     action: Optional[XAction | tuple[XAction]]
@@ -408,7 +448,7 @@ class XTransition(BaseHashMixin):
     @multimethod
     def __init__(
         self,
-        edge: Edge,
+        edge: GroundActionEdge,
         space: XStateSpace,
     ):
         self.__init__(
@@ -421,12 +461,12 @@ class XTransition(BaseHashMixin):
     @multimethod
     def __init__(
         self,
-        edge: Edge | None,
+        edge: GroundActionEdge | None,
         source: XState,
         target: XState,
         action: XAction | Iterable[XAction] | None,
     ):
-        self.base = edge
+        super().__init__(edge)
         self.source = source
         self.target = target
         self.action = tuple(action) if hasattr(action, "__iter__") else action
@@ -434,12 +474,23 @@ class XTransition(BaseHashMixin):
     def __iter__(self):
         return iter((self.source, self.target, self.action))
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            self.source == other.source
+            and self.target == other.target
+            and self.action == other.action
+        )
+
+    def __hash__(self):
+        return hash((self.source, self.target, self.action))
+
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
 
 
-class XActionGenerator:
-    base: Grounder
+class XActionGenerator(BaseWrapper[Grounder]):
     workspace: ApplicableActionGeneratorWorkspace
     aag: GroundedApplicableActionGenerator
     problem: XProblem
@@ -450,7 +501,7 @@ class XActionGenerator:
 
     @multimethod
     def __init__(self, base: Grounder):
-        self.base = base
+        super().__init__(base)
         self.workspace = ApplicableActionGeneratorWorkspace()
         self.aag = GroundedApplicableActionGenerator(base.get_action_grounder())
 
@@ -467,14 +518,13 @@ class XActionGenerator:
             yield XAction(action, self.problem)
 
 
-class XSuccessorGenerator:
-    base: Grounder
+class XSuccessorGenerator(BaseWrapper[Grounder]):
     workspace: StateRepositoryWorkspace
     state_repository: StateRepository
 
     @multimethod
     def __init__(self, base: Grounder, state_repository: StateRepository | None = None):
-        self.base = base
+        super().__init__(base)
         self.state_repository = state_repository or StateRepository(
             GroundedAxiomEvaluator(self.base.get_axiom_grounder())
         )
@@ -486,7 +536,7 @@ class XSuccessorGenerator:
         problem: XProblem,
         state_repository: StateRepository | None = None,
     ):
-        self.base = Grounder(problem.base, problem.repositories)
+        super().__init__(Grounder(problem.base, problem.repositories))
         self.state_repository = state_repository or StateRepository(
             GroundedAxiomEvaluator(self.base.get_axiom_grounder())
         )
@@ -524,9 +574,7 @@ class XSuccessorGenerator:
             yield action, self.successor(state, action)
 
 
-@dataclass(eq=True, unsafe_hash=True)
-class XSearchResult:
-    base: SearchResult
+class XSearchResult(BaseWrapper[SearchResult]):
     start: XState
     problem: XProblem
 
@@ -547,8 +595,17 @@ class XSearchResult:
             return self.base.plan.get_cost()
         return None
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            self.base == other.base
+            and self.problem == other.problem
+            and self.start == other.start
+        )
 
-class XStateSpace(BaseHashMixin, BaseEqMixin):
+
+class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
     """
     The extended state space class.
 
@@ -568,7 +625,7 @@ class XStateSpace(BaseHashMixin, BaseEqMixin):
     _vertices: list[StateVertex]
 
     def __init__(self, space: StateSpace):
-        self.base = space
+        super().__init__(space)
         self._vertices = space.get_vertices()
 
     @multimethod
