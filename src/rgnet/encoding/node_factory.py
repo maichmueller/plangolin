@@ -26,9 +26,10 @@ class NodeFactory:
         return hash((self.negation_prefix, self.goal_suffix))
 
     def __eq__(self, other):
+        if not isinstance(other, NodeFactory):
+            return NotImplemented
         return (
-            isinstance(other, NodeFactory)
-            and self.negation_prefix == other.negation_prefix
+            self.negation_prefix == other.negation_prefix
             and self.goal_suffix == other.goal_suffix
         )
 
@@ -75,7 +76,7 @@ class NodeFactory:
         **kwargs,
     ) -> Node | None:
         pos_string = f":{pos}" if pos is not None else ""
-        return f"{literal}{self.goal_suffix}{pos_string}"
+        return f"{literal.atom}{self.goal_suffix}{pos_string}"
 
     @cache
     @__call__.register
