@@ -5,15 +5,13 @@ import logging
 import operator
 from collections import defaultdict
 from functools import cache
-from typing import Dict, Iterable, List, NamedTuple
+from typing import Dict, Iterable, List, NamedTuple, Sequence
 
 import networkx as nx
 import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
-from rgnet.encoding.node_factory import Node, NodeFactory
 from xmimir import (
     Atom,
     Literal,
@@ -26,6 +24,9 @@ from xmimir import (
     XState,
 )
 
+from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
+from .node_factory import Node, NodeFactory
+
 
 class PredicateEdgeType(NamedTuple):
     src_type: str
@@ -33,7 +34,7 @@ class PredicateEdgeType(NamedTuple):
     dst_type: str
 
 
-class HeteroGraphEncoder(GraphEncoderBase):
+class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
     """
     An encoder to represent states as heterogeneous graphs with objects and predicates as vertices
     and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.
@@ -87,19 +88,17 @@ class HeteroGraphEncoder(GraphEncoderBase):
             )
         )
 
-    def encode(self, state: XState) -> nx.Graph:
+    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
-        problem = state.problem
-        graph = nx.Graph(encoding=self, state=state)
 
-        for obj in problem.objects:
+        for obj in self._contained_objects(items):
             graph.add_node(self.node_factory(obj), type=self.obj_type_id)
 
         atom_or_literal: XAtom | XLiteral
-        for atom_or_literal in self._atoms_and_goals_iterator(state):
+        for atom_or_literal in items:
             if isinstance(atom_or_literal, XLiteral):
                 atom = atom_or_literal.atom
                 is_goal = not hasattr(atom_or_literal, "is_not_goal")
@@ -119,10 +118,9 @@ class HeteroGraphEncoder(GraphEncoderBase):
             for pos, obj in enumerate(atom.objects):
                 # Connect predicate node to object node
                 graph.add_edge(self.node_factory(obj), atom_node, position=pos)
-        return graph
 
     @check_encoded_by_this
-    def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
+    def to_pyg_data(self, graph: GraphT) -> HeteroData:
         del graph.graph["encoding"]
         del graph.graph["state"]
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)

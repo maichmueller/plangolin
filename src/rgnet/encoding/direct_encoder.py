@@ -3,15 +3,13 @@ from __future__ import annotations
 import itertools
 from functools import singledispatchmethod
 from types import NoneType
-from typing import Optional
+from typing import Iterable, Optional, Sequence
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
-from rgnet.encoding.node_factory import Node, NodeFactory
 from xmimir import (
     Atom,
     Domain,
@@ -21,16 +19,20 @@ from xmimir import (
     PDDLRepositories,
     Problem,
     State,
+    XAtom,
     XCategory,
     XDomain,
+    XLiteral,
     XProblem,
     XState,
 )
 
+from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .featuremap import FeatureMap, FeatureMode
+from .node_factory import Node, NodeFactory
 
 
-class DirectGraphEncoder(GraphEncoderBase):
+class DirectGraphEncoder(GraphEncoderBase[nx.DiGraph]):
     """
     An encoder to represent states as directed graphs with objects as vertices
     and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.
@@ -95,20 +97,15 @@ class DirectGraphEncoder(GraphEncoderBase):
         else:
             graph.add_edge(source_obj, target_obj, feature=feature)
 
-    def encode(self, state: XState):
-        graph = nx.DiGraph(encoding=self, state=state)
-
-        objects = state.problem.objects
+    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
+        objects = self._contained_objects(items)
         for obj in objects:
-            graph.add_node(
-                self.node_factory(obj),
-                feature=self._feature_map(None),
-            )
+            graph.add_node(self.node_factory(obj), feature=self._feature_map(None))
         graph.add_node(
             self.node_factory(self._auxiliary_node), feature=self._feature_map(None)
         )
 
-        for atom_or_literal in self._atoms_and_goals_iterator(state):
+        for atom_or_literal in items:
             # only a literal has a member `get_atom`
             atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
             is_goal = not hasattr(atom_or_literal, "is_not_goal")
@@ -138,7 +135,7 @@ class DirectGraphEncoder(GraphEncoderBase):
         return graph
 
     @check_encoded_by_this
-    def to_pyg_data(self, graph: nx.DiGraph) -> Data:
+    def to_pyg_data(self, graph: GraphT) -> Data:
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir.State
         del graph.graph["state"]

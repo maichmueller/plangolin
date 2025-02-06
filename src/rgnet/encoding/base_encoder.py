@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import functools
 import itertools
+import warnings
 from abc import ABC, abstractmethod
-from typing import Iterable, Optional, Type
+from typing import Any, Generic, Iterable, Optional, Sequence, Type, TypeVar, get_args
 
 import networkx as nx
 import torch_geometric as pyg
+from multimethod import multimethod
 
 from xmimir import (
     Domain,
+    Object,
     PDDLRepositories,
     Problem,
     State,
@@ -20,19 +23,18 @@ from xmimir import (
     XLiteral,
     XProblem,
     XState,
+    gather_objects,
 )
 
-
-def _patch_as_nongoal(literal: StaticLiteral):
-    # monkey patch the literal to be a non-goal (only for internal use)
-    literal.is_not_goal = True
-    return literal
+GraphT = TypeVar("GraphT", nx.Graph, nx.DiGraph)
 
 
-class GraphEncoderBase(ABC):
+class GraphEncoderBase(ABC, Generic[GraphT]):
     """
     The state-graph encoder base class into an associated state-graph.
     """
+
+    _graph_t: Any
 
     def __init__(
         self,
@@ -42,6 +44,17 @@ class GraphEncoderBase(ABC):
     ):
         self._domain = domain
 
+    def __init_subclass__(cls) -> None:
+        # get the explicit graph type of the encoder
+        try:
+            cls._graph_t = get_args(cls.__orig_bases__[0])[0]
+        except (AttributeError, IndexError) as e:
+            raise NotImplementedError(
+                f"Could not extract specific graph type from generic inheritance. "
+                f"Remember to explicate the graph type when subclassing {GraphEncoderBase.__name__} as e.g. such "
+                f"`{GraphEncoderBase.__name__}[nx.Graph].",
+            ) from e
+
     @property
     def domain(self):
         return self._domain
@@ -49,30 +62,60 @@ class GraphEncoderBase(ABC):
     @abstractmethod
     def __eq__(self, other): ...
 
-    @abstractmethod
-    def encode(self, state: XState) -> nx.Graph | nx.DiGraph:
+    def encode(
+        self, state: XState | Iterable[XAtom] | Iterable[XLiteral], **kwargs
+    ) -> GraphT:
         """
-        Encodes the state into a networkx-graph representation.
+        Encodes the state/atoms/literals into a networkx-graph representation.
 
         Parameters
         ----------
-        state: pymimir.State, the state to encode as a graph.
+        state: XState | Iterable[XAtom] | Iterable[XLiteral],
+            the state to encode as a graph.
 
         Returns
         -------
         nx.Graph or nx.DiGraph
         """
-        ...
+
+        if isinstance(state, XState):
+            graph = self._graph_t(encoding=self, state=state)
+            self._encode(
+                tuple(state.atoms(with_statics=True)),
+                graph,
+            )
+            self._encode(tuple(state.problem.goal()), graph)
+        else:
+            state = tuple(state)
+            graph = self._graph_t(encoding=self, state=state)
+            self._encode(state, graph)
+        return graph
 
     @abstractmethod
-    def to_pyg_data(
-        self, encoded_graph: nx.DiGraph
-    ) -> pyg.data.Data | pyg.data.HeteroData:
+    def _encode(
+        self, items: Sequence[XAtom] | Sequence[XLiteral], graph: nx.Graph | nx.DiGraph
+    ): ...
+
+    @staticmethod
+    def _contained_objects(
+        items: Sequence[XAtom] | Sequence[XLiteral],
+    ) -> list[Object]:
+        return sorted(
+            (
+                gather_objects(items)
+                if isinstance(items[0], XAtom)
+                else gather_objects(item.atom for item in items)
+            ),
+            key=lambda obj: obj.get_name(),
+        )
+
+    @abstractmethod
+    def to_pyg_data(self, encoded_graph: GraphT) -> pyg.data.Data | pyg.data.HeteroData:
         """
         Converts the encoded state into a torch-geometric data object.
         Parameters
         ----------
-        encoded_graph: nx.DiGraph or nx.Graph, the graph to convert.
+        encoded_graph: GraphT, the graph to convert.
 
         Returns
         -------
@@ -80,21 +123,11 @@ class GraphEncoderBase(ABC):
         """
         ...
 
-    def _encoded_by_this(self, graph: nx.Graph | nx.DiGraph) -> bool:
+    def _encoded_by_this(self, graph: GraphT) -> bool:
         return (
             hasattr(graph, "graph")
             and "encoding" in graph.graph
             and graph.graph["encoding"] == self
-        )
-
-    def _atoms_and_goals_iterator(self, state: XState) -> Iterable[XLiteral | XAtom]:
-        return itertools.chain(
-            (
-                XLiteral(_patch_as_nongoal(l))
-                for l in state.problem.base.get_static_initial_literals()
-            ),
-            state.problem.goal(XCategory.fluent, XCategory.derived),
-            state.atoms(),
         )
 
 

@@ -1,35 +1,38 @@
 from __future__ import annotations
 
-import itertools
 import warnings
+from asyncio import gather
 from collections import namedtuple
 from copy import copy
 from enum import Enum
 from functools import cached_property, singledispatchmethod
-from typing import Any, Dict, Iterator, Optional
+from itertools import chain
+from typing import Any, Dict, Iterable, Iterator, Optional, Sequence
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
 from torch_geometric.data import Data
 
-from rgnet.encoding.base_encoder import GraphEncoderBase, check_encoded_by_this
-from rgnet.encoding.node_factory import NodeFactory
 from xmimir import (
     Atom,
     GroundAtom,
     GroundLiteral,
     Literal,
     Predicate,
+    XAtom,
     XDomain,
     XLiteral,
     XState,
 )
+from xmimir.extensions import gather_objects
 
+from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .featuremap import FeatureMap
+from .node_factory import NodeFactory
 
 
-class ColorGraphEncoder(GraphEncoderBase):
+class ColorGraphEncoder(GraphEncoderBase[nx.Graph]):
     """
     A state encoder into an associated colored state-graph for a specified domain.
 
@@ -69,29 +72,30 @@ class ColorGraphEncoder(GraphEncoderBase):
     def feature_map(self):
         return self._feature_map
 
-    def encode(self, state: XState) -> nx.Graph:
-        graph = nx.Graph(encoding=self, state=state)
-
-        for obj in state.problem.objects:
+    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
+        for obj in self._contained_objects(items):
             graph.add_node(self.node_factory(obj), feature=self.feature_map(None))
 
-        atom_or_literal: XLiteral | Atom
-        for atom_or_literal in self._atoms_and_goals_iterator(state):
+        atom_or_literal: XLiteral | XAtom
+        for atom_or_literal in items:
             prev_predicate_node = None
             if isinstance(atom_or_literal, XLiteral):
+                is_goal = True
                 atom = atom_or_literal.atom
-                is_goal = not hasattr(atom_or_literal.base, "is_not_goal")
             else:
-                atom = atom_or_literal
                 is_goal = False
-
+                atom = atom_or_literal
             predicate = atom.predicate
             arity = predicate.arity
             if self.predicate_nodes_enabled:
                 graph.add_node(
                     # global predicate nodes are never negated.
                     # The negation is encoded in the init features of the individual literals using this predicate
-                    self.node_factory(predicate, is_goal=is_goal, is_negated=False),
+                    self.node_factory(
+                        predicate,
+                        is_goal=is_goal,
+                        is_negated=False,
+                    ),
                     feature=self.feature_map(None),
                 )
 
@@ -128,10 +132,9 @@ class ColorGraphEncoder(GraphEncoderBase):
                     )
 
                 prev_predicate_node = atom_or_literal_node
-        return graph
 
     @check_encoded_by_this
-    def to_pyg_data(self, graph: nx.Graph) -> Data:
+    def to_pyg_data(self, graph: GraphT) -> Data:
         # In the pyg.utils.from_networkx the graph is converted to a DiGraph
         # In this process it has to be pickled, which is not defined for pymimir objects
         del graph.graph["state"]
