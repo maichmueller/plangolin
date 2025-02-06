@@ -11,7 +11,7 @@ from torchrl.objectives import LossModule, ValueEstimators, distance_loss
 from torchrl.objectives.utils import _reduce
 from torchrl.objectives.value import GAE, TD0Estimator, TD1Estimator, TDLambdaEstimator
 
-from rgnet.rl.losses.all_actions_estimator import AllActionsValueEstimator
+from .all_actions_estimator import AllActionsValueEstimator
 
 
 class CriticLoss(LossModule):

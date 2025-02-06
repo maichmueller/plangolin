@@ -4,12 +4,7 @@ from datetime import datetime
 
 import torch
 
-from rgnet.rl import (
-    ActorCritic,
-    EmbeddingModule,
-    EmbeddingTransform,
-    NonTensorTransformedEnv,
-)
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.configs import agent as agent_module
 from rgnet.rl.configs import data_resolver as data_resolver_module
 from rgnet.rl.configs import embedding as embedding_module
@@ -19,6 +14,11 @@ from rgnet.rl.configs import trainer as trainer_module
 from rgnet.rl.configs import value_estimator
 from rgnet.rl.configs.agent import Agent
 from rgnet.rl.data_layout import OutputData
+from rgnet.rl.embedding import (
+    EmbeddingModule,
+    EmbeddingTransform,
+    NonTensorTransformedEnv,
+)
 
 
 def create_args():

@@ -5,7 +5,7 @@ from functools import cache
 from itertools import chain
 from os import PathLike
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
 
 import torch
 from lightning import Trainer
@@ -31,8 +31,15 @@ from rgnet.encoding.base_encoder import EncoderFactory
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl import ActorCritic, ActorCriticLoss
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
+from rgnet.rl.losses import (  # noqa: F401
+    ActorCriticLoss,
+    AllActionsLoss,
+    AllActionsValueEstimator,
+    CriticLoss,
+)
+from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
@@ -93,25 +100,11 @@ class OptimizerSetup:
         self.optimizer = optimizer(lr_parameters)
 
 
-class ValueEstimatorConfig:
-
-    def __init__(
-        self, gamma: float, estimator_type: ValueEstimators = ValueEstimators.TD0
-    ):
-        self.gamma = gamma
-        self.estimator = estimator_type
-
-
 @dataclasses.dataclass
 class WandbExtraParameter:
     watch_model: Optional[bool] = True  # whether to watch the model gradients
     log_frequency: int = 100  # the frequency for watch
     log_code: bool = False  # whether to save the code as wandb artifact
-
-
-def configure_loss(loss: ActorCriticLoss, estimator: ValueEstimatorConfig):
-    loss.make_value_estimator(value_type=estimator.estimator, gamma=estimator.gamma)
-    return loss
 
 
 def optimal_policy_dict(input_data: InputData):
@@ -135,6 +128,38 @@ def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str
         return None
 
     return {i: p.name for i, p in enumerate(input_data.validation_problems)}
+
+
+class ValueEstimatorConfig:
+
+    def __init__(
+        self,
+        gamma: float,
+        value_type: (
+            ValueEstimators | Literal["AllActionsValueEstimator"]
+        ) = ValueEstimators.TD0,
+    ):
+        self.gamma = gamma
+        self.estimator_type = value_type
+
+
+def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):
+    """
+    We need to configure the estimator after the loss was instantiated via make_value_estimator.
+    This is why we have the estimator and loss as separate keys and link them together for
+    configuring `model.loss`.
+    """
+    hyperparameter = dict()
+    if estimator_config.estimator_type == "AllActionsValueEstimator":
+        hyperparameter["reward_done_provider"] = KeyBasedProvider(
+            reward_key=PolicyGradientLitModule.default_keys.all_rewards,
+            done_key=PolicyGradientLitModule.default_keys.all_dones,
+        )
+    hyperparameter["shifted"] = True
+    hyperparameter["gamma"] = estimator_config.gamma
+
+    loss.make_value_estimator(estimator_config.estimator_type, **hyperparameter)
+    return loss
 
 
 @dataclasses.dataclass
@@ -231,20 +256,22 @@ class ThundeRLCLI(LightningCLI):
             InputData, "data_layout.input_data", as_positional=True
         )
         parser.add_dataclass_arguments(OutputData, "data_layout.output_data")
+
         parser.add_class_arguments(
-            ActorCriticLoss,
-            "ac_loss",
+            ValueEstimatorConfig, as_positional=True, nested_key="estimator_config"
+        )
+        parser.add_subclass_arguments(
+            CriticLoss,
             as_positional=True,
+            nested_key="loss",
             skip={"clone_tensordict", "keys"},
         )
+
         parser.add_class_arguments(
             ActorCritic, "agent", as_positional=True, skip={"keys"}
         )
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
-        )
-        parser.add_class_arguments(
-            ValueEstimatorConfig, "value_estimator", as_positional=True
         )
         parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
 
@@ -272,20 +299,14 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
         )
-        parser.link_arguments("value_estimator.gamma", "data.gamma", apply_on="parse")
         parser.link_arguments(
-            "agent.value_operator", "ac_loss.critic_network", apply_on="instantiate"
+            "estimator_config.gamma",
+            "data.gamma",
+            apply_on="parse",
         )
 
         # Model links
         parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
-
-        parser.link_arguments(
-            ("ac_loss", "value_estimator"),
-            "model.loss",
-            apply_on="instantiate",
-            compute_fn=configure_loss,
-        )
 
         parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
         parser.link_arguments(
@@ -293,6 +314,32 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.link_arguments(
             "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
+        )
+        # Loss links
+        parser.link_arguments(
+            "agent.value_operator",
+            "loss.init_args.critic_network",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            ("loss", "estimator_config"),
+            "model.loss",
+            apply_on="instantiate",
+            compute_fn=configure_loss,
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_all_rewards_and_done",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_successor_embeddings",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
         )
 
         # Trainer / logger links
@@ -329,7 +376,7 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source=("data_layout.input_data", "value_estimator.gamma"),
+            source=("data_layout.input_data", "data.gamma"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
@@ -350,7 +397,7 @@ class ThundeRLCLI(LightningCLI):
 
         # PolicyEvaluationValidation
         parser.link_arguments(
-            source=("data_layout.input_data", "value_estimator.gamma"),
+            source=("data_layout.input_data", "data.gamma"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
@@ -361,9 +408,9 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            "value_estimator.gamma",
+            "data.gamma",
             "model.validation_hooks.init_args.gamma",
-            apply_on="parse",
+            apply_on="instantiate",
         )
 
         # ProbsStoreCallback, PolicyEvaluationValidation

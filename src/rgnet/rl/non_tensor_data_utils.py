@@ -1,5 +1,5 @@
 from functools import singledispatch
-from typing import List, Sequence, Union
+from typing import Iterable, List, Union
 
 from tensordict import NonTensorData, NonTensorStack
 from torch_geometric.data.batch import Batch
@@ -7,7 +7,7 @@ from torch_geometric.data.batch import Batch
 NonTensorWrapper = Union[NonTensorData, NonTensorStack]
 
 
-def as_non_tensor_stack(sequence: Sequence) -> NonTensorStack:
+def as_non_tensor_stack(sequence: Iterable) -> NonTensorStack:
     """
     Wrap every element of the list in a NonTensorData and stacks them into a
     NonTensorDataStack. We do not use torch.stack() in order to avoid getting

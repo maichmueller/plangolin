@@ -1,5 +1,5 @@
 import logging
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod
 from typing import Any, Callable, Dict, List
 
 import pymimir as mi
@@ -8,7 +8,7 @@ from tensordict import NestedKey, TensorDict
 from torchrl.modules import ValueOperator
 from torchrl.trainers import Trainer, TrainerHookBase
 
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 

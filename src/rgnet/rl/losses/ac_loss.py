@@ -5,7 +5,7 @@ from tensordict import NestedKey, TensorDict, TensorDictBase
 from torchrl.modules import ValueOperator
 from torchrl.objectives.utils import ValueEstimators, _reduce
 
-from rgnet.rl.losses.critic_loss import CriticLoss
+from .critic_loss import CriticLoss
 
 
 class ActorCriticLoss(CriticLoss):
@@ -49,9 +49,9 @@ class ActorCriticLoss(CriticLoss):
             reduction=reduction,
             loss_critic_type=loss_critic_type,
             clone_tensordict=clone_tensordict,
+            keys=keys,
         )
         self.log_prob_clip = log_prob_clip_value
-        self._tensor_keys = keys
 
     @property
     def loss_components(self):

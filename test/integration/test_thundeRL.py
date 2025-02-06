@@ -18,6 +18,7 @@ import rgnet
 from experiments.rl.thundeRL import run_lightning_fast
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
+from rgnet.utils import get_device_cuda_if_possible
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -78,8 +79,8 @@ def launch_thundeRL(
         "training_step",
         training_step_mock,
     )
-
     run_lightning_fast.cli_main()
+    mockito.unstub(rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule)
 
 
 def _create_data_setup(tmp_path):
@@ -192,14 +193,19 @@ def _validate_done_reward_num_transitions(
     all_transitions = small_space.num_transitions() + medium_space.num_transitions()
     assert torch.allclose(
         flattened_reward.sum().abs(),
-        torch.tensor([all_transitions - goal_transitions], dtype=torch.float),
+        torch.tensor(
+            [all_transitions - goal_transitions],
+            dtype=torch.float,
+            device=flattened_reward.device,
+        ),
     )
 
 
-def test_full_epoch(tmp_path, small_blocks, medium_blocks):
+def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
     """Run a full epoch of the training setup including small and medium blocks.
     Test that the model receives the correct data by patching it with PolicyGradientModuleMock
     which simply records all incoming data.
+    This test might take a bit longer, you can exclude it by adding `--ignore=test/integration` to your pytest script
     """
     small_space: mi.StateSpace
     medium_space: mi.StateSpace
@@ -232,9 +238,9 @@ def test_full_epoch(tmp_path, small_blocks, medium_blocks):
         dataset_dir,
         output_dir,
     )
-
-    # _validate_don_reward_num_transitions(small_space, medium_space, mock)
-
+    for drive in drives:
+        drive.to(get_device_cuda_if_possible())
+    _validate_done_reward_num_transitions(small_space, medium_space, mock)
     for batch_tuple in zip(
         mock.batched_list, mock.successor_batch_list, mock.num_successor_list
     ):

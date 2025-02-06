@@ -6,10 +6,12 @@ from typing import Optional
 import torch
 from torchrl.objectives import ValueEstimators
 
-from rgnet.rl import ActorCritic, EmbeddingModule, NonTensorTransformedEnv
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData
+from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
+from rgnet.rl.losses.all_actions_estimator import EnvironmentBasedRewardProvider
 from rgnet.rl.losses.optimal_value_function import OptimalValueFunction
 from rgnet.rl.optimality_utils import discounted_value
 
@@ -59,11 +61,11 @@ def from_parser_args(
     elif use_all_actions:
         assert env is not None
         assert embedding is not None
+        env_based_provider = EnvironmentBasedRewardProvider(env.base_env)
         loss.make_value_estimator(
             value_type="AllActionsValueEstimator",
-            env=env,
-            embedding_module=embedding,
             gamma=parser_args.gamma,
+            reward_done_provider=env_based_provider,
         )
     else:
         loss.make_value_estimator(

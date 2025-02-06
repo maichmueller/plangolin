@@ -7,9 +7,8 @@ import torch
 import torch_geometric.nn.aggr
 
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.rl import EmbeddingModule
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.embedding import build_embedding_and_gnn
+from rgnet.rl.embedding import EmbeddingModule, build_embedding_and_gnn
 from rgnet.rl.non_tensor_data_utils import tolist
 
 

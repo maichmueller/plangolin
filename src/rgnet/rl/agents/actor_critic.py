@@ -8,7 +8,11 @@ import pymimir as mi
 import torch
 import torch_geometric as pyg
 from tensordict import NestedKey, NonTensorStack, TensorDict
-from tensordict.nn import ProbabilisticTensorDictModule, TensorDictModule
+from tensordict.nn import (
+    InteractionType,
+    ProbabilisticTensorDictModule,
+    TensorDictModule,
+)
 from torch import Tensor
 from torchrl.modules.tensordict_module import ValueOperator
 
@@ -49,9 +53,8 @@ class ActorCritic(torch.nn.Module):
         probs: NestedKey = "probs"  # the probability for each possible action
         state_value: NestedKey = "state_value"  # the output of the value-operator
         current_embedding: NestedKey = "current_embedding"  # the embeddings of states
-        successor_embeddings: NestedKey = (
-            "successor_embeddings"  # the embeddings of the successors
-        )
+        # the embeddings of the successors
+        successor_embeddings: NestedKey = "successor_embeddings"
         # Keys used internally
         _distr_key: NestedKey = "probs"  # the input for the Categorical distribution
         _action_idx_key: NestedKey = "action_idx"  # the output for the distribution
@@ -64,6 +67,7 @@ class ActorCritic(torch.nn.Module):
         embedding_module: Optional[EmbeddingModule] = None,
         value_net: torch.nn.Module | None = None,
         activation: str = "mish",
+        add_successor_embeddings: bool = False,
         keys: AcceptedKeys = default_keys,
     ):
         """
@@ -81,6 +85,7 @@ class ActorCritic(torch.nn.Module):
 
         self._hidden_size = hidden_size
 
+        self.add_successor_embeddings = add_successor_embeddings
         self._embedding_module = embedding_module
 
         self.probabilistic_module = ProbabilisticTensorDictModule(
@@ -90,6 +95,7 @@ class ActorCritic(torch.nn.Module):
             return_log_prob=True,
             log_prob_key=self._keys.log_probs,
             n_empirical_estimate=0,
+            default_interaction_type=InteractionType.RANDOM,
         )
 
         # Input: object embedding of current state and next state, Output: 2 + hidden size
@@ -173,8 +179,9 @@ class ActorCritic(torch.nn.Module):
         current_embeddings: ObjectEmbedding,
         successor_embeddings: ObjectEmbedding,
         num_successors: torch.Tensor,
+        successor_start_indices_cpu: torch.Tensor | None = None,
     ) -> List[torch.Tensor]:
-        """
+        r"""
         Compute the transition probabilities for each state in the batch.
         We start with the dense, masked representations of the embeddings.
         It is assumed that the successor embeddings are sorted by state.
@@ -224,8 +231,13 @@ class ActorCritic(torch.nn.Module):
         aggregated_embeddings: torch.Tensor = pyg.nn.global_add_pool(
             object_diffs, successor_batch
         )
+        if successor_start_indices_cpu is not None:
+            successor_start_indices_cpu: torch.Tensor
+            assert successor_start_indices_cpu.is_cpu
+        else:
+            successor_start_indices_cpu = num_successors.cpu().cumsum(dim=0)[:-1]
         successor_tuple: tuple[torch.Tensor, ...] = aggregated_embeddings.tensor_split(
-            num_successors.cpu().cumsum(dim=0)[:-1]
+            successor_start_indices_cpu
         )
         # List=batch_size, tensors of shape [num_successor,]
         probabilities_batched: list[torch.Tensor] = [
@@ -239,10 +251,14 @@ class ActorCritic(torch.nn.Module):
         current_embedding: ObjectEmbedding,
         successor_embeddings: ObjectEmbedding,
         num_successors: torch.Tensor,
+        successor_start_indices_cpu: torch.Tensor | None = None,
     ) -> Tuple[List[Tensor], Tensor, Tensor]:
         # len(batched_probs) == batch_size, batched_probs[i].shape == len(transitions[i])
         batched_probs: List[Tensor] = self._actor_probs(
-            current_embedding, successor_embeddings, num_successors=num_successors
+            current_embedding,
+            successor_embeddings,
+            num_successors=num_successors,
+            successor_start_indices_cpu=successor_start_indices_cpu,
         )
 
         action_indices, log_probs = self._sample_distribution(batched_probs)
@@ -253,7 +269,13 @@ class ActorCritic(torch.nn.Module):
         state: NonTensorWrapper | List[mi.State],
         transitions: NonTensorWrapper | List[List[mi.Transition]],
         current_embedding: Optional[ObjectEmbedding | TensorDict] = None,
-    ) -> Tuple[NonTensorStack, TensorDict, torch.Tensor, NonTensorStack]:
+    ) -> Tuple[
+        NonTensorStack,
+        TensorDict,
+        torch.Tensor,
+        NonTensorStack,
+        Optional[NonTensorStack],
+    ]:
 
         transitions: List[List[mi.Transition]] = tolist(transitions)
         assert all(
@@ -274,18 +296,33 @@ class ActorCritic(torch.nn.Module):
             dtype=torch.long,
             device=self.embedding_module.device,
         )
+        successor_start_indices_cpu = num_successors.cumsum(dim=0)[:-1].cpu()
 
         batched_probs, action_indices, log_probs = self.embedded_forward(
-            current_embedding, successor_embeddings, num_successors=num_successors
+            current_embedding,
+            successor_embeddings,
+            num_successors=num_successors,
+            successor_start_indices_cpu=successor_start_indices_cpu,
         )
 
         actions = self._select_action(action_indices, transitions)
+
+        if self.add_successor_embeddings:
+            split_embeddings: List[ObjectEmbedding] = successor_embeddings.tensor_split(
+                successor_start_indices_cpu
+            )
+            split_successor_embeddings = as_non_tensor_stack(
+                map(lambda s: s.to_tensordict(), split_embeddings)
+            )
+        else:
+            split_successor_embeddings = None
 
         return (
             as_non_tensor_stack(actions),
             current_embedding.to_tensordict(),
             log_probs,
             as_non_tensor_stack(batched_probs),
+            split_successor_embeddings,
         )
 
     def as_td_module(
@@ -294,7 +331,6 @@ class ActorCritic(torch.nn.Module):
         transition_key: NestedKey,
         action_key: NestedKey,
         add_probs: bool = False,
-        out_successor_embeddings: bool = False,
     ):
         out_keys = [
             action_key,
@@ -303,8 +339,8 @@ class ActorCritic(torch.nn.Module):
         ]
         if add_probs:
             out_keys.append(self._keys.probs)
-        if out_successor_embeddings:
-            raise RuntimeError("Not supported at the moment")
+        if self.add_successor_embeddings:
+            out_keys.append(self._keys.successor_embeddings)
         return TensorDictModule(
             module=self,
             in_keys=[state_key, transition_key, self._keys.current_embedding],
