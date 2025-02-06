@@ -192,6 +192,9 @@ class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
     def requirements(self) -> Requirements:
         return self.base.get_requirements()
 
+    def __str__(self):
+        return str(self.base)
+
 
 class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
     repositories: PDDLRepositories
@@ -657,6 +660,9 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
             f"solvable={self.solvable}, "
             f"solution_cost={self.goal_distance(self.initial_state())}"
         )
+
+    def str(self):
+        return str(self.base)
 
     def __getitem__(self, index: int) -> list[XState] | XState:
         """

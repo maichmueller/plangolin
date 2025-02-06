@@ -1,9 +1,13 @@
+from __future__ import annotations
+
+from itertools import chain
 from pathlib import Path
-from typing import Iterator, Optional, Sequence, Union
+from typing import Generator, Iterable, Iterator, Optional, Sequence, Union
 
-from pymimir import Domain, PDDLParser, Problem
+from multimethod import multimethod
+from pymimir import Domain, Object, PDDLParser, Problem
 
-from .wrappers import XDomain, XProblem
+from .wrappers import XAtom, XDomain, XLiteral, XProblem, XState
 
 
 def parse(
@@ -24,4 +28,19 @@ def parse(
     )
 
 
-__all__ = ["parse"]
+@multimethod
+def gather_objects(state: XState) -> set[Object]:
+    return gather_objects(state.atoms())
+
+
+@multimethod
+def gather_objects(problem: XProblem) -> set[Object]:
+    return set(problem.objects)
+
+
+@multimethod
+def gather_objects(atoms: Iterable[XAtom] | Generator) -> set[Object]:
+    return set(chain.from_iterable(atom.objects for atom in atoms))
+
+
+__all__ = ["parse", "gather_objects"]
