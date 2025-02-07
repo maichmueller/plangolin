@@ -275,7 +275,7 @@ class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
         self.problem = problem
 
     def __str__(self):
-        self.base.to_string(self.problem.repositories)
+        return self.base.to_string(self.problem.repositories)
 
     def str(self, for_plan=True):
         return getattr(self.base, f"to_string{'_for_plan' if for_plan else ''}")(
