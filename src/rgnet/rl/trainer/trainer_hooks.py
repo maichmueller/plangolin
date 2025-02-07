@@ -8,7 +8,7 @@ from torchrl.modules import ValueOperator
 from torchrl.trainers import Trainer, TrainerHookBase
 
 import xmimir as xmi
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 

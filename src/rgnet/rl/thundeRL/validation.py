@@ -16,7 +16,7 @@ from torch import Tensor
 from torchrl.modules import ValueOperator
 
 import xmimir as xmi
-from rgnet.rl import ActorCritic
+from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.thundeRL.policy_evaluation import (
     PolicyEvaluationMessagePassing,
