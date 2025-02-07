@@ -1,38 +1,62 @@
-
-# Image with git
-image: python:3.10
+image: ubuntu:22.04
 
 # Change pip's cache directory to be inside the project directory since we can
 # only cache local items.
 variables:
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip-base"
 
 # https://pip.pypa.io/en/stable/topics/caching/
 cache:
+  key:
+    files:
+      - requirements.txt
   paths:
-    - .cache/pip
+    - .cache/pip-*
 
 before_script:
-  - python --version ; pip --version  # For debugging
+  - apt-get update
+  - apt-get install python3 python3-pip -y
   - pip install virtualenv
   - virtualenv venv
   - source venv/bin/activate
+  - python -m ensurepip --upgrade
+  - python -m pip install --upgrade pip setuptools wheel
+  - python --version ; pip --version  # For debugging
 
 precommit:
-    script:
-      - apt update && apt install -y --no-install-recommends git
-      - pip install isort black pre-commit
-      - pre-commit run --all-files
-    only:
-      - branches
+  script:
+    - apt-get update && apt install -y --no-install-recommends git
+    - pip install isort black pre-commit
+    - pre-commit run --all-files
+  only:
+    - branches
 
-
-# TODO we have to install requirements
-#pytest:
-#  stage: test
-#  image: python:3.10
-#  script:
-#    - pip install -r requirements.txt
-#    - pytest test/
-#  only:
-#    - merge_requests
+pytest:
+  stage: test
+  parallel:
+    matrix:
+      - PYTHON_IMAGE: python:3.9
+      - PYTHON_IMAGE: python:3.10
+      - PYTHON_IMAGE: python:3.11
+      - PYTHON_IMAGE: python:3.12
+  image: $PYTHON_IMAGE
+  script:
+    - apt-get install -y gcc-11 g++-11
+    - update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 90
+    - update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 90
+    - python_version=$(python -c "print(__import__('platform').python_version())")
+    - export PIP_CACHE_DIR="$CI_PROJECT_DIR/.cache/pip-$python_version"
+    - pip install virtualenv
+    - virtualenv venv
+    - source venv/bin/activate
+    - python -m ensurepip --upgrade
+    - python -m pip install --upgrade pip setuptools wheel
+    - python --version ; pip --version  # For debugging
+    # **Uninstall CUDA-related NVIDIA packages**
+    - pip freeze | grep 'nvidia-cu' | xargs pip uninstall -y || true
+    # **Force CPU-only PyTorch installation**
+    - pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    # **Reinstall dependencies (forcing CPU-only for PyTorch and related)**
+    - sed -i '/torch/d' requirements.txt  # Remove any torch-related packages
+    - pip install -r requirements.txt
+    - python -m pytest

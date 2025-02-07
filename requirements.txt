@@ -12,3 +12,4 @@ tensordict==0.5.0
 torch >= 2.4.0.dev
 torch_geometric>=2.0
 torchrl==0.5.0
+wandb
