@@ -23,7 +23,7 @@ data_layout:
   root_dir: null
 
 trainer:
-  accelerator: auto
+  accelerator: "cpu"
   devices: 1
   max_epochs: 1
   logger:
