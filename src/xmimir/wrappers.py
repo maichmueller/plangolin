@@ -493,31 +493,34 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
         return f"Transition({self.source.index} -> {self.target.index})"
 
 
-class XActionGenerator(BaseWrapper[Grounder]):
+class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
     workspace: ApplicableActionGeneratorWorkspace
-    aag: GroundedApplicableActionGenerator
+    grounder: Grounder
     problem: XProblem
 
     @multimethod
     def __init__(self, problem: XProblem):
-        self.__init__(Grounder(problem.base, problem.repositories))
+        self.grounder = Grounder(problem.base, problem.repositories)
+        self.__init__(
+            LiftedApplicableActionGenerator(self.grounder.get_action_grounder())
+        )
 
     @multimethod
-    def __init__(self, base: Grounder):
-        super().__init__(base)
+    def __init__(self, grounder: Grounder):
+        super().__init__(
+            LiftedApplicableActionGenerator(grounder.get_action_grounder())
+        )
         self.workspace = ApplicableActionGeneratorWorkspace()
-        self.aag = GroundedApplicableActionGenerator(base.get_action_grounder())
-
-    @property
-    def grounder(self):
-        return self.base
+        self.grounder = grounder
 
     @property
     def problem(self):
-        return XProblem(self.base.get_problem(), self.base.get_pddl_repositories())
+        return XProblem(
+            self.grounder.get_problem(), self.grounder.get_pddl_repositories()
+        )
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
-        for action in self.aag.generate_applicable_actions(state.base, self.workspace):
+        for action in self.base.generate_applicable_actions(state.base, self.workspace):
             yield XAction(action, self.problem)
 
 
@@ -529,7 +532,7 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
     def __init__(self, base: Grounder, state_repository: StateRepository | None = None):
         super().__init__(base)
         self.state_repository = state_repository or StateRepository(
-            GroundedAxiomEvaluator(self.base.get_axiom_grounder())
+            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
         )
         self.workspace = StateRepositoryWorkspace()
 
@@ -541,7 +544,7 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
     ):
         super().__init__(Grounder(problem.base, problem.repositories))
         self.state_repository = state_repository or StateRepository(
-            GroundedAxiomEvaluator(self.base.get_axiom_grounder())
+            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
         )
         self.workspace = StateRepositoryWorkspace()
 
@@ -624,7 +627,6 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
     repositories by their content, not by their index.
     """
 
-    base: StateSpace
     _vertices: list[StateVertex]
 
     def __init__(self, space: StateSpace):
