@@ -22,9 +22,6 @@ pytest:
   image: $PYTHON_IMAGE
   script:
     - python -m pip install --upgrade pip setuptools wheel
-    - python -m pip install virtualenv
-    - virtualenv venv
-    - source venv/bin/activate
-    - python --version ; pip --version  # For debugging
+    - python --version && pip --version  # For debugging
     - pip install '.[dev]'
     - python -m pytest
