@@ -1,5 +1,9 @@
 image: ubuntu:22.04
 
+variables:
+  GIT_STRATEGY: clone
+  GIT_DEPTH: "0"
+
 precommit:
   image: python:3.12
   script:
