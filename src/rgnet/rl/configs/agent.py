@@ -1,6 +1,11 @@
 import dataclasses
 from argparse import ArgumentParser
-from enum import StrEnum, auto
+from enum import auto
+
+try:
+    from enum import StrEnum  # Available in Python 3.11+
+except ImportError:
+    from strenum import StrEnum  # Backport for Python < 3.11
 from itertools import chain
 from typing import Dict, Iterable, Optional
 
