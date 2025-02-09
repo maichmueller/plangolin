@@ -1,4 +1,5 @@
 import itertools
+from collections import deque
 from math import ceil
 from test.fixtures import expanded_state_space_env, medium_blocks, small_blocks
 from typing import List
@@ -18,7 +19,7 @@ from rgnet.rl.envs.expanded_state_space_env import (
     WeightedRandomReset,
 )
 from rgnet.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.rollout_collector import RolloutCollector, build_from_spaces
 from xmimir import XStateSpace
 
@@ -102,7 +103,7 @@ def test_with_policy(expanded_state_space_env):
     env = expanded_state_space_env
 
     def policy(transitions):
-        transitions: List[List[xmi.XTransition]] = transitions.tolist()
+        transitions: List[List[xmi.XTransition]] = tolist(transitions)
         actions = [transitions[i][0] for i in range(len(transitions))]
         return as_non_tensor_stack(actions)
 
@@ -119,7 +120,11 @@ def test_with_policy(expanded_state_space_env):
         num_batches=3,
         rollout_length=1,
     )
-    list(collector)  # exhaust the collector
+    # we use deque to exhaust the collector instead of e.g. list, since `list` will ask for __len__ of the collector,
+    # which fails for collectors that do not set the `frames_per_batch` and `total_frames` (torchrl v0.7).
+    # Also, deque consumes at C-speed, while list assigns outputs to variables within python
+    # (in general more relevant, here not so much).
+    deque(collector, maxlen=0)  # exhaust the collector
 
     # The policy gets called once for each batch and time step
     mockito.verify(tdm, times=3).forward(...)

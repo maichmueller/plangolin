@@ -21,8 +21,10 @@ class RolloutCollector(DataCollectorBase):
     The collector will return one rollout per iteration (next call).
     A complete environment reset will occur at the start of each batch.
     After collecting num_batches iterations the collector has to be reset.
+
     NOTE that currently, the first batch after reset was called can be different to the first batch before reset was called.
     This is due to the fact that InstanceReplacementStrategy and ResetStrategy are not reset alongside.
+
     :param environment: The environment to collect rollouts from.
     :param policy: The policy to use for generating actions.
         If None provided a random policy will be used
@@ -45,6 +47,7 @@ class RolloutCollector(DataCollectorBase):
         self.policy = policy
         self.env = environment
         self.rollout_length = rollout_length
+        self.total_frames = rollout_length
         self.num_batches = num_batches
         self.exploration_type = exploration_type
         self._iter = 0
