@@ -86,7 +86,7 @@ def policy_evaluation(
     num_iterations: int,
     goal_value: float = 0.0,
 ):
-    """
+    r"""
     Evaluates a given policy using iterative policy evaluation.
 
     The value function V is computed by repeatedly applying the Bellman expectation backup:

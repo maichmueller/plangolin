@@ -1,8 +1,8 @@
 from pathlib import Path
 from test.fixtures import fresh_drive, medium_blocks
+from test.supervised.test_data import assert_hetero_stores
 
 import mockito
-from supervised.test_data import assert_hetero_stores
 from torch_geometric.data import HeteroData
 
 import xmimir as xmi
