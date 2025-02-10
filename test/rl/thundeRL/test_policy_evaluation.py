@@ -109,10 +109,14 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
 
     # make sure the goal is never reached
     def faulty_probs(i, s):
-        transitions = list(space.forward_transitions(s))
-        probs = torch.rand((len(transitions),), dtype=torch.float).softmax(dim=-1)
+        nr_transitions = space.forward_transition_count(s)
+        probs = torch.rand(
+            (nr_transitions,),
+            dtype=torch.float,
+            generator=torch.Generator().manual_seed(123456789),
+        ).softmax(dim=-1)
         if i == one_before_goal_idx:
-            probs = torch.zeros((len(transitions),), dtype=torch.float)
+            probs = torch.zeros((nr_transitions,), dtype=torch.float)
             probs[1] = 1.0
         return probs
 
@@ -128,7 +132,6 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
     expected_values = torch.full((len(space),), -1 / (1 - gamma))
     expected_values[goal_state.index] = 0.0
     assert torch.allclose(values, expected_values, atol=0.01)
-    # assert torch.allclose(values[graph_data.node_index_map], expected_values, atol=0.01)
     # We can never go beyond -1 / (1 gamma).
     #
     assert (values >= -10).all()

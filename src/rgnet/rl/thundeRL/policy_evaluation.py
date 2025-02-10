@@ -91,7 +91,6 @@ class PolicyEvaluationMessagePassing(MessagePassing):
                  edge_attr[:, 1] = rewards
     - node_attr: Tensor of shape [num_nodes] containing the initial state values
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
-    - state_index_map: LongTensor of shape [num_nodes] with the original state indices before their order was shuffled.
     """
 
     def __init__(
@@ -126,7 +125,6 @@ class PolicyEvaluationMessagePassing(MessagePassing):
             values = new_values
         data.x = values
         return values
-        # return values[data.state_index_map]
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
         transition_prob, reward = edge_attr[:, 0], edge_attr[:, 1]
