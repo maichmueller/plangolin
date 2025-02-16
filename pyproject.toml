@@ -10,7 +10,7 @@ authors = [
     { name = 'Jakob Krude', email = 'jakob.krude@ml.rwth-aachen.de' }
 ]
 license = { file = "LICENSE.md" }
-description = 'Reinforcement learning for Planning using Heterogenous Graph Neural Networks'
+description = 'Reinforcement learning for Planning using Graph Neural Networks'
 readme = "README.md"
 keywords = [
     "graph-neural-network",
