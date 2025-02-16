@@ -19,7 +19,6 @@ pytest:
   stage: test
   parallel:
     matrix:
-      - PYTHON_IMAGE: python:3.9
       - PYTHON_IMAGE: python:3.10
       - PYTHON_IMAGE: python:3.11
       - PYTHON_IMAGE: python:3.12
