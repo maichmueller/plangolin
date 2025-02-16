@@ -12,9 +12,14 @@ from torchrl.envs.utils import ExplorationType, exploration_type
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 
+try:
+    from enum import StrEnum  # Available in Python 3.11+
+except ImportError:
+    from strenum import StrEnum  # Backport for Python < 3.11
+
 
 class EpsilonAnnealing:
-    class Parameter(enum.StrEnum):
+    class Parameter(StrEnum):
         EPSILON_INIT = "epsilon_init"
         EPSILON_END = "epsilon_end"
         ANNEALING_STEPS = "annealing_steps"
