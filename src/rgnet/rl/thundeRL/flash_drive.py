@@ -113,7 +113,7 @@ class FlashDrive(InMemoryDataset):
             data.idx = state.index
             data.done = done
             # Same index concerns for transition.target.index
-            data.targets = tuple(t.target.index for t in transitions)
+            data.targets = list(t.target.index for t in transitions)
             # pymimir returns -1 for states where to goal is not reachable
             distance_to_goal = (
                 abs(self.custom_dead_end_reward)
