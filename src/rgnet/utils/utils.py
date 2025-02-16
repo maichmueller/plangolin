@@ -5,7 +5,7 @@ import pathlib
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Reversible, Tuple
 
 import networkx as nx
 import torch
@@ -41,6 +41,13 @@ def ftime(seconds: float) -> str:
     if delta.microseconds > 1000:
         return str(delta.microseconds // 1000) + "ms"
     return str(delta.microseconds) + "us"
+
+
+def broadcastable(shape1: Reversible[int], shape2: Reversible[int]):
+    for a, b in zip(reversed(shape1), reversed(shape2)):
+        if a != b and a != 1 and b != 1:
+            return False
+    return True
 
 
 def import_all_from(
