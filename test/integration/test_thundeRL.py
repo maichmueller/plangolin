@@ -18,7 +18,6 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
-from rgnet.utils import get_device_cuda_if_possible
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -115,21 +114,17 @@ def _create_data_setup(tmp_path):
 
 def validate_hdata(hetero_data: HeteroData, drives: List[FlashDrive]):
     idx = hetero_data.idx.item()
-    try:
-        if all(
-            len(drive) > idx and hetero_data_equal(hetero_data, drive[idx])
-            for drive in drives
-        ):
-            return
-    except Exception as e:
-        raise pytest.fail(f"Exception: {e}.\n" f"Data: {str(hetero_data)}")
+    return any(
+        len(drive) > idx and hetero_data_equal(hetero_data, drive[idx])
+        for drive in drives
+    )
 
 
 def validate_batch(hetero_batch: Batch, drives: List[FlashDrive]):
     batch_list = hetero_batch.to_data_list()
     hetero_data: HeteroData
     for hetero_data in batch_list:
-        validate_hdata(hetero_data, drives)
+        assert validate_hdata(hetero_data, drives)
 
 
 def validate_successor_batch(

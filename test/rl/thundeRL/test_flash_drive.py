@@ -1,6 +1,6 @@
 from pathlib import Path
 from test.fixtures import fresh_drive, medium_blocks
-from test.supervised.test_data import assert_hetero_stores
+from test.supervised.test_data import hetero_data_equal
 
 import mockito
 from torch_geometric.data import HeteroData
@@ -26,7 +26,7 @@ def validate_drive(drive, space):
         else:
             assert not drive.done.all()
         expected = encoder.to_pyg_data(encoder.encode(state))
-        assert_hetero_stores(data, expected)
+        assert hetero_data_equal(data, expected)
 
 
 def test_process(fresh_drive, medium_blocks):
