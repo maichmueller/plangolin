@@ -504,6 +504,32 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
 
+    def explain(self) -> str:
+        fluents_before = set(self.source.fluent_atoms)
+        fluents_after = set(self.target.fluent_atoms)
+        derived_before = set(self.source.derived_atoms)
+        derived_after = set(self.target.derived_atoms)
+        added_fluents = fluents_after - fluents_before
+        removed_fluents = fluents_before - fluents_after
+        added_derived = derived_after - derived_before
+        removed_derived = derived_before - derived_after
+        return (
+            f"Transition({self.source.index} -> {self.target.index})\n"
+            f"Action: {self.action}\n"
+            f"Added Fluent Atoms:    {added_fluents}\n"
+            f"Added Derived Atoms:   {added_derived}\n"
+            f"Deleted Fluents Atoms: {removed_fluents}\n"
+            f"Removed Derived Atoms: {removed_derived}"
+        )
+
+    @cached_property
+    def is_improper(self):
+        return self.action is None
+
+    @property
+    def is_primitive(self):
+        return isinstance(self.action, XAction)
+
 
 class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
     grounder: Grounder
