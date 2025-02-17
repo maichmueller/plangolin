@@ -96,7 +96,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         seed: Optional[int] = None,
         device: str = "cpu",
         keys: AcceptedKeys = default_keys,
-        custom_dead_end_reward: Optional[float] = None,
+        reward_function: torch.nn.Module = RewardFunction,
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
         super().__init__(device=device, batch_size=batch_size)
