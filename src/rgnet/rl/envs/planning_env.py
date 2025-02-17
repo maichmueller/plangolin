@@ -341,12 +341,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         self,
         idx: int,
         transition: Optional[xmi.XTransition],
-        current_states: List[xmi.State],
+        current_states: List[xmi.XState],
     ):
         if transition is not None:
-            # TODO: remove this debugging if again.
-            if not isinstance(transition, xmi.XTransition):
-                raise ValueError("Expected a Transition object.")
             return transition.target
         else:
             # Check that there were no transitions available.
@@ -365,7 +362,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         :returns TensorDict: Output TensorDict.
         """
 
-        current_states: List[xmi.State] = tensordict[self._keys.state]
+        current_states: List[xmi.XState] = tensordict[self._keys.state]
 
         actions: List[Optional[xmi.XTransition]] = tensordict[self._keys.action]
         assert isinstance(actions, list)  # batch of chosen-transitions
