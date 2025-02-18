@@ -5,7 +5,6 @@ from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
 from typing import (
-    Any,
     Generator,
     Generic,
     Iterable,
@@ -27,35 +26,9 @@ class XCategory(Enum):
     derived = 2
 
 
-class BaseHashMixin:
-    base: Any
-
-    def __hash__(self):
-        return hash(self.base)
-
-
-class BaseEqMixin:
-    """
-    Base mixin class for equality comparison.
-
-    Note that by providing __eq__, but no __hash__ method, python will automatically set the hash to None
-    for a child class which does not define a custom __hash__ function. In order to retain the hash of
-    another Mixin class, the hash mixin class needs to be inherited from FIRST to ensure correct MRO.
-    Otherwise, the child class will need to provide an explicit __hash__ function itself everytime, despite
-    inheriting from a mixin.
-    """
-
-    base: Any
-
-    def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return self.base == other.base
-
-
 def hollow_check(func):
     def wrapper(self, *args, **kwargs):
-        if self.hollow:
+        if self.is_hollow:
             raise ValueError(f"Cannot perform operation {func} on hollow object.")
         return func(self, *args, **kwargs)
 
@@ -68,6 +41,10 @@ T = TypeVar("T")
 class BaseWrapper(Generic[T]):
     """
     A mixin class to provide a base accessor that checks against hollow-ness of the underlying object.
+    If not overridden de by the subclass, the equivalence check as well as the hash of the class
+     are determined by the pymimir base object.
+    Hollow refers to an instance without a pymimir base. This is useful for some classes
+     like XTransition where you might want to manually create instances of (source, action, target).
     """
 
     _base: T | None
@@ -76,7 +53,7 @@ class BaseWrapper(Generic[T]):
         self._base = base
 
     @property
-    def hollow(self):
+    def is_hollow(self):
         return self._base is None
 
     @property
@@ -84,8 +61,17 @@ class BaseWrapper(Generic[T]):
     def base(self) -> T:
         return self._base
 
+    @hollow_check
+    def __hash__(self):
+        return hash(self.base)
 
-class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.base == other.base
+
+
+class XPredicate(BaseWrapper[Predicate]):
     category: XCategory
 
     def __init__(self, predicate: Predicate):
@@ -110,7 +96,7 @@ class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
 
 
-class XAtom(BaseWrapper[GroundAtom], BaseHashMixin, BaseEqMixin):
+class XAtom(BaseWrapper[GroundAtom]):
     predicate: XPredicate
 
     def __init__(self, atom: GroundAtom):
@@ -151,7 +137,7 @@ class XLiteral(BaseWrapper[GroundLiteral]):
         return hash((self.is_negated, self.atom))
 
 
-class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
+class XDomain(BaseWrapper[Domain]):
 
     def __init__(self, domain: Domain):
         super().__init__(domain)
@@ -194,7 +180,7 @@ class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
         return str(self.base)
 
 
-class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
+class XProblem(BaseWrapper[Problem]):
     repositories: PDDLRepositories
 
     @multimethod
@@ -276,7 +262,7 @@ class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
         )
 
 
-class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
+class XAction(BaseWrapper[GroundAction]):
     problem: XProblem
 
     def __init__(self, action: GroundAction, problem: XProblem):
@@ -452,7 +438,7 @@ class XState(BaseWrapper[State]):
         )
 
 
-class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
+class XTransition(BaseWrapper[GroundActionEdge]):
     source: XState
     target: XState
     action: Optional[XAction | tuple[XAction]]
@@ -553,6 +539,14 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
         for action in self.base.generate_applicable_actions(state.base):
             yield XAction(action, self.problem)
 
+    def __hash__(self):
+        return hash((self.grounder, self.problem))
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.grounder == other.grounder and self.problem == other.problem
+
 
 class XSuccessorGenerator(BaseWrapper[Grounder]):
     state_repository: StateRepository
@@ -605,6 +599,15 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
         for action in action_generator.generate_actions(state):
             yield action, self.successor(state, action)
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            self.base == other.base and self.state_repository == other.state_repository
+        )
+
+    __hash__ = None
+
 
 class XSearchResult(BaseWrapper[SearchResult]):
     start: XState
@@ -636,8 +639,10 @@ class XSearchResult(BaseWrapper[SearchResult]):
             and self.start == other.start
         )
 
+    __hash__ = None
 
-class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
+
+class XStateSpace(BaseWrapper[StateSpace]):
     """
     The extended state space class.
 
