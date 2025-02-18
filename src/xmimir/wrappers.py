@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache, cached_property
 from itertools import chain
+from pathlib import Path
 from typing import (
     Any,
     Generator,
@@ -266,6 +267,17 @@ class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
             )
         )
 
+    def __str__(self):
+        return (
+            f"Problem: {{\n"
+            f"name: {self.name} ({Path(self.filepath).absolute()}),\n"
+            f"domain: {self.domain.name},\n"
+            f"objects: {self.objects},\n"
+            f"initial: {' ∧ '.join(str(a) for a in self.initial_atoms())},\n"
+            f"goal: {' ∧ '.join(str(l) for l in self.goal())}\n"
+            f"}}"
+        )
+
 
 class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
     problem: XProblem
@@ -494,23 +506,19 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
 
 
 class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
-    workspace: ApplicableActionGeneratorWorkspace
     grounder: Grounder
     problem: XProblem
 
     @multimethod
     def __init__(self, problem: XProblem):
-        self.grounder = Grounder(problem.base, problem.repositories)
-        self.__init__(
-            LiftedApplicableActionGenerator(self.grounder.get_action_grounder())
-        )
+        grounder = Grounder(problem.base, problem.repositories)
+        self.__init__(grounder)
 
     @multimethod
     def __init__(self, grounder: Grounder):
         super().__init__(
             LiftedApplicableActionGenerator(grounder.get_action_grounder())
         )
-        self.workspace = ApplicableActionGeneratorWorkspace()
         self.grounder = grounder
 
     @property
@@ -520,7 +528,7 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
         )
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
-        for action in self.base.generate_applicable_actions(state.base, self.workspace):
+        for action in self.base.generate_applicable_actions(state.base):
             yield XAction(action, self.problem)
 
 
@@ -534,7 +542,6 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
         self.state_repository = state_repository or StateRepository(
             LiftedAxiomEvaluator(self.base.get_axiom_grounder())
         )
-        self.workspace = StateRepositoryWorkspace()
 
     @multimethod
     def __init__(
@@ -546,7 +553,6 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
         self.state_repository = state_repository or StateRepository(
             LiftedAxiomEvaluator(self.base.get_axiom_grounder())
         )
-        self.workspace = StateRepositoryWorkspace()
 
     @property
     def grounder(self):
@@ -559,7 +565,7 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
     @property
     def initial_state(self) -> XState:
         return XState(
-            self.state_repository.get_or_create_initial_state(self.workspace),
+            self.state_repository.get_or_create_initial_state(),
             self.problem,
         )
 
@@ -779,7 +785,7 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
             state = self.initial_state()
 
         return find_solution_brfs(
-            XActionGenerator(self.problem).aag,
+            XActionGenerator(self.problem).base,
             self.base.get_state_repository(),
             state.base,
         )
