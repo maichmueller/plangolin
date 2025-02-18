@@ -792,7 +792,7 @@ class XStateSpace(BaseWrapper[StateSpace]):
             )
         )
 
-    def breadth_first_search(self, state: XState | None = None) -> SearchResult:
+    def breadth_first_search(self, state: XState | None = None) -> XSearchResult:
         """
         Perform a breath-first search from the given state to find the shortest path to a goal state.
 
@@ -809,10 +809,12 @@ class XStateSpace(BaseWrapper[StateSpace]):
         if state is None:
             state = self.initial_state()
 
-        return find_solution_brfs(
-            XActionGenerator(self.problem).base,
-            self.base.get_state_repository(),
-            state.base,
+        return XSearchResult(
+            find_solution_brfs(
+                XActionGenerator(self.problem).base,
+                self.base.get_state_repository(),
+                state.base,
+            )
         )
 
 
