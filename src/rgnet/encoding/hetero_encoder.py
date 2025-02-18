@@ -33,15 +33,16 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
     def __init__(
         self,
         domain: XDomain,
-        node_factory: NodeFactory = NodeFactory(),
+        node_factory: NodeFactory | None = None,
         obj_type_id: str = "obj",
     ) -> None:
         super().__init__(domain)
         self.obj_type_id: str = obj_type_id
-        self.node_factory: NodeFactory = node_factory
+        # Initialize the default here to please jsonargparse.
+        self.node_factory: NodeFactory = node_factory or NodeFactory()
         self.predicates: tuple[XPredicate, ...] = self.domain.predicates()
         self.arity_dict: Dict[Node, int] = HeteroGraphEncoder.make_arity_dict(
-            self.predicates, node_factory
+            self.predicates, self.node_factory
         )
         # Generate all possible edge types
         self.all_edge_types: List[EdgeType] = []
