@@ -5,7 +5,6 @@ from test.supervised.test_data import hetero_data_equal
 import mockito
 from torch_geometric.data import HeteroData
 
-import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL.flash_drive import FlashDrive

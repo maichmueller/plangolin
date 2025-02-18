@@ -5,7 +5,7 @@ import pytest
 import torch
 
 import xmimir as xmi
-from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
+from rgnet.rl.envs.planning_env import PlanningEnvironment
 from xmimir import XLiteral, XState, XStateSpace
 
 

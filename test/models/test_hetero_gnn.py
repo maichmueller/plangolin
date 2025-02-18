@@ -6,7 +6,6 @@ import torch.nn.functional
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
-from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
 from rgnet.utils.object_embeddings import ObjectPoolingModule
 

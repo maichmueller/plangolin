@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import itertools
-import typing
 import warnings
-from collections import namedtuple
 from enum import Enum
 from functools import cache, singledispatchmethod
-from typing import Any, Dict, Iterable, Iterator, NamedTuple, Optional
+from typing import Any, Dict, Iterator, NamedTuple, Optional
 
 import numpy as np
 
-from xmimir import Domain, XAtom, XDomain, XLiteral, XPredicate, XProblem
+from xmimir import XAtom, XDomain, XLiteral, XPredicate
 
 
 class FeatureKey(NamedTuple):

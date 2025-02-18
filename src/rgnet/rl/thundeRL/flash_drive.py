@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset

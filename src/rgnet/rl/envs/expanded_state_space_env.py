@@ -2,13 +2,12 @@ import abc
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
-from xmimir import XProblem, XState
+from xmimir import XState
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):

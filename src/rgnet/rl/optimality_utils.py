@@ -1,10 +1,9 @@
-from typing import Dict, Mapping, Sequence, Set
+from typing import Dict, Mapping, Set
 
-import numpy as np
 import torch
 from torch import Tensor
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv, PlanningEnvironment
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir import XState, XStateSpace
 
 

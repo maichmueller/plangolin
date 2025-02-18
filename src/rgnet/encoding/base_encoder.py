@@ -1,30 +1,13 @@
 from __future__ import annotations
 
 import functools
-import itertools
-import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Iterable, Optional, Sequence, Type, TypeVar, get_args
 
 import networkx as nx
 import torch_geometric as pyg
-from multimethod import multimethod
 
-from xmimir import (
-    Domain,
-    Object,
-    PDDLRepositories,
-    Problem,
-    State,
-    StaticLiteral,
-    XAtom,
-    XCategory,
-    XDomain,
-    XLiteral,
-    XProblem,
-    XState,
-    gather_objects,
-)
+from xmimir import Object, XAtom, XDomain, XLiteral, XState, gather_objects
 
 GraphT = TypeVar("GraphT", nx.Graph, nx.DiGraph)
 

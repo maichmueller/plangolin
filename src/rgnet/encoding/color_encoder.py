@@ -1,31 +1,12 @@
 from __future__ import annotations
 
-import warnings
-from asyncio import gather
-from collections import namedtuple
-from copy import copy
-from enum import Enum
-from functools import cached_property, singledispatchmethod
-from itertools import chain
-from typing import Any, Dict, Iterable, Iterator, Optional, Sequence
+from typing import Optional, Sequence
 
 import networkx as nx
-import numpy as np
 import torch_geometric as pyg
 from torch_geometric.data import Data
 
-from xmimir import (
-    Atom,
-    GroundAtom,
-    GroundLiteral,
-    Literal,
-    Predicate,
-    XAtom,
-    XDomain,
-    XLiteral,
-    XState,
-)
-from xmimir.extensions import gather_objects
+from xmimir import XAtom, XDomain, XLiteral
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .featuremap import FeatureMap

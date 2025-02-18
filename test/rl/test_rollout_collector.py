@@ -7,7 +7,7 @@ from typing import List
 import mockito
 import pytest
 import torch
-from tensordict import TensorDict, TensorDictBase
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 
 import xmimir as xmi

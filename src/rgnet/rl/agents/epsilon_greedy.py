@@ -1,5 +1,4 @@
 import dataclasses
-import enum
 from argparse import ArgumentParser
 from typing import Callable, List
 

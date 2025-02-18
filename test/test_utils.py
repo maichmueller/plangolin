@@ -1,7 +1,7 @@
 import pathlib
 
 from rgnet.utils import ftime, import_all_from
-from xmimir import Domain, Problem, XDomain, XProblem
+from xmimir import XDomain, XProblem
 
 
 def test_ftime():

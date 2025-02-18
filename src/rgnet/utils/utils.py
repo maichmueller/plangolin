@@ -5,7 +5,7 @@ import pathlib
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Reversible, Tuple
+from typing import Any, Callable, List, Reversible, Tuple
 
 import networkx as nx
 import torch

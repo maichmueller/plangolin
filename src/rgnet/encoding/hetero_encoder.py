@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import logging
 import operator
 from collections import defaultdict
@@ -12,17 +11,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from xmimir import (
-    Atom,
-    Literal,
-    Predicate,
-    XAtom,
-    XDomain,
-    XLiteral,
-    XPredicate,
-    XProblem,
-    XState,
-)
+from xmimir import XAtom, XDomain, XLiteral, XPredicate
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .node_factory import Node, NodeFactory

@@ -11,7 +11,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 
 import xmimir as xmi
 from rgnet.utils.plan import Plan, parse_fd_plan
-from xmimir import Problem, XDomain, XProblem, XStateSpace
+from xmimir import XDomain, XProblem, XStateSpace
 
 
 @dataclasses.dataclass

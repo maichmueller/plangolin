@@ -20,7 +20,6 @@ from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
-from rgnet.utils.manual_transition import MTransition
 
 InstanceType = TypeVar("InstanceType")
 
