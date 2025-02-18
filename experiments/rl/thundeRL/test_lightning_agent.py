@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import networkx as nx
-import pymimir as mi
 import torch
 import torch_geometric as pyg
 import torchrl
@@ -24,6 +23,7 @@ from torch import Tensor
 from torchrl.envs.utils import set_exploration_type
 from tqdm import tqdm
 
+import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl.agents import ActorCritic
@@ -50,7 +50,7 @@ from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
 
 
-def pretty_print_transitions(transitions: List[mi.Transition]):
+def pretty_print_transitions(transitions: List[xmi.XTransition]):
     return (
         "["
         + ", ".join(

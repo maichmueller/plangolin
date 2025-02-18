@@ -6,7 +6,6 @@ from torch.nn import LayerNorm
 from torch_geometric.nn import DeepGCNLayer, GENConv
 from torch_geometric.typing import Adj
 
-from rgnet.encoding import ColorGraphEncoder
 from rgnet.models.pyg_module import PyGModule
 from rgnet.utils.activation_map import get_activation
 
@@ -57,24 +56,3 @@ class VanillaGNN(PyGModule):
         for layer in self.layers:
             x = layer(x, edge_index, batch)
         return x
-
-
-if __name__ == "__main__":
-    from pathlib import Path
-
-    import xmimir as xmi
-
-    model = VanillaGNN(hidden_size=10, num_layer=4)
-    data_folder = Path("data") / "pddl_domains" / "example" / "blocks"
-    domain = xmi.DomainParser(str(data_folder / "domain.pddl")).parse()
-    problem = xmi.ProblemParser(
-        str(data_folder / "train" / "probBLOCKS-4-0.pddl")
-    ).parse(domain)
-
-    space = xmi.StateSpace.new(problem, xmi.GroundedSuccessorGenerator(problem))
-
-    state = get_initial_state(space)
-    encoder = ColorGraphEncoder(domain)
-    data = encoder.to_pyg_data(encoder.encode(state))
-    out = model = data
-    print(out)

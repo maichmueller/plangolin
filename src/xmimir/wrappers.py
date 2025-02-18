@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache, cached_property
 from itertools import chain
@@ -12,8 +10,6 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
-    List,
-    NamedTuple,
     Optional,
     Sequence,
     TypeVar,
@@ -22,6 +18,7 @@ from typing import (
 
 from multimethod import multimethod
 from pymimir import *
+from pymimir.hints import *  # because PyCharm needs some help
 
 
 class XCategory(Enum):
@@ -91,7 +88,7 @@ class BaseWrapper(Generic[T]):
 class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
     category: XCategory
 
-    def __init__(self, predicate: Predicate) -> XPredicate:
+    def __init__(self, predicate: Predicate):
         if isinstance(predicate, FluentPredicate):
             category = XCategory.fluent
         elif isinstance(predicate, DerivedPredicate):
@@ -116,7 +113,7 @@ class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
 class XAtom(BaseWrapper[GroundAtom], BaseHashMixin, BaseEqMixin):
     predicate: XPredicate
 
-    def __init__(self, atom: GroundAtom) -> XAtom:
+    def __init__(self, atom: GroundAtom):
         super().__init__(atom)
         self.predicate = XPredicate(atom.get_predicate())
 
@@ -463,19 +460,6 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
     @multimethod
     def __init__(
         self,
-        edge: GroundActionEdge,
-        space: XStateSpace,
-    ):
-        self.__init__(
-            edge,
-            XState(edge.get_source(), space.base),
-            XState(edge.get_target(), space.base),
-            XAction(edge.get_creating_action(), space.problem),
-        )
-
-    @multimethod
-    def __init__(
-        self,
         edge: GroundActionEdge | None,
         source: XState,
         target: XState,
@@ -485,6 +469,19 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
         self.source = source
         self.target = target
         self.action = tuple(action) if hasattr(action, "__iter__") else action
+
+    @multimethod
+    def __init__(
+        self,
+        edge: GroundActionEdge,
+        space: XStateSpace,
+    ):
+        self.__init__(
+            edge,
+            XState(edge.get_source(), space.base),
+            XState(edge.get_target(), space.base),
+            XAction(edge.get_creating_action(), space.problem),
+        )
 
     def __iter__(self):
         return iter((self.source, self.target, self.action))
@@ -536,16 +533,15 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
     problem: XProblem
 
     @multimethod
-    def __init__(self, problem: XProblem):
-        grounder = Grounder(problem.base, problem.repositories)
-        self.__init__(grounder)
-
-    @multimethod
     def __init__(self, grounder: Grounder):
         super().__init__(
             LiftedApplicableActionGenerator(grounder.get_action_grounder())
         )
         self.grounder = grounder
+
+    @multimethod
+    def __init__(self, problem: XProblem):
+        self.__init__(Grounder(problem.base, problem.repositories))
 
     @property
     def problem(self):
@@ -559,7 +555,6 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
 
 
 class XSuccessorGenerator(BaseWrapper[Grounder]):
-    workspace: StateRepositoryWorkspace
     state_repository: StateRepository
 
     @multimethod
@@ -600,7 +595,6 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
             self.state_repository.get_or_create_successor_state(
                 state.base,
                 action.base,
-                self.workspace,
             )[0],
             state.problem,
         )

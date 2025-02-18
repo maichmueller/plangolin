@@ -188,7 +188,7 @@ def _resolve_collector(
 ):
     batches_per_epoch = getattr(parser_args, Parameter.batches_per_epoch)
     if batches_per_epoch is None:
-        total_states = sum([space.get_num_vertices() for space in data_resolver.spaces])
+        total_states = sum([len(space) for space in data_resolver.spaces])
         batches_per_epoch = ceil(total_states / float(env.batch_size[0]))
     rollout_length = getattr(parser_args, Parameter.rollout_length)
     return RolloutCollector(
