@@ -40,7 +40,7 @@ class RLExperiment:
         self.blocks_domain: xmi.XDomain = domain
         self.blocks_problem: xmi.XProblem = problem
 
-        self.space: xmi.XStateSpace = xmi.XStateSpace.create(self.blocks_problem)
+        self.space: xmi.XStateSpace = xmi.XStateSpace(self.blocks_problem)
 
         self.out_dir = (
             Path(f"../out/{blocks_instance}/{run_name}/")

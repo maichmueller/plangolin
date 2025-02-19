@@ -65,7 +65,7 @@ class FlashDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        space = xmi.XStateSpace.create(
+        space = xmi.XStateSpace(
             str(self.domain_file.absolute()),
             str(self.problem_path.absolute()),
             max_num_states=self.max_expanded or 1_000_000,

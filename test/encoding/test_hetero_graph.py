@@ -19,7 +19,7 @@ def test_hetero_data():
         if "large" in prob.filepath:
             continue
         logging.info("Testing problem: " + prob.name)
-        state_space = xmi.XStateSpace.create(domain.filepath, prob.filepath)
+        state_space = xmi.XStateSpace(domain.filepath, prob.filepath)
         encoder = HeteroGraphEncoder(state_space.problem.domain)
         for state in state_space:
             data = encoder.to_pyg_data(encoder.encode(state))

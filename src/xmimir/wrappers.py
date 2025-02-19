@@ -5,6 +5,7 @@ from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
 from typing import (
+    Any,
     Generator,
     Generic,
     Iterable,
@@ -640,25 +641,26 @@ class XStateSpace(MimirWrapper[StateSpace]):
 
     _vertices: list[StateVertex]
 
+    @multimethod
     def __init__(self, space: StateSpace):
         super().__init__(space)
         self._vertices = space.get_vertices()
 
     @multimethod
-    def create(cls, domain_path, problem_path, **options: dict[str, str]):
-        return XStateSpace(
+    def __init__(  # noqa: F811
+        self, domain_path, problem_path, **options: dict[str, Any]
+    ):
+        self.__init__(
             StateSpace.create(domain_path, problem_path, StateSpaceOptions(**options)),
         )
 
-    @create.register
-    def create(cls, problem: XProblem, **options: dict[str, str]):
-        return XStateSpace.create(
+    @multimethod
+    def __init__(self, problem: XProblem, **options: dict[str, Any]):  # noqa: F811
+        self.__init__(
             problem.domain.filepath,
             problem.filepath,
             **options,
         )
-
-    create = classmethod(create)
 
     def __len__(self):
         return len(self._vertices)

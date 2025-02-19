@@ -166,7 +166,7 @@ class InputData:
         self, problem: XProblem, max_expanded: int | None = None
     ) -> XStateSpace:
         if problem not in self._space_by_problem:
-            self._space_by_problem[problem] = XStateSpace.create(
+            self._space_by_problem[problem] = XStateSpace(
                 self.domain.filepath,
                 problem.filepath,
                 max_num_states=max_expanded or 1_000_000,

@@ -54,7 +54,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
 
     def parse_problem(self, problem: XProblem) -> List[Data]:
         data_list = []
-        space = XStateSpace.create(
+        space = XStateSpace(
             problem,
             max_num_states=self.max_expanded or 1_000_000,
         )

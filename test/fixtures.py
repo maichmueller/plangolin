@@ -42,7 +42,7 @@ def problem_setup(
     source_dir = "" if os.getcwd().endswith("/test") else "test/"
     domain_path = f"{source_dir}pddl_instances/{domain_name}/domain.pddl"
     problem_path = f"{source_dir}pddl_instances/{domain_name}/{problem}.pddl"
-    space = xmi.XStateSpace.create(domain_path, problem_path)
+    space = xmi.XStateSpace(domain_path, problem_path)
     return space, space.problem.domain, space.problem
 
 
