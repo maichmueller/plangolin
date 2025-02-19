@@ -44,12 +44,13 @@ class LightningHetero(LightningModule):
             self.loss_function = MSELoss()
         elif not isinstance(loss_function, _Loss):
             raise ValueError(f"Unknown loss function: {loss_function}")
-        aggr = aggregation
-        if aggr == "softmax":  # torch_geometric does not support softmax string
-            aggr = pyg.nn.aggr.SoftmaxAggregation()
 
         self.model = ValueHeteroGNN(
-            hidden_size, num_layer, aggr, obj_type_id, arity_dict
+            hidden_size,
+            num_layer=num_layer,
+            obj_type_id=obj_type_id,
+            arity_dict=arity_dict,
+            aggr=aggregation,
         )
         self.save_hyperparameters()
         self.val_loss_by_label: Dict[int, List[Tensor]] = defaultdict(list)

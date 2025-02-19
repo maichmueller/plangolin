@@ -174,7 +174,7 @@ class ValueHeteroGNN(HeteroGNN):
         arity_dict: Dict[str, int],
         aggr: Optional[str | pyg.nn.aggr.Aggregation] = None,
         activation: Union[str, Callable, None] = None,
-        pooling: Union[str, Callable[[Tensor, Tensor], Tensor]] = "add",
+        pooling: Union[str, Callable[[Tensor], Tensor]] = "add",
     ):
         super().__init__(
             hidden_size,

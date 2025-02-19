@@ -34,11 +34,10 @@ class LitVanillaGNN(LightningModule):
         out = self.readout(aggregated)
         return out.view(-1)  # shape [batch_size]
 
-    def training_step(self, batch, batch_index) -> Tensor:
+    def training_step(self, batch, batch_index: int) -> Tensor:
         """
-        :param x: The node feature matrix of floats
-        :param edge_index: The adjacency list tensor
-        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
+        :param batch: A batch of torch geometric data-objects e.g., graphs.
+        :param batch_index: The index of the batch provided by pytorch lightning
         """
         out = self(batch)
         loss: Tensor = self.l1_loss(out, batch.y)
