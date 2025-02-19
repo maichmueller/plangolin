@@ -164,7 +164,7 @@ def test_rollout_reset(small_blocks, batch_size):
     """
     space, environment = create_state_space(batch_size, small_blocks)
 
-    initial_state = space.initial_state()
+    initial_state = space.initial_state
     goal_state = next(space.goal_states_iter())
 
     initial_states = [initial_state] * batch_size

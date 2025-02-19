@@ -84,7 +84,7 @@ def encoded_state(
     space, domain, problem = problem_setup(domain, problem)
 
     if which_state == "initial":
-        state = space.initial_state()
+        state = space.initial_state
     elif which_state == "goal":
         state = next(iter(space.goal_states_iter()))
     else:

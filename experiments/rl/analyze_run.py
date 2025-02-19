@@ -62,7 +62,7 @@ class RLExperiment:
             for i, s in enumerate(self.space.states_iter())
             if self.space.goal_distance(s) == 1
         )
-        self.initial_state_idx = self.space.initial_state().index
+        self.initial_state_idx = self.space.initial_state.index
         graph, goal_indices = self._construct_graph()
         self.graph: nx.DiGraph = graph
         self.goal_indices: set[int] = goal_indices

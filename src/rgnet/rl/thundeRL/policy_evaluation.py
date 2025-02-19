@@ -32,7 +32,7 @@ def build_mdp_graph_with_prob(
         node_type = (
             "goal"
             if state_space.is_goal(state)
-            else ("initial" if state_space.initial_state() == state else "default")
+            else ("initial" if state_space.initial_state == state else "default")
         )
         mdp_graph.add_node(
             state,

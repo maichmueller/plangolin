@@ -51,7 +51,7 @@ def test_consistent_order_of_objects(small_blocks):
     """
     space, domain, medium_problem = small_blocks
     encoder = HeteroGraphEncoder(domain)
-    initial = space.initial_state()
+    initial = space.initial_state
     initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
 
     def obj_to_on_g_edge_index(graph):

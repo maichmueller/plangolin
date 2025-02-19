@@ -691,7 +691,7 @@ class XStateSpace(BaseWrapper[StateSpace]):
             f"#deadends={self.deadend_count}, "
             f"#goals={self.goal_count}, "
             f"solvable={self.solvable}, "
-            f"solution_cost={self.goal_distance(self.initial_state())}"
+            f"solution_cost={self.goal_distance(self.initial_state)}"
         )
 
     def str(self):
@@ -723,7 +723,7 @@ class XStateSpace(BaseWrapper[StateSpace]):
 
     @property
     def solvable(self) -> bool:
-        return not self.is_deadend(self.initial_state())
+        return not self.is_deadend(self.initial_state)
 
     @property
     def deadend_count(self) -> int:
@@ -761,6 +761,7 @@ class XStateSpace(BaseWrapper[StateSpace]):
     def get_state(self, index: int) -> XState:
         return XState(index, self.base)
 
+    @cached_property
     def initial_state(self) -> XState:
         return self.get_state(self.base.get_initial_vertex_index())
 
@@ -807,7 +808,7 @@ class XStateSpace(BaseWrapper[StateSpace]):
             A tuple containing the length of the shortest path and the list of transitions.
         """
         if state is None:
-            state = self.initial_state()
+            state = self.initial_state
 
         return XSearchResult(
             find_solution_brfs(
