@@ -16,8 +16,7 @@ class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
         state: xmi.XState,
     ) -> List[xmi.XTransition]:
         return [
-            xmi.XTransition(
-                None,
+            xmi.XTransition.make_hollow(
                 state,
                 next_state,
                 action,

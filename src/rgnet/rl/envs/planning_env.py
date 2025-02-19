@@ -302,7 +302,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # whenever we encounter dead-end states.
         return [
             self.transitions_for(instance, state)
-            or [xmi.XTransition(None, state, state, None)]
+            or [xmi.XTransition.make_hollow(state, state, None)]
             for (instance, state) in zip(self._active_instances, states)
         ]
 

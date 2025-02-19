@@ -30,7 +30,11 @@ class XCategory(Enum):
 def hollow_check(func):
     def wrapper(self, *args, **kwargs):
         if self.is_hollow:
-            raise ValueError(f"Cannot perform operation {func} on hollow object.")
+            raise ValueError(
+                f"Cannot perform operation {func} on hollow object. A hollow object has no base (i.e., is `None`) "
+                f"and thus is a mere data-view object.\n"
+                f"Performing logic on it that utilizes pymimir requires a base object."
+            )
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -52,6 +56,12 @@ class MimirWrapper(Generic[T]):
 
     def __init__(self, base: T | None):
         self._base = base
+
+    @classmethod
+    def make_hollow(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+        obj._base = None
+        return obj
 
     @property
     def is_hollow(self):
@@ -99,14 +109,27 @@ class XPredicate(MimirWrapper[Predicate]):
 
 class XAtom(MimirWrapper[GroundAtom]):
     predicate: XPredicate
+    objects: tuple[Object]
 
     def __init__(self, atom: GroundAtom):
         super().__init__(atom)
         self.predicate = XPredicate(atom.get_predicate())
+        self.objects = tuple(atom.get_objects())
 
-    @property
-    def objects(self) -> Sequence[Object]:
-        return self.base.get_objects()
+    @classmethod
+    def make_hollow(cls, predicate: XPredicate, objects: Sequence[Object]):
+        obj = super().make_hollow()
+        obj.predicate = predicate
+        obj.objects = tuple(objects)
+        return obj
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.predicate == other.predicate and self.objects == other.objects
+
+    def __hash__(self):
+        return hash((self.predicate, self.objects))
 
     def __str__(self):
         obj_section = " ".join(obj.get_name() for obj in self.objects)
@@ -117,14 +140,17 @@ class XLiteral(MimirWrapper[GroundLiteral]):
     atom: XAtom
     is_negated: bool
 
-    def __init__(self, literal: GroundLiteral | tuple[bool, XAtom]):
-        if isinstance(literal, tuple):
-            super().__init__(None)
-            self.is_negated, self.atom = literal
-        else:
-            super().__init__(literal)
-            self.atom = XAtom(literal.get_atom())
-            self.is_negated = literal.is_negated()
+    def __init__(self, literal: GroundLiteral):
+        super().__init__(literal)
+        self.atom = XAtom(literal.get_atom())
+        self.is_negated = literal.is_negated()
+
+    @classmethod
+    def make_hollow(cls, atom: XAtom, negated: bool):
+        obj = super().make_hollow()
+        obj.atom = atom
+        obj.is_negated = negated
+        return obj
 
     def __str__(self):
         return f"{'-' if self.base.is_negated() else '+'}{self.atom}"
@@ -444,31 +470,28 @@ class XTransition(MimirWrapper[GroundActionEdge]):
     target: XState
     action: Optional[XAction | tuple[XAction]]
 
-    @multimethod
-    def __init__(
-        self,
-        edge: GroundActionEdge | None,
-        source: XState,
-        target: XState,
-        action: XAction | Iterable[XAction] | None,
-    ):
-        super().__init__(edge)
-        self.source = source
-        self.target = target
-        self.action = tuple(action) if hasattr(action, "__iter__") else action
-
-    @multimethod
     def __init__(
         self,
         edge: GroundActionEdge,
         space: XStateSpace,
     ):
-        self.__init__(
-            edge,
-            XState(edge.get_source(), space.base),
-            XState(edge.get_target(), space.base),
-            XAction(edge.get_creating_action(), space.problem),
-        )
+        super().__init__(edge)
+        self.source = XState(edge.get_source(), space.base)
+        self.target = XState(edge.get_target(), space.base)
+        self.action = XAction(edge.get_creating_action(), space.problem)
+
+    @classmethod
+    def make_hollow(
+        cls,
+        source: XState,
+        target: XState,
+        action: XAction | Iterable[XAction] | None,
+    ):
+        obj = super().make_hollow()
+        obj.source = source
+        obj.target = target
+        obj.action = tuple(action) if hasattr(action, "__iter__") else action
+        return obj
 
     def __iter__(self):
         return iter((self.source, self.target, self.action))
@@ -507,7 +530,7 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         )
 
     @cached_property
-    def is_improper(self):
+    def is_informed(self):
         return self.action is None
 
     @property
