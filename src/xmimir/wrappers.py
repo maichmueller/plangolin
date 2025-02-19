@@ -515,7 +515,6 @@ class XTransition(MimirWrapper[GroundActionEdge]):
 
 
 class XActionGenerator(MimirWrapper[LiftedApplicableActionGenerator]):
-    grounder: Grounder
     problem: XProblem
 
     @multimethod
@@ -523,29 +522,23 @@ class XActionGenerator(MimirWrapper[LiftedApplicableActionGenerator]):
         super().__init__(
             LiftedApplicableActionGenerator(grounder.get_action_grounder())
         )
-        self.grounder = grounder
+        self.problem = XProblem(
+            grounder.get_problem(), grounder.get_pddl_repositories()
+        )
 
     @multimethod
     def __init__(self, problem: XProblem):
         self.__init__(Grounder(problem.base, problem.repositories))
-
-    @property
-    def problem(self):
-        return XProblem(
-            self.grounder.get_problem(), self.grounder.get_pddl_repositories()
-        )
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
         for action in self.base.generate_applicable_actions(state.base):
             yield XAction(action, self.problem)
 
     def __hash__(self):
-        return hash((self.grounder, self.problem))
+        return hash((self.base, self.problem))
 
     def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return self.grounder == other.grounder and self.problem == other.problem
+        return super() == other and self.problem == other.problem
 
 
 class XSuccessorGenerator(MimirWrapper[StateRepository]):
@@ -705,6 +698,14 @@ class XStateSpace(MimirWrapper[StateSpace]):
         return XProblem(self.base)
 
     @property
+    def successor_generator(self) -> XSuccessorGenerator:
+        return XSuccessorGenerator(
+            self.problem,
+            self.base.get_state_repository(),
+            XActionGenerator(self.problem),
+        )
+
+    @property
     def pddl_repositories(self) -> PDDLRepositories:
         return self.base.get_pddl_repositories()
 
@@ -782,7 +783,7 @@ class XStateSpace(MimirWrapper[StateSpace]):
 
     def breadth_first_search(self, state: XState | None = None) -> XSearchResult:
         """
-        Perform a breath-first search from the given state to find the shortest path to a goal state.
+        Perform a breadth-first search from the given state to find the shortest path to a goal state.
 
         Parameters
         ----------
