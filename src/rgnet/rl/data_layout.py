@@ -35,7 +35,8 @@ class OutputData:
                     f"The root directory is not specified and a relative path is given for '{out_dir=}'. "
                     f"Defaulting to relative the current working directory: '{os.getcwd() / out_dir}'."
                 )
-            out_dir = root_dir / out_dir
+            else:
+                out_dir = root_dir / out_dir
 
         if experiment_name is None:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
