@@ -38,7 +38,7 @@ def hollow_check(func):
 T = TypeVar("T")
 
 
-class BaseWrapper(Generic[T]):
+class MimirWrapper(Generic[T]):
     """
     A mixin class to provide a base accessor that checks against hollow-ness of the underlying object.
     If not overridden de by the subclass, the equivalence check as well as the hash of the class
@@ -71,7 +71,7 @@ class BaseWrapper(Generic[T]):
         return self.base == other.base
 
 
-class XPredicate(BaseWrapper[Predicate]):
+class XPredicate(MimirWrapper[Predicate]):
     category: XCategory
 
     def __init__(self, predicate: Predicate):
@@ -96,7 +96,7 @@ class XPredicate(BaseWrapper[Predicate]):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
 
 
-class XAtom(BaseWrapper[GroundAtom]):
+class XAtom(MimirWrapper[GroundAtom]):
     predicate: XPredicate
 
     def __init__(self, atom: GroundAtom):
@@ -112,7 +112,7 @@ class XAtom(BaseWrapper[GroundAtom]):
         return f"({self.predicate.name} {obj_section})"
 
 
-class XLiteral(BaseWrapper[GroundLiteral]):
+class XLiteral(MimirWrapper[GroundLiteral]):
     atom: XAtom
     is_negated: bool
 
@@ -137,7 +137,7 @@ class XLiteral(BaseWrapper[GroundLiteral]):
         return hash((self.is_negated, self.atom))
 
 
-class XDomain(BaseWrapper[Domain]):
+class XDomain(MimirWrapper[Domain]):
 
     def __init__(self, domain: Domain):
         super().__init__(domain)
@@ -180,7 +180,7 @@ class XDomain(BaseWrapper[Domain]):
         return str(self.base)
 
 
-class XProblem(BaseWrapper[Problem]):
+class XProblem(MimirWrapper[Problem]):
     repositories: PDDLRepositories
 
     @multimethod
@@ -262,7 +262,7 @@ class XProblem(BaseWrapper[Problem]):
         )
 
 
-class XAction(BaseWrapper[GroundAction]):
+class XAction(MimirWrapper[GroundAction]):
     problem: XProblem
 
     def __init__(self, action: GroundAction, problem: XProblem):
@@ -332,7 +332,7 @@ class XAction(BaseWrapper[GroundAction]):
         return [objs[i] for i in self.base.get_object_indices()]
 
 
-class XState(BaseWrapper[State]):
+class XState(MimirWrapper[State]):
     problem: XProblem
 
     @multimethod
@@ -438,7 +438,7 @@ class XState(BaseWrapper[State]):
         )
 
 
-class XTransition(BaseWrapper[GroundActionEdge]):
+class XTransition(MimirWrapper[GroundActionEdge]):
     source: XState
     target: XState
     action: Optional[XAction | tuple[XAction]]
@@ -514,7 +514,7 @@ class XTransition(BaseWrapper[GroundActionEdge]):
         return isinstance(self.action, XAction)
 
 
-class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
+class XActionGenerator(MimirWrapper[LiftedApplicableActionGenerator]):
     grounder: Grounder
     problem: XProblem
 
@@ -548,7 +548,7 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
         return self.grounder == other.grounder and self.problem == other.problem
 
 
-class XSuccessorGenerator(BaseWrapper[StateRepository]):
+class XSuccessorGenerator(MimirWrapper[StateRepository]):
     action_generator: XActionGenerator
     grounder: Grounder
 
@@ -596,7 +596,7 @@ class XSuccessorGenerator(BaseWrapper[StateRepository]):
     __hash__ = None
 
 
-class XSearchResult(BaseWrapper[SearchResult]):
+class XSearchResult(MimirWrapper[SearchResult]):
     start: XState
     problem: XProblem
 
@@ -629,7 +629,7 @@ class XSearchResult(BaseWrapper[SearchResult]):
     __hash__ = None
 
 
-class XStateSpace(BaseWrapper[StateSpace]):
+class XStateSpace(MimirWrapper[StateSpace]):
     """
     The extended state space class.
 
