@@ -548,74 +548,50 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
         return self.grounder == other.grounder and self.problem == other.problem
 
 
-class XSuccessorGenerator(BaseWrapper[Grounder]):
-    state_repository: StateRepository
-    # The successor generator will always have a default action generator.
+class XSuccessorGenerator(BaseWrapper[StateRepository]):
     action_generator: XActionGenerator
+    grounder: Grounder
 
-    @multimethod
     def __init__(
         self,
-        base: Grounder,
+        grounder: Grounder | XProblem,
         state_repository: StateRepository | None = None,
         action_generator: XActionGenerator | None = None,
     ):
-        super().__init__(base)
-        self.action_generator = action_generator or XActionGenerator(base)
-        self.state_repository = state_repository or StateRepository(
-            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
+        if isinstance(grounder, XProblem):
+            grounder = Grounder(grounder.base, grounder.repositories)
+        self.grounder = grounder
+        self.action_generator = action_generator or XActionGenerator(grounder)
+        state_repository = state_repository or StateRepository(
+            LiftedAxiomEvaluator(grounder.get_axiom_grounder())
         )
-
-    @multimethod
-    def __init__(
-        self,
-        problem: XProblem,
-        state_repository: StateRepository | None = None,
-        action_generator: XActionGenerator | None = None,
-    ):
-        self.__init__(
-            Grounder(problem.base, problem.repositories),
-            state_repository,
-            action_generator,
-        )
-
-    @property
-    def grounder(self):
-        return self.base
+        super().__init__(state_repository)
 
     @property
     def problem(self):
-        return XProblem(self.base.get_problem(), self.base.get_pddl_repositories())
+        return XProblem(
+            self.grounder.get_problem(), self.grounder.get_pddl_repositories()
+        )
 
     @property
     def initial_state(self) -> XState:
         return XState(
-            self.state_repository.get_or_create_initial_state(),
+            self.base.get_or_create_initial_state(),
             self.problem,
         )
 
     def successor(self, state: XState, action: XAction) -> XState:
         return XState(
-            self.state_repository.get_or_create_successor_state(
+            self.base.get_or_create_successor_state(
                 state.base,
                 action.base,
             )[0],
             state.problem,
         )
 
-    def successors(
-        self, state: XState, action_generator: Optional[XActionGenerator] = None
-    ) -> Generator[tuple[XAction, XState]]:
-        action_generator = action_generator or self.action_generator
-        for action in action_generator.generate_actions(state):
+    def successors(self, state: XState) -> Generator[tuple[XAction, XState]]:
+        for action in self.action_generator.generate_actions(state):
             yield action, self.successor(state, action)
-
-    def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return (
-            self.base == other.base and self.state_repository == other.state_repository
-        )
 
     __hash__ = None
 
