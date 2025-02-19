@@ -1,8 +1,8 @@
+from test.fixtures import medium_blocks
 from typing import List
 
 import mockito
 import torch
-from fixtures import medium_blocks
 
 import xmimir as xmi
 from rgnet.rl.envs import SuccessorEnvironment
