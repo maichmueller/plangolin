@@ -550,10 +550,18 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
 
 class XSuccessorGenerator(BaseWrapper[Grounder]):
     state_repository: StateRepository
+    # The successor generator will always have a default action generator.
+    action_generator: XActionGenerator
 
     @multimethod
-    def __init__(self, base: Grounder, state_repository: StateRepository | None = None):
+    def __init__(
+        self,
+        base: Grounder,
+        state_repository: StateRepository | None = None,
+        action_generator: XActionGenerator | None = None,
+    ):
         super().__init__(base)
+        self.action_generator = action_generator or XActionGenerator(base)
         self.state_repository = state_repository or StateRepository(
             LiftedAxiomEvaluator(self.base.get_axiom_grounder())
         )
@@ -563,10 +571,12 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
         self,
         problem: XProblem,
         state_repository: StateRepository | None = None,
+        action_generator: XActionGenerator | None = None,
     ):
-        super().__init__(Grounder(problem.base, problem.repositories))
-        self.state_repository = state_repository or StateRepository(
-            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
+        self.__init__(
+            Grounder(problem.base, problem.repositories),
+            state_repository,
+            action_generator,
         )
 
     @property
@@ -594,8 +604,9 @@ class XSuccessorGenerator(BaseWrapper[Grounder]):
         )
 
     def successors(
-        self, state: XState, action_generator: XActionGenerator
+        self, state: XState, action_generator: Optional[XActionGenerator] = None
     ) -> Generator[tuple[XAction, XState]]:
+        action_generator = action_generator or self.action_generator
         for action in action_generator.generate_actions(state):
             yield action, self.successor(state, action)
 
