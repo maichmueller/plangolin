@@ -1,11 +1,10 @@
 from pathlib import Path
 from test.fixtures import fresh_drive, medium_blocks
+from test.supervised.test_data import hetero_data_equal
 
 import mockito
-from supervised.test_data import assert_hetero_stores
 from torch_geometric.data import HeteroData
 
-import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
@@ -26,7 +25,7 @@ def validate_drive(drive, space):
         else:
             assert not drive.done.all()
         expected = encoder.to_pyg_data(encoder.encode(state))
-        assert_hetero_stores(data, expected)
+        assert hetero_data_equal(data, expected)
 
 
 def test_process(fresh_drive, medium_blocks):

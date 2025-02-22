@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
@@ -65,7 +65,7 @@ class FlashDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        space = xmi.XStateSpace.create(
+        space = xmi.XStateSpace(
             str(self.domain_file.absolute()),
             str(self.problem_path.absolute()),
             max_num_states=self.max_expanded or 1_000_000,
@@ -113,7 +113,7 @@ class FlashDrive(InMemoryDataset):
             data.idx = state.index
             data.done = done
             # Same index concerns for transition.target.index
-            data.targets = tuple(t.target.index for t in transitions)
+            data.targets = list(t.target.index for t in transitions)
             # pymimir returns -1 for states where to goal is not reachable
             distance_to_goal = (
                 abs(self.custom_dead_end_reward)

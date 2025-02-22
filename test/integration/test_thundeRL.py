@@ -18,7 +18,6 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
-from rgnet.utils import get_device_cuda_if_possible
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -115,18 +114,17 @@ def _create_data_setup(tmp_path):
 
 def validate_hdata(hetero_data: HeteroData, drives: List[FlashDrive]):
     idx = hetero_data.idx.item()
-    if not any(
+    return any(
         len(drive) > idx and hetero_data_equal(hetero_data, drive[idx])
         for drive in drives
-    ):
-        pytest.fail(str(hetero_data))
+    )
 
 
 def validate_batch(hetero_batch: Batch, drives: List[FlashDrive]):
     batch_list = hetero_batch.to_data_list()
     hetero_data: HeteroData
     for hetero_data in batch_list:
-        validate_hdata(hetero_data, drives)
+        assert validate_hdata(hetero_data, drives)
 
 
 def validate_successor_batch(
@@ -156,8 +154,7 @@ def validate_successor_batch(
         successor_pointer += num_targets
         if not found_match:
             pytest.fail(
-                "Could not find a state in any drive that matched the index and targets."
-                + str(state_index)
+                f"Could not find a state in any drive that matched the index {state_index} in targets."
             )
 
 
@@ -247,8 +244,6 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
         dataset_dir,
         output_dir,
     )
-    for drive in drives:
-        drive.to(get_device_cuda_if_possible())
     _validate_done_reward_num_transitions(small_space, medium_space, mock)
     for batch_tuple in zip(
         mock.batched_list, mock.successor_batch_list, mock.num_successor_list

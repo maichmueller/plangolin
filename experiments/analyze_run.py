@@ -5,11 +5,11 @@ from typing import Dict, List, Optional, Sequence
 import lightning as L
 import matplotlib.pyplot as plt
 import numpy as np
-import pymimir as mi
 import torch
 import torch_geometric as pyg
 from torch import Tensor
 
+import xmimir as xmi
 from experiments.policy import Policy, ValuePolicy
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import LightningHetero
@@ -17,6 +17,7 @@ from rgnet.supervised import MultiInstanceSupervisedSet
 from rgnet.supervised.data_layout import DataLayout, DatasetType
 from rgnet.utils import get_device_cuda_if_possible
 from rgnet.utils.plan import parse_fd_plan
+from xmimir import parse
 
 
 def plot_prediction_for_label(pred_for_label: Dict[int, Sequence[Tensor]], label):
@@ -32,9 +33,9 @@ def plot_prediction_for_label(pred_for_label: Dict[int, Sequence[Tensor]], label
 
 @dataclasses.dataclass
 class PlanResult:
-    plan: Optional[List[mi.Action]]
+    plan: Optional[List[xmi.XAction]]
     cost: Optional[int]
-    optimal_plan: List[mi.Action]
+    optimal_plan: List[xmi.XAction]
     opt_cost: int
     problem: str
 
@@ -51,9 +52,11 @@ class CompletedExperiment:
 
         assert data_layout.encoder_type == "hetero"  # TODO allow other encoder
         self.device: torch.device = device
-        self.domain = mi.DomainParser(
-            str(data_layout.domain_file_path.absolute())
-        ).parse()
+        # pymimir-v2 requires both a domain and a problem file path to parse any one
+        self.domain: xmi.XDomain = parse(
+            domain=data_layout.domain_file_path,
+            problem=next(data_layout.problems_paths_for(DatasetType.TRAIN)),
+        )[0]
 
         # Load datasets on demand
         self._datasets: Dict[DatasetType, MultiInstanceSupervisedSet] = dict()
@@ -125,7 +128,7 @@ class CompletedExperiment:
         plt.show()
 
     def wrap_model_as_value_function(self):
-        def value_function(state: mi.State):
+        def value_function(state: xmi.XState):
             data = self.encoder.to_pyg_data(self.encoder.encode(state))
             data.to(self.model.device)
             return self.model(data.x_dict, data.edge_index_dict)
@@ -151,7 +154,7 @@ class CompletedExperiment:
         found_plans: List[PlanResult] = []
         for plan_file in plans:
             problem_path = self.data_layout.problem_for_plan(plan_file, dataset_type)
-            problem = mi.ProblemParser(str(problem_path.absolute())).parse(self.domain)
+            problem = parse(self.domain.base, problem_path)[1]
             self.plan = parse_fd_plan(plan_file, problem)
             self.self_plan = self.plan
             opt_plan, opt_cost = self.self_plan

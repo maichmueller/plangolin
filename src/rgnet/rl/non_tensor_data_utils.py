@@ -1,5 +1,5 @@
 from functools import singledispatch
-from typing import Iterable, List, Sequence, Union
+from typing import Iterable, List, Union
 
 from tensordict import NonTensorData, NonTensorStack
 from torch_geometric.data.batch import Batch

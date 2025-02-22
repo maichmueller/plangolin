@@ -19,7 +19,7 @@ def test_hetero_data():
         if "large" in prob.filepath:
             continue
         logging.info("Testing problem: " + prob.name)
-        state_space = xmi.XStateSpace.create(domain.filepath, prob.filepath)
+        state_space = xmi.XStateSpace(domain.filepath, prob.filepath)
         encoder = HeteroGraphEncoder(state_space.problem.domain)
         for state in state_space:
             data = encoder.to_pyg_data(encoder.encode(state))
@@ -51,7 +51,7 @@ def test_consistent_order_of_objects(small_blocks):
     """
     space, domain, medium_problem = small_blocks
     encoder = HeteroGraphEncoder(domain)
-    initial = space.initial_state()
+    initial = space.initial_state
     initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
 
     def obj_to_on_g_edge_index(graph):

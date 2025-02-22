@@ -2,17 +2,7 @@ from __future__ import annotations
 
 from functools import cache, singledispatchmethod
 
-from xmimir import (
-    Atom,
-    GroundAtom,
-    GroundLiteral,
-    Literal,
-    Object,
-    Predicate,
-    XAtom,
-    XLiteral,
-    XPredicate,
-)
+from xmimir import Object, XAtom, XLiteral, XPredicate
 
 Node = str
 

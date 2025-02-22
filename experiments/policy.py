@@ -1,8 +1,7 @@
 import abc
 import logging
-from typing import Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
-import pymimir as mi
 import torch
 from torch import Generator
 
@@ -12,7 +11,11 @@ import xmimir as xmi
 class Policy(abc.ABC):
 
     @abc.abstractmethod
-    def __call__(self, state: xmi.XState, applicable_actions: Sequence[xmi.XAction]):
+    def __call__(
+        self,
+        state: xmi.XState,
+        actions_and_successors: Iterable[tuple[xmi.XAction, xmi.XState]],
+    ):
         pass
 
     def run(
@@ -46,8 +49,8 @@ class RandomPolicy(Policy):
 
     def __call__(
         self,
-        state: mi.State,
-        actions_and_successors: Iterable[tuple[xmi.XAction], xmi.XState],
+        state: xmi.XState,
+        actions_and_successors: Iterable[tuple[xmi.XAction, xmi.XState]],
     ) -> Tuple[xmi.XAction, xmi.XState]:
         action_targets = [(a, s) for a, s in actions_and_successors]
         idx = torch.randint(0, len(action_targets), (1,), generator=self.rng)[0]
@@ -63,7 +66,7 @@ class ValuePolicy(Policy):
     def __call__(
         self,
         state: xmi.XState,
-        actions_and_successors: Iterable[tuple[xmi.XAction], xmi.XState],
+        actions_and_successors: Iterable[tuple[xmi.XAction, xmi.XState]],
     ) -> Tuple[xmi.XAction, xmi.XState]:
         action_targets = [(a, s) for a, s in actions_and_successors]
         return min(action_targets, key=lambda a_t: self.value_function(a_t[1]))

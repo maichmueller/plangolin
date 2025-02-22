@@ -20,7 +20,6 @@ from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
-from rgnet.utils.manual_transition import MTransition
 
 InstanceType = TypeVar("InstanceType")
 
@@ -303,7 +302,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # whenever we encounter dead-end states.
         return [
             self.transitions_for(instance, state)
-            or [xmi.XTransition(None, state, state, None)]
+            or [xmi.XTransition.make_hollow(state, state, None)]
             for (instance, state) in zip(self._active_instances, states)
         ]
 
@@ -341,12 +340,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         self,
         idx: int,
         transition: Optional[xmi.XTransition],
-        current_states: List[xmi.State],
+        current_states: List[xmi.XState],
     ):
         if transition is not None:
-            # TODO: remove this debugging if again.
-            if not isinstance(transition, xmi.XTransition):
-                raise ValueError("Expected a Transition object.")
             return transition.target
         else:
             # Check that there were no transitions available.
@@ -365,7 +361,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         :returns TensorDict: Output TensorDict.
         """
 
-        current_states: List[xmi.State] = tensordict[self._keys.state]
+        current_states: List[xmi.XState] = tensordict[self._keys.state]
 
         actions: List[Optional[xmi.XTransition]] = tensordict[self._keys.action]
         assert isinstance(actions, list)  # batch of chosen-transitions

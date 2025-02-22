@@ -1,10 +1,10 @@
 from typing import List
 
-import pymimir as mi
 import torch
 from torch_geometric.data import Batch
 from torch_geometric.nn import Aggregation
 
+import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
@@ -25,7 +25,7 @@ class EmbeddingModule(torch.nn.Module):
         self.gnn = gnn
         self.encoder: HeteroGraphEncoder = encoder
 
-    def forward(self, states: List[mi.State] | NonTensorWrapper) -> ObjectEmbedding:
+    def forward(self, states: List[xmi.State] | NonTensorWrapper) -> ObjectEmbedding:
         states = tolist(states)
         assert isinstance(states, List)
 

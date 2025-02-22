@@ -4,7 +4,7 @@ import logging
 import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type
+from typing import Callable, Dict, List, Optional, Sequence
 
 import torch
 from lightning import LightningDataModule

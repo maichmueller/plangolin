@@ -1,14 +1,14 @@
-from typing import List, Tuple
-
-import mockito
-import pytest
-import torch
-from fixtures import (  # noqa: F401
+from test.fixtures import (  # noqa: F401
     embedding_mock,
     medium_blocks,
     multi_instance_env,
     small_blocks,
 )
+from typing import List, Tuple
+
+import mockito
+import pytest
+import torch
 from tensordict import LazyStackedTensorDict, NonTensorStack, TensorDict
 from torch import tensor
 from torchrl.modules import ValueOperator

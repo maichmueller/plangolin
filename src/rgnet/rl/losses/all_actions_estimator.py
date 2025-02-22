@@ -59,7 +59,7 @@ class EnvironmentBasedRewardProvider(RewardDoneProvider):
     def __call__(self, tensordict: TensorDict):
         """
         :param tensordict: should contain:
-            transitions: The outgoing transitions of type List[List[List[pymimir.Transition]]].
+            transitions: The outgoing transitions of type List[List[List[xmi.XTransition]]].
             Dimensions are batch_size, time-steps, number of successors.
             current_states: The batched current states.
             instances: The instance from which the states and transitions are drawn.
@@ -70,10 +70,10 @@ class EnvironmentBasedRewardProvider(RewardDoneProvider):
         ), "Required time dimension to be the second."
 
         # shape [batch_size, time, num_successor, ] feature can be ragged
-        batched_transitions: List[List[List[mi.Transition]]] = tensordict[
+        batched_transitions: List[List[List[xmi.XTransition]]] = tensordict[
             self._env.keys.transitions
         ]
-        batched_states: List[List[mi.State]] = tensordict[self._env.keys.state]
+        batched_states: List[List[xmi.XState]] = tensordict[self._env.keys.state]
         batched_instances: List[List[InstanceType]] = tensordict[
             self._env.keys.instance
         ]

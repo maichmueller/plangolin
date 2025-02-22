@@ -5,8 +5,7 @@ from lightning import LightningModule
 from torch import Tensor, nn
 from torch_geometric.data import Batch
 
-from rgnet.encoding import ColorGraphEncoder
-from rgnet.models import PyGModule, VanillaGNN
+from rgnet.models import PyGModule
 
 
 class LitVanillaGNN(LightningModule):
@@ -30,16 +29,15 @@ class LitVanillaGNN(LightningModule):
         x, edge_index, batch_info = self.gnn.unpack(batch)
         out = self.gnn(self.linear(x.view(-1, 1)), edge_index, batch)
         # sum-up the embeddings for each graph-node -> shape [embedding_size,batch_size]
-        aggregated = pyg.nn.global_add_pool(out, batch)
+        aggregated = pyg.nn.global_add_pool(out, batch_info)
         # reduce from embeddings_size to one -> shape [batch_size, 1]
         out = self.readout(aggregated)
         return out.view(-1)  # shape [batch_size]
 
-    def training_step(self, batch, batch_index) -> Tensor:
+    def training_step(self, batch, batch_index: int) -> Tensor:
         """
-        :param x: The node feature matrix of floats
-        :param edge_index: The adjacency list tensor
-        :param batch: Batch information mapping nodes to graphs (as in DataBatch)
+        :param batch: A batch of torch geometric data-objects e.g., graphs.
+        :param batch_index: The index of the batch provided by pytorch lightning
         """
         out = self(batch)
         loss: Tensor = self.l1_loss(out, batch.y)
@@ -76,19 +74,3 @@ class LitVanillaGNN(LightningModule):
             self.log(
                 "Cum. abs. gradient", grad_vec.abs().sum(), on_step=True, on_epoch=False
             )
-
-
-if __name__ == "__main__":
-    import xmimir as xmi
-
-    model = VanillaGNN(hidden_size=10, num_layer=4)
-    domain = xmi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = xmi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
-
-    space = xmi.StateSpace.new(problem, xmi.GroundedSuccessorGenerator(problem))
-
-    state = get_initial_state(space)
-    encoder = ColorGraphEncoder(domain)
-    data = encoder.to_pyg_data(encoder.encode(state))
-    output = model(data.x, data.edge_index, data.batch)
-    print(output)

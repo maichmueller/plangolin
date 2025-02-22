@@ -5,7 +5,7 @@ import pytest
 import torch
 
 import xmimir as xmi
-from rgnet.rl.envs.planning_env import InstanceType, PlanningEnvironment
+from rgnet.rl.envs.planning_env import PlanningEnvironment
 from xmimir import XLiteral, XState, XStateSpace
 
 
@@ -41,7 +41,7 @@ class DeadEndGoalEnv(PlanningEnvironment[XStateSpace]):
     def initial_for(
         self, active_instance: XStateSpace
     ) -> Tuple[XState, List[XLiteral]]:
-        return active_instance.initial_state(), list(active_instance.problem.goal())
+        return active_instance.initial_state, list(active_instance.problem.goal())
 
     def is_goal(self, active_instance: XStateSpace, state: XState) -> bool:
         return self.is_goal_state
@@ -79,7 +79,7 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
     if is_dead_end or is_goal:
         assert td[("next", env.keys.done)].all()
         assert td[("next", env.keys.terminated)].all()
-        assert next_td[env.keys.state] == [space.initial_state()] * batch_size
+        assert next_td[env.keys.state] == [space.initial_state] * batch_size
         if is_dead_end:  # we expect to stay in the same state
             assert td[("next", env.keys.state)] == td[env.keys.state]
         else:

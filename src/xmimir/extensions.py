@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from itertools import chain
 from pathlib import Path
-from typing import Generator, Iterable, Iterator, Optional, Sequence, Union
+from typing import Generator, Iterable, Union
 
 from multimethod import multimethod
 from pymimir import Domain, Object, PDDLParser, Problem
 
-from .wrappers import XAtom, XDomain, XLiteral, XProblem, XState
+from .wrappers import XAtom, XDomain, XProblem, XState
 
 
 def parse(

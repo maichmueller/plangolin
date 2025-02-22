@@ -11,7 +11,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 
 import xmimir as xmi
 from rgnet.utils.plan import Plan, parse_fd_plan
-from xmimir import Problem, XDomain, XProblem, XStateSpace
+from xmimir import XDomain, XProblem, XStateSpace
 
 
 @dataclasses.dataclass
@@ -35,7 +35,8 @@ class OutputData:
                     f"The root directory is not specified and a relative path is given for '{out_dir=}'. "
                     f"Defaulting to relative the current working directory: '{os.getcwd() / out_dir}'."
                 )
-            out_dir = root_dir / out_dir
+            else:
+                out_dir = root_dir / out_dir
 
         if experiment_name is None:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
@@ -165,7 +166,7 @@ class InputData:
         self, problem: XProblem, max_expanded: int | None = None
     ) -> XStateSpace:
         if problem not in self._space_by_problem:
-            self._space_by_problem[problem] = XStateSpace.create(
+            self._space_by_problem[problem] = XStateSpace(
                 self.domain.filepath,
                 problem.filepath,
                 max_num_states=max_expanded or 1_000_000,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache, cached_property
 from itertools import chain
@@ -12,8 +10,6 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
-    List,
-    NamedTuple,
     Optional,
     Sequence,
     TypeVar,
@@ -22,6 +18,7 @@ from typing import (
 
 from multimethod import multimethod
 from pymimir import *
+from pymimir.hints import *  # because PyCharm needs some help
 
 
 class XCategory(Enum):
@@ -30,36 +27,14 @@ class XCategory(Enum):
     derived = 2
 
 
-class BaseHashMixin:
-    base: Any
-
-    def __hash__(self):
-        return hash(self.base)
-
-
-class BaseEqMixin:
-    """
-    Base mixin class for equality comparison.
-
-    Note that by providing __eq__, but no __hash__ method, python will automatically set the hash to None
-    for a child class which does not define a custom __hash__ function. In order to retain the hash of
-    another Mixin class, the hash mixin class needs to be inherited from FIRST to ensure correct MRO.
-    Otherwise, the child class will need to provide an explicit __hash__ function itself everytime, despite
-    inheriting from a mixin.
-    """
-
-    base: Any
-
-    def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return self.base == other.base
-
-
 def hollow_check(func):
     def wrapper(self, *args, **kwargs):
-        if self.hollow:
-            raise ValueError(f"Cannot perform operation {func} on hollow object.")
+        if self.is_hollow:
+            raise ValueError(
+                f"Cannot perform operation {func} on hollow object. A hollow object has no base (i.e., is `None`) "
+                f"and thus is a mere data-view object.\n"
+                f"Performing logic on it that utilizes pymimir requires a base object."
+            )
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -68,9 +43,13 @@ def hollow_check(func):
 T = TypeVar("T")
 
 
-class BaseWrapper(Generic[T]):
+class MimirWrapper(Generic[T]):
     """
     A mixin class to provide a base accessor that checks against hollow-ness of the underlying object.
+    If not overridden de by the subclass, the equivalence check as well as the hash of the class
+     are determined by the pymimir base object.
+    Hollow refers to an instance without a pymimir base. This is useful for some classes
+     like XTransition where you might want to manually create instances of (source, action, target).
     """
 
     _base: T | None
@@ -78,8 +57,14 @@ class BaseWrapper(Generic[T]):
     def __init__(self, base: T | None):
         self._base = base
 
+    @classmethod
+    def make_hollow(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+        obj._base = None
+        return obj
+
     @property
-    def hollow(self):
+    def is_hollow(self):
         return self._base is None
 
     @property
@@ -87,11 +72,20 @@ class BaseWrapper(Generic[T]):
     def base(self) -> T:
         return self._base
 
+    @hollow_check
+    def __hash__(self):
+        return hash(self.base)
 
-class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.base == other.base
+
+
+class XPredicate(MimirWrapper[Predicate]):
     category: XCategory
 
-    def __init__(self, predicate: Predicate) -> XPredicate:
+    def __init__(self, predicate: Predicate):
         if isinstance(predicate, FluentPredicate):
             category = XCategory.fluent
         elif isinstance(predicate, DerivedPredicate):
@@ -113,34 +107,62 @@ class XPredicate(BaseWrapper[Predicate], BaseHashMixin, BaseEqMixin):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
 
 
-class XAtom(BaseWrapper[GroundAtom], BaseHashMixin, BaseEqMixin):
+class XAtom(MimirWrapper[GroundAtom]):
     predicate: XPredicate
+    objects: tuple[Object]
 
-    def __init__(self, atom: GroundAtom) -> XAtom:
+    """
+    The extended atom class.
+
+    Important Notes:
+    A pymimir.GroundAtom object is a mere pointer onto a ground atom stored in an pymimir.PDDLRepitories object.
+    As such, it is not an independent object but a view onto memory that is kept alive by each pymimir.GroundAtom
+    object.
+
+    It is currently not guaranteed that the same atom is held at the same index in the same repository. Try to rely on
+    only a single pymimir.PDDLRepositories object if possible.
+    """
+
+    def __init__(self, atom: GroundAtom):
         super().__init__(atom)
         self.predicate = XPredicate(atom.get_predicate())
+        self.objects = tuple(atom.get_objects())
 
-    @property
-    def objects(self) -> Sequence[Object]:
-        return self.base.get_objects()
+    @classmethod
+    def make_hollow(cls, predicate: XPredicate, objects: Sequence[Object]):
+        obj = super().make_hollow()
+        obj.predicate = predicate
+        obj.objects = tuple(objects)
+        return obj
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.predicate == other.predicate and self.objects == other.objects
+
+    def __hash__(self):
+        return hash((self.predicate, self.objects))
 
     def __str__(self):
         obj_section = " ".join(obj.get_name() for obj in self.objects)
         return f"({self.predicate.name} {obj_section})"
 
 
-class XLiteral(BaseWrapper[GroundLiteral]):
+class XLiteral(MimirWrapper[GroundLiteral]):
     atom: XAtom
     is_negated: bool
 
-    def __init__(self, literal: GroundLiteral | tuple[bool, XAtom]):
-        if isinstance(literal, tuple):
-            super().__init__(None)
-            self.is_negated, self.atom = literal
-        else:
-            super().__init__(literal)
-            self.atom = XAtom(literal.get_atom())
-            self.is_negated = literal.is_negated()
+    def __init__(self, literal: GroundLiteral):
+        super().__init__(literal)
+        self.atom = XAtom(literal.get_atom())
+        self.is_negated = literal.is_negated()
+
+    @classmethod
+    def make_hollow(cls, atom: XAtom, negated: bool):
+        obj = super().make_hollow()
+        obj.atom = atom
+        obj.is_negated = negated
+        return obj
 
     def __str__(self):
         return f"{'-' if self.base.is_negated() else '+'}{self.atom}"
@@ -154,7 +176,7 @@ class XLiteral(BaseWrapper[GroundLiteral]):
         return hash((self.is_negated, self.atom))
 
 
-class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
+class XDomain(MimirWrapper[Domain]):
 
     def __init__(self, domain: Domain):
         super().__init__(domain)
@@ -197,8 +219,14 @@ class XDomain(BaseWrapper[Domain], BaseHashMixin, BaseEqMixin):
         return str(self.base)
 
 
-class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
+class XProblem(MimirWrapper[Problem]):
     repositories: PDDLRepositories
+
+    """
+    The extended problem class.
+
+    Each XProblem holds its corresponding PDDLRepositories object to access the ground atoms and literals with.
+    """
 
     @multimethod
     def __init__(self, problem: Problem, repositories: PDDLRepositories):
@@ -279,12 +307,23 @@ class XProblem(BaseWrapper[Problem], BaseHashMixin, BaseEqMixin):
         )
 
 
-class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
-    problem: XProblem
+class XAction(MimirWrapper[GroundAction]):
+    action_generator: XActionGenerator
 
-    def __init__(self, action: GroundAction, problem: XProblem):
+    """
+    Important Notes:
+    A pymimir.GroundAction object is a mere pointer onto a ground action stored in an pymimir.ActionGrounder object.
+    As such, it is not an independent object but a view onto memory that is NOT kept alive by pymimir.GroundAction objects
+
+    A side effect is that actions that are semantically the same but are created with different grounders may not equal
+    each other, because they are not the same object in memory. Keep this in mind when comparing actions.
+
+    Guideline: Try to use only actions from the same ActionGenerator whenever possible, if comparisons are needed.
+    """
+
+    def __init__(self, action: GroundAction, action_generator: XActionGenerator):
         super().__init__(action)
-        self.problem = problem
+        self.action_generator = action_generator
 
     def __str__(self):
         return self.base.to_string(self.problem.repositories)
@@ -297,6 +336,10 @@ class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
     @cached_property
     def action_schema(self):
         return self.problem.domain.actions[self.base.get_action_index()]
+
+    @property
+    def problem(self):
+        return self.action_generator.problem
 
     @property
     def name(self) -> str:
@@ -349,8 +392,22 @@ class XAction(BaseWrapper[GroundAction], BaseHashMixin, BaseEqMixin):
         return [objs[i] for i in self.base.get_object_indices()]
 
 
-class XState(BaseWrapper[State]):
+class XState(MimirWrapper[State]):
     problem: XProblem
+
+    """
+    The extended state class.
+
+    Important Notes:
+    A pymimir.State object is a mere pointer onto a state stored in the state repository. As such, it is not an
+    independent object but a view onto memory that is implicitly kept alive by each pymimir.State object
+    (as guaranteed by pymimir binding logic).
+
+    A side effect is that states that are semantically the same but are created in different repositories may not equal
+    each other, because they are not the same object in memory. Keep this in mind when comparing states.
+
+    Guideline: Try to use only states from the same repository whenever possible, i.e. use only a single repository.
+    """
 
     @multimethod
     def __init__(self, state: State, problem: XProblem):
@@ -455,36 +512,33 @@ class XState(BaseWrapper[State]):
         )
 
 
-class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
+class XTransition(MimirWrapper[GroundActionEdge]):
     source: XState
     target: XState
     action: Optional[XAction | tuple[XAction]]
 
-    @multimethod
     def __init__(
         self,
         edge: GroundActionEdge,
         space: XStateSpace,
     ):
-        self.__init__(
-            edge,
-            XState(edge.get_source(), space.base),
-            XState(edge.get_target(), space.base),
-            XAction(edge.get_creating_action(), space.problem),
-        )
+        super().__init__(edge)
+        self.source = XState(edge.get_source(), space.base)
+        self.target = XState(edge.get_target(), space.base)
+        self.action = XAction(edge.get_creating_action(), space.action_generator)
 
-    @multimethod
-    def __init__(
-        self,
-        edge: GroundActionEdge | None,
+    @classmethod
+    def make_hollow(
+        cls,
         source: XState,
         target: XState,
         action: XAction | Iterable[XAction] | None,
     ):
-        super().__init__(edge)
-        self.source = source
-        self.target = target
-        self.action = tuple(action) if hasattr(action, "__iter__") else action
+        obj = super().make_hollow()
+        obj.source = source
+        obj.target = target
+        obj.action = tuple(action) if hasattr(action, "__iter__") else action
+        return obj
 
     def __iter__(self):
         return iter((self.source, self.target, self.action))
@@ -504,22 +558,89 @@ class XTransition(BaseWrapper[GroundActionEdge], BaseHashMixin):
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
 
+    def explain(self) -> str:
+        fluents_before = set(self.source.fluent_atoms)
+        fluents_after = set(self.target.fluent_atoms)
+        derived_before = set(self.source.derived_atoms)
+        derived_after = set(self.target.derived_atoms)
+        added_fluents = fluents_after - fluents_before
+        removed_fluents = fluents_before - fluents_after
+        added_derived = derived_after - derived_before
+        removed_derived = derived_before - derived_after
+        return (
+            f"Transition({self.source.index} -> {self.target.index})\n"
+            f"Action: {self.action}\n"
+            f"Added Fluent Atoms:    {added_fluents}\n"
+            f"Added Derived Atoms:   {added_derived}\n"
+            f"Deleted Fluents Atoms: {removed_fluents}\n"
+            f"Removed Derived Atoms: {removed_derived}"
+        )
 
-class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
-    grounder: Grounder
+    @cached_property
+    def is_informed(self):
+        return self.action is None
+
+    @property
+    def is_primitive(self):
+        return isinstance(self.action, XAction)
+
+
+class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
     problem: XProblem
 
     @multimethod
-    def __init__(self, problem: XProblem):
-        grounder = Grounder(problem.base, problem.repositories)
-        self.__init__(grounder)
+    def __init__(self, generator: IApplicableActionGenerator):
+        super().__init__(generator)
+        self.problem = XProblem(
+            generator.get_problem(), generator.get_pddl_repositories()
+        )
 
     @multimethod
     def __init__(self, grounder: Grounder):
         super().__init__(
             LiftedApplicableActionGenerator(grounder.get_action_grounder())
         )
+        self.problem = XProblem(
+            grounder.get_problem(), grounder.get_pddl_repositories()
+        )
+
+    @multimethod
+    def __init__(self, problem: XProblem):
+        self.__init__(Grounder(problem.base, problem.repositories))
+
+    @property
+    def grounder(self):
+        return self.base.get_action_grounder()
+
+    def generate_actions(self, state: XState) -> Iterator[XAction]:
+        for action in self.base.generate_applicable_actions(state.base):
+            yield XAction(action, self)
+
+    def __hash__(self):
+        return hash((self.base, self.problem))
+
+    def __eq__(self, other):
+        return super() == other and self.problem == other.problem
+
+
+class XSuccessorGenerator(MimirWrapper[StateRepository]):
+    action_generator: XActionGenerator
+    grounder: Grounder
+
+    def __init__(
+        self,
+        grounder: Grounder | XProblem,
+        state_repository: StateRepository | None = None,
+        action_generator: XActionGenerator | None = None,
+    ):
+        if isinstance(grounder, XProblem):
+            grounder = Grounder(grounder.base, grounder.repositories)
         self.grounder = grounder
+        self.action_generator = action_generator or XActionGenerator(grounder)
+        state_repository = state_repository or StateRepository(
+            LiftedAxiomEvaluator(grounder.get_axiom_grounder())
+        )
+        super().__init__(state_repository)
 
     @property
     def problem(self):
@@ -527,78 +648,58 @@ class XActionGenerator(BaseWrapper[LiftedApplicableActionGenerator]):
             self.grounder.get_problem(), self.grounder.get_pddl_repositories()
         )
 
-    def generate_actions(self, state: XState) -> Iterator[XAction]:
-        for action in self.base.generate_applicable_actions(state.base):
-            yield XAction(action, self.problem)
-
-
-class XSuccessorGenerator(BaseWrapper[Grounder]):
-    workspace: StateRepositoryWorkspace
-    state_repository: StateRepository
-
-    @multimethod
-    def __init__(self, base: Grounder, state_repository: StateRepository | None = None):
-        super().__init__(base)
-        self.state_repository = state_repository or StateRepository(
-            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
-        )
-
-    @multimethod
-    def __init__(
-        self,
-        problem: XProblem,
-        state_repository: StateRepository | None = None,
-    ):
-        super().__init__(Grounder(problem.base, problem.repositories))
-        self.state_repository = state_repository or StateRepository(
-            LiftedAxiomEvaluator(self.base.get_axiom_grounder())
-        )
-
-    @property
-    def grounder(self):
-        return self.base
-
-    @property
-    def problem(self):
-        return XProblem(self.base.get_problem(), self.base.get_pddl_repositories())
-
     @property
     def initial_state(self) -> XState:
         return XState(
-            self.state_repository.get_or_create_initial_state(),
+            self.base.get_or_create_initial_state(),
             self.problem,
         )
 
     def successor(self, state: XState, action: XAction) -> XState:
         return XState(
-            self.state_repository.get_or_create_successor_state(
+            self.base.get_or_create_successor_state(
                 state.base,
                 action.base,
-                self.workspace,
             )[0],
             state.problem,
         )
 
-    def successors(
-        self, state: XState, action_generator: XActionGenerator
-    ) -> Generator[tuple[XAction, XState]]:
-        for action in action_generator.generate_actions(state):
+    def successors(self, state: XState) -> Generator[tuple[XAction, XState]]:
+        for action in self.action_generator.generate_actions(state):
             yield action, self.successor(state, action)
 
+    __hash__ = None
 
-class XSearchResult(BaseWrapper[SearchResult]):
+
+class XSearchResult(MimirWrapper[SearchResult]):
     start: XState
-    problem: XProblem
+    action_generator: XActionGenerator
 
-    @property
+    def __init__(
+        self, result: SearchResult, start: XState, action_generator: XActionGenerator
+    ):
+        super().__init__(result)
+        self.action_generator = action_generator
+        self.start = start
+
+    def __len__(self):
+        return len(self.plan or tuple())
+
     def status(self):
         return self.base.status
+
+    def goal(self):
+        return XState(
+            self.base.goal_state, self.action_generator.problem, StateLabel.goal
+        )
 
     @cached_property
     def plan(self) -> tuple[XAction, ...] | None:
         if self.base.plan is not None:
             plan = self.base.plan
-            return tuple(XAction(action, self.problem) for action in plan.get_actions())
+            return tuple(
+                XAction(action, self.action_generator) for action in plan.get_actions()
+            )
         return None
 
     @property
@@ -612,12 +713,14 @@ class XSearchResult(BaseWrapper[SearchResult]):
             return NotImplemented
         return (
             self.base == other.base
-            and self.problem == other.problem
+            and self.action_generator == other.action_generator
             and self.start == other.start
         )
 
+    __hash__ = None
 
-class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
+
+class XStateSpace(MimirWrapper[StateSpace]):
     """
     The extended state space class.
 
@@ -635,25 +738,26 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
 
     _vertices: list[StateVertex]
 
+    @multimethod
     def __init__(self, space: StateSpace):
         super().__init__(space)
         self._vertices = space.get_vertices()
 
     @multimethod
-    def create(cls, domain_path, problem_path, **options: dict[str, str]):
-        return XStateSpace(
+    def __init__(  # noqa: F811
+        self, domain_path, problem_path, **options: dict[str, Any]
+    ):
+        self.__init__(
             StateSpace.create(domain_path, problem_path, StateSpaceOptions(**options)),
         )
 
-    @create.register
-    def create(cls, problem: XProblem, **options: dict[str, str]):
-        return XStateSpace.create(
+    @multimethod
+    def __init__(self, problem: XProblem, **options: dict[str, Any]):  # noqa: F811
+        self.__init__(
             problem.domain.filepath,
             problem.filepath,
             **options,
         )
-
-    create = classmethod(create)
 
     def __len__(self):
         return len(self._vertices)
@@ -666,7 +770,7 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
             f"#deadends={self.deadend_count}, "
             f"#goals={self.goal_count}, "
             f"solvable={self.solvable}, "
-            f"solution_cost={self.goal_distance(self.initial_state())}"
+            f"solution_cost={self.goal_distance(self.initial_state)}"
         )
 
     def str(self):
@@ -693,12 +797,28 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
         return XProblem(self.base)
 
     @property
+    def state_repository(self) -> StateRepository:
+        return self.base.get_state_repository()
+
+    @property
+    def action_generator(self) -> XActionGenerator:
+        return XActionGenerator(self.base.get_applicable_action_generator())
+
+    @property
+    def successor_generator(self) -> XSuccessorGenerator:
+        return XSuccessorGenerator(
+            self.problem,
+            self.state_repository,
+            XActionGenerator(self.problem),
+        )
+
+    @property
     def pddl_repositories(self) -> PDDLRepositories:
         return self.base.get_pddl_repositories()
 
     @property
     def solvable(self) -> bool:
-        return not self.is_deadend(self.initial_state())
+        return not self.is_deadend(self.initial_state)
 
     @property
     def deadend_count(self) -> int:
@@ -721,21 +841,27 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
     def is_deadend(self, state: XState) -> bool:
         return self.base.is_deadend_vertex(state.index)
 
+    def is_goal(self, state: XState) -> bool:
+        return self.base.is_goal_vertex(state.index)
+
     def states_iter(self) -> Iterator[XState]:
         return iter(XState(v.get_state(), self.problem) for v in self._vertices)
 
     def goal_states_iter(self) -> Iterator[XState]:
         return iter(self.get_state(idx) for idx in self.base.get_goal_vertex_indices())
 
+    def deadend_states_iter(self) -> Iterator[XState]:
+        return iter(
+            self.get_state(idx) for idx in self.base.get_deadend_vertex_indices()
+        )
+
     def goal_distance(self, state: XState) -> float:
         return self.base.get_goal_distance(state.index)
-
-    def is_goal(self, state: XState) -> bool:
-        return self.base.is_goal_vertex(state.index)
 
     def get_state(self, index: int) -> XState:
         return XState(index, self.base)
 
+    @cached_property
     def initial_state(self) -> XState:
         return self.get_state(self.base.get_initial_vertex_index())
 
@@ -767,9 +893,9 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
             )
         )
 
-    def breadth_first_search(self, state: XState | None = None) -> SearchResult:
+    def breadth_first_search(self, state: XState | None = None) -> XSearchResult:
         """
-        Perform a breath-first search from the given state to find the shortest path to a goal state.
+        Perform a breadth-first search from the given state to find the shortest path to a goal state.
 
         Parameters
         ----------
@@ -782,12 +908,16 @@ class XStateSpace(BaseWrapper[StateSpace], BaseHashMixin, BaseEqMixin):
             A tuple containing the length of the shortest path and the list of transitions.
         """
         if state is None:
-            state = self.initial_state()
-
-        return find_solution_brfs(
-            XActionGenerator(self.problem).base,
-            self.base.get_state_repository(),
-            state.base,
+            state = self.initial_state
+        action_gen = self.action_generator
+        return XSearchResult(
+            find_solution_brfs(
+                action_gen.base,
+                self.state_repository,
+                state.base,
+            ),
+            state,
+            action_gen,
         )
 
 

@@ -2,13 +2,12 @@ import abc
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
-from xmimir import XProblem, XState
+from xmimir import XState
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):
@@ -19,7 +18,7 @@ class ResetStrategy(metaclass=abc.ABCMeta):
 
 class InitialStateReset(ResetStrategy):
     def __call__(self, space: xmi.XStateSpace):
-        return space.initial_state()
+        return space.initial_state
 
 
 class UniformRandomReset(ResetStrategy):
@@ -121,7 +120,7 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
         batch_size_ = batch_size[0]
-        self._initial_state = space.initial_state()
+        self._initial_state = space.initial_state
         self.problem = space.problem
 
         super().__init__(spaces=[space] * batch_size_, batch_size=batch_size, **kwargs)

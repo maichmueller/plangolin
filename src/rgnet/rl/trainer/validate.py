@@ -51,7 +51,7 @@ class PolicyQuality(torch.nn.Module):
                 {
                     keys.state: as_non_tensor_stack(space),
                     keys.transitions: as_non_tensor_stack(
-                        [space.forward_transitions(s) for s in space]
+                        [list(space.forward_transitions(s)) for s in space]
                     ),
                 },
                 batch_size=torch.Size((len(space),)),

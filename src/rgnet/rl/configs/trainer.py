@@ -1,6 +1,11 @@
 import warnings
 from argparse import ArgumentParser
-from enum import StrEnum, auto
+from enum import auto
+
+try:
+    from enum import StrEnum  # Available in Python 3.11+
+except ImportError:
+    from strenum import StrEnum  # Backport for Python < 3.11
 from math import ceil
 from typing import Dict, List
 
@@ -183,7 +188,7 @@ def _resolve_collector(
 ):
     batches_per_epoch = getattr(parser_args, Parameter.batches_per_epoch)
     if batches_per_epoch is None:
-        total_states = sum([space.get_num_vertices() for space in data_resolver.spaces])
+        total_states = sum([len(space) for space in data_resolver.spaces])
         batches_per_epoch = ceil(total_states / float(env.batch_size[0]))
     rollout_length = getattr(parser_args, Parameter.rollout_length)
     return RolloutCollector(

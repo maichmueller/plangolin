@@ -1,31 +1,14 @@
 from __future__ import annotations
 
 import itertools
-from functools import singledispatchmethod
-from types import NoneType
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 import networkx as nx
 import numpy as np
 import torch_geometric as pyg
 from torch_geometric.data import Data
 
-from xmimir import (
-    Atom,
-    Domain,
-    GroundAtom,
-    GroundLiteral,
-    Literal,
-    PDDLRepositories,
-    Problem,
-    State,
-    XAtom,
-    XCategory,
-    XDomain,
-    XLiteral,
-    XProblem,
-    XState,
-)
+from xmimir import Atom, XAtom, XDomain, XLiteral
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .featuremap import FeatureMap, FeatureMode

@@ -1,6 +1,11 @@
 from argparse import ArgumentParser
 from distutils.util import strtobool
-from enum import StrEnum, auto
+from enum import auto
+
+try:
+    from enum import StrEnum  # Available in Python 3.11+
+except ImportError:
+    from strenum import StrEnum  # Backport for Python < 3.11
 from typing import Optional
 
 import torch

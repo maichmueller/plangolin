@@ -7,14 +7,7 @@ import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 
 from rgnet.encoding import GraphEncoderBase
-from xmimir import (
-    PDDLRepositories,
-    Problem,
-    StateSpace,
-    StateSpaceOptions,
-    XProblem,
-    XStateSpace,
-)
+from xmimir import XProblem, XStateSpace
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
@@ -61,7 +54,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
 
     def parse_problem(self, problem: XProblem) -> List[Data]:
         data_list = []
-        space = XStateSpace.create(
+        space = XStateSpace(
             problem,
             max_num_states=self.max_expanded or 1_000_000,
         )

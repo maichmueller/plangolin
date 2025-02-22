@@ -39,17 +39,17 @@ def test_reset(multi_instance_env, batch_size):
     assert td.sorted_keys == expected_keys
 
     if batch_size == 1:
-        expected_states = [small_space.initial_state()]
+        expected_states = [small_space.initial_state]
     elif batch_size == 2:
         expected_states = [
-            small_space.initial_state(),
-            medium_space.initial_state(),
+            small_space.initial_state,
+            medium_space.initial_state,
         ]
     else:
         expected_states = [
-            small_space.initial_state(),
-            medium_space.initial_state(),
-            small_space.initial_state(),  # <- we only provided two spaces
+            small_space.initial_state,
+            medium_space.initial_state,
+            small_space.initial_state,  # <- we only provided two spaces
         ]
     assert td[ExpandedStateSpaceEnv.default_keys.state] == expected_states
 
@@ -70,7 +70,7 @@ def test_partial_reset(multi_instance_env, batch_size):
 
     # Set the initial states such that (only) the first batch entry will be done
     batch_space_indices: List[int] = [0, 1, 0][:batch_size]
-    initial_states = [spaces[idx].initial_state() for idx in batch_space_indices]
+    initial_states = [spaces[idx].initial_state for idx in batch_space_indices]
     initial_states[0] = goal_state
     td = environment.reset(states=initial_states)
 
@@ -93,9 +93,9 @@ def test_partial_reset(multi_instance_env, batch_size):
 
     expected_next_initial: XState
     if batch_size == 1 or batch_size == 3:
-        expected_next_initial = medium_space.initial_state()
+        expected_next_initial = medium_space.initial_state
     elif batch_size == 2:
-        expected_next_initial = small_space.initial_state()
+        expected_next_initial = small_space.initial_state
     else:
         raise RuntimeError("Test was not design for batch_size > 3")
 
