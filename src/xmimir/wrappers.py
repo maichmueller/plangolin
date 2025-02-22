@@ -111,6 +111,18 @@ class XAtom(MimirWrapper[GroundAtom]):
     predicate: XPredicate
     objects: tuple[Object]
 
+    """
+    The extended atom class.
+
+    Important Notes:
+    A pymimir.GroundAtom object is a mere pointer onto a ground atom stored in an pymimir.PDDLRepitories object.
+    As such, it is not an independent object but a view onto memory that is kept alive by each pymimir.GroundAtom
+    object.
+
+    It is currently not guaranteed that the same atom is held at the same index in the same repository. Try to rely on
+    only a single pymimir.PDDLRepositories object if possible.
+    """
+
     def __init__(self, atom: GroundAtom):
         super().__init__(atom)
         self.predicate = XPredicate(atom.get_predicate())
@@ -210,6 +222,12 @@ class XDomain(MimirWrapper[Domain]):
 class XProblem(MimirWrapper[Problem]):
     repositories: PDDLRepositories
 
+    """
+    The extended problem class.
+
+    Each XProblem holds its corresponding PDDLRepositories object to access the ground atoms and literals with.
+    """
+
     @multimethod
     def __init__(self, problem: Problem, repositories: PDDLRepositories):
         super().__init__(problem)
@@ -290,11 +308,22 @@ class XProblem(MimirWrapper[Problem]):
 
 
 class XAction(MimirWrapper[GroundAction]):
-    problem: XProblem
+    action_generator: XActionGenerator
 
-    def __init__(self, action: GroundAction, problem: XProblem):
+    """
+    Important Notes:
+    A pymimir.GroundAction object is a mere pointer onto a ground action stored in an pymimir.ActionGrounder object.
+    As such, it is not an independent object but a view onto memory that is NOT kept alive by pymimir.GroundAction objects
+
+    A side effect is that actions that are semantically the same but are created with different grounders may not equal
+    each other, because they are not the same object in memory. Keep this in mind when comparing actions.
+
+    Guideline: Try to use only actions from the same ActionGenerator whenever possible, if comparisons are needed.
+    """
+
+    def __init__(self, action: GroundAction, action_generator: XActionGenerator):
         super().__init__(action)
-        self.problem = problem
+        self.action_generator = action_generator
 
     def __str__(self):
         return self.base.to_string(self.problem.repositories)
@@ -307,6 +336,10 @@ class XAction(MimirWrapper[GroundAction]):
     @cached_property
     def action_schema(self):
         return self.problem.domain.actions[self.base.get_action_index()]
+
+    @property
+    def problem(self):
+        return self.action_generator.problem
 
     @property
     def name(self) -> str:
@@ -361,6 +394,20 @@ class XAction(MimirWrapper[GroundAction]):
 
 class XState(MimirWrapper[State]):
     problem: XProblem
+
+    """
+    The extended state class.
+
+    Important Notes:
+    A pymimir.State object is a mere pointer onto a state stored in the state repository. As such, it is not an
+    independent object but a view onto memory that is implicitly kept alive by each pymimir.State object
+    (as guaranteed by pymimir binding logic).
+
+    A side effect is that states that are semantically the same but are created in different repositories may not equal
+    each other, because they are not the same object in memory. Keep this in mind when comparing states.
+
+    Guideline: Try to use only states from the same repository whenever possible, i.e. use only a single repository.
+    """
 
     @multimethod
     def __init__(self, state: State, problem: XProblem):
@@ -478,7 +525,7 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         super().__init__(edge)
         self.source = XState(edge.get_source(), space.base)
         self.target = XState(edge.get_target(), space.base)
-        self.action = XAction(edge.get_creating_action(), space.problem)
+        self.action = XAction(edge.get_creating_action(), space.action_generator)
 
     @classmethod
     def make_hollow(
@@ -538,8 +585,15 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         return isinstance(self.action, XAction)
 
 
-class XActionGenerator(MimirWrapper[LiftedApplicableActionGenerator]):
+class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
     problem: XProblem
+
+    @multimethod
+    def __init__(self, generator: IApplicableActionGenerator):
+        super().__init__(generator)
+        self.problem = XProblem(
+            generator.get_problem(), generator.get_pddl_repositories()
+        )
 
     @multimethod
     def __init__(self, grounder: Grounder):
@@ -554,9 +608,13 @@ class XActionGenerator(MimirWrapper[LiftedApplicableActionGenerator]):
     def __init__(self, problem: XProblem):
         self.__init__(Grounder(problem.base, problem.repositories))
 
+    @property
+    def grounder(self):
+        return self.base.get_action_grounder()
+
     def generate_actions(self, state: XState) -> Iterator[XAction]:
         for action in self.base.generate_applicable_actions(state.base):
-            yield XAction(action, self.problem)
+            yield XAction(action, self)
 
     def __hash__(self):
         return hash((self.base, self.problem))
@@ -615,17 +673,33 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
 
 class XSearchResult(MimirWrapper[SearchResult]):
     start: XState
-    problem: XProblem
+    action_generator: XActionGenerator
 
-    @property
+    def __init__(
+        self, result: SearchResult, start: XState, action_generator: XActionGenerator
+    ):
+        super().__init__(result)
+        self.action_generator = action_generator
+        self.start = start
+
+    def __len__(self):
+        return len(self.plan or tuple())
+
     def status(self):
         return self.base.status
+
+    def goal(self):
+        return XState(
+            self.base.goal_state, self.action_generator.problem, StateLabel.goal
+        )
 
     @cached_property
     def plan(self) -> tuple[XAction, ...] | None:
         if self.base.plan is not None:
             plan = self.base.plan
-            return tuple(XAction(action, self.problem) for action in plan.get_actions())
+            return tuple(
+                XAction(action, self.action_generator) for action in plan.get_actions()
+            )
         return None
 
     @property
@@ -639,7 +713,7 @@ class XSearchResult(MimirWrapper[SearchResult]):
             return NotImplemented
         return (
             self.base == other.base
-            and self.problem == other.problem
+            and self.action_generator == other.action_generator
             and self.start == other.start
         )
 
@@ -723,10 +797,18 @@ class XStateSpace(MimirWrapper[StateSpace]):
         return XProblem(self.base)
 
     @property
+    def state_repository(self) -> StateRepository:
+        return self.base.get_state_repository()
+
+    @property
+    def action_generator(self) -> XActionGenerator:
+        return XActionGenerator(self.base.get_applicable_action_generator())
+
+    @property
     def successor_generator(self) -> XSuccessorGenerator:
         return XSuccessorGenerator(
             self.problem,
-            self.base.get_state_repository(),
+            self.state_repository,
             XActionGenerator(self.problem),
         )
 
@@ -759,17 +841,22 @@ class XStateSpace(MimirWrapper[StateSpace]):
     def is_deadend(self, state: XState) -> bool:
         return self.base.is_deadend_vertex(state.index)
 
+    def is_goal(self, state: XState) -> bool:
+        return self.base.is_goal_vertex(state.index)
+
     def states_iter(self) -> Iterator[XState]:
         return iter(XState(v.get_state(), self.problem) for v in self._vertices)
 
     def goal_states_iter(self) -> Iterator[XState]:
         return iter(self.get_state(idx) for idx in self.base.get_goal_vertex_indices())
 
+    def deadend_states_iter(self) -> Iterator[XState]:
+        return iter(
+            self.get_state(idx) for idx in self.base.get_deadend_vertex_indices()
+        )
+
     def goal_distance(self, state: XState) -> float:
         return self.base.get_goal_distance(state.index)
-
-    def is_goal(self, state: XState) -> bool:
-        return self.base.is_goal_vertex(state.index)
 
     def get_state(self, index: int) -> XState:
         return XState(index, self.base)
@@ -822,13 +909,15 @@ class XStateSpace(MimirWrapper[StateSpace]):
         """
         if state is None:
             state = self.initial_state
-
+        action_gen = self.action_generator
         return XSearchResult(
             find_solution_brfs(
-                XActionGenerator(self.problem).base,
-                self.base.get_state_repository(),
+                action_gen.base,
+                self.state_repository,
                 state.base,
-            )
+            ),
+            state,
+            action_gen,
         )
 
 
