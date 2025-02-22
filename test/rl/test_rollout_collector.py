@@ -4,12 +4,12 @@ from test.fixtures import expanded_state_space_env, medium_blocks, small_blocks
 from typing import List
 
 import mockito
-import pymimir as mi
 import pytest
 import torch
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
 
+import xmimir as xmi
 from rgnet.rl.envs.expanded_state_space_env import (
     ExpandedStateSpaceEnv,
     InitialStateReset,
@@ -20,12 +20,13 @@ from rgnet.rl.envs.expanded_state_space_env import (
 from rgnet.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 from rgnet.rl.rollout_collector import RolloutCollector, build_from_spaces
+from xmimir import XStateSpace
 
 
 def test_build_from_spaces_multiple(small_blocks, medium_blocks, batch_size=5):
     s_space, _, _ = small_blocks
     m_space, _, _ = medium_blocks
-    total_states = s_space.num_states() + m_space.num_states()
+    total_states = len(s_space) + len(m_space)
     assert total_states == 130 or total_states % batch_size == 0
     collector = build_from_spaces(
         [s_space, m_space], batch_size=batch_size, rollout_length=1
@@ -42,11 +43,11 @@ def test_build_from_spaces_multiple(small_blocks, medium_blocks, batch_size=5):
         assert batch.names == [None, "time"]
         if batch_counter == 0:
             states = batch[PlanningEnvironment.default_keys.state]
-            instances: List[mi.StateSpace] = batch[
+            instances: List[XStateSpace] = batch[
                 PlanningEnvironment.default_keys.instance
             ]
             assert len(states) == len(instances) == batch_size
-            assert states[0] == instances[0].get_states()[0]
+            assert states[0] == instances[0].get_state(0)
 
     assert batch_counter == ceil(total_states / batch_size)
 
@@ -58,9 +59,7 @@ def test_build_from_spaces_multiple(small_blocks, medium_blocks, batch_size=5):
 def test_build_from_spaces_single(request, blocks, batch_size=5):
     space = request.getfixturevalue(blocks)[0]
     collector = build_from_spaces(space, batch_size=batch_size, rollout_length=1)
-    assert (
-        space.num_states() % batch_size == 0
-    ), "Sanity check that test setup is correct."
+    assert len(space) % batch_size == 0, "Sanity check that test setup is correct."
 
     assert isinstance(collector.env, ExpandedStateSpaceEnv)
     assert isinstance(collector.env.reset_strategy, IteratingReset)
@@ -71,19 +70,19 @@ def test_build_from_spaces_single(request, blocks, batch_size=5):
     for batch in collector:
         batch_counter += 1
         batches.append(batch)
-    if space.num_states() == batch_size:
+    if len(space) == batch_size:
         assert batch_counter == 1
-        # batch_size = s_space.num_states() + IteratingReset()
+        # batch_size = s_space.get_num_vertices() + IteratingReset()
         # As we have a rollout length of 1 each batch entry is a list of length one
         states_flattened = list(
             itertools.chain.from_iterable(
                 batches[-1][PlanningEnvironment.default_keys.state]
             )
         )
-        assert states_flattened == space.get_states()
+        assert states_flattened == list(space.states_iter())
     else:
-        assert batch_counter == ceil(space.num_states() / batch_size)
-        all_states = space.get_states()
+        assert batch_counter == ceil(len(space) / batch_size)
+        all_states = list(space.states_iter())
         all_encountered_states = []
         for batch in batches:
             states = batch[PlanningEnvironment.default_keys.state]
@@ -103,7 +102,7 @@ def test_with_policy(expanded_state_space_env):
     env = expanded_state_space_env
 
     def policy(transitions):
-        transitions: List[List[mi.Transition]] = transitions.tolist()
+        transitions: List[List[xmi.XTransition]] = transitions.tolist()
         actions = [transitions[i][0] for i in range(len(transitions))]
         return as_non_tensor_stack(actions)
 

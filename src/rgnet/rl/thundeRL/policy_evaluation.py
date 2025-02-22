@@ -1,16 +1,18 @@
+import operator
 from typing import List
 
 import networkx as nx
-import pymimir as mi
 import torch
 import torch_geometric.data
 from torch import Tensor
 from torch.nn.functional import l1_loss
 from torch_geometric.nn.conv import MessagePassing
 
+from xmimir import XStateSpace
+
 
 def build_mdp_graph_with_prob(
-    state_space: mi.StateSpace,
+    state_space: XStateSpace,
     transition_probabilities: List[torch.FloatTensor | torch.Tensor],
 ) -> nx.DiGraph:
     """
@@ -26,24 +28,26 @@ def build_mdp_graph_with_prob(
      - the action schema name (edge attribute "action")
     """
     mdp_graph = nx.DiGraph()
-    for state_idx, state in enumerate(state_space.get_states()):
+    states = list(state_space)
+    for i, state in enumerate(states):
         node_type = (
             "goal"
-            if state_space.is_goal_state(state)
-            else ("initial" if state_space.get_initial_state() == state else "default")
+            if state_space.is_goal(state)
+            else ("initial" if state_space.initial_state() == state else "default")
         )
         mdp_graph.add_node(
-            state_space.get_unique_id(state),
+            state,
             ntype=node_type,
-            dist=state_space.get_distance_to_goal_state(state),
+            dist=state_space.goal_distance(state),
         )
-        t_probs: List[float] = transition_probabilities[state_idx].tolist()
-        reward = 0.0 if state_space.is_goal_state(state) else -1.0
-        for t_idx, t in enumerate(state_space.get_forward_transitions(state)):
+    for i, state in enumerate(states):
+        t_probs: List[float] = transition_probabilities[i].tolist()
+        reward = 0.0 if state_space.is_goal(state) else -1.0
+        for t_idx, t in enumerate(state_space.forward_transitions(state)):
             mdp_graph.add_edge(
-                state_space.get_unique_id(t.source),
-                state_space.get_unique_id(t.target),
-                action=t.action.schema.name,
+                t.source,
+                t.target,
+                action=t.action.name,
                 reward=reward,
                 probs=t_probs[t_idx],
             )
@@ -52,7 +56,7 @@ def build_mdp_graph_with_prob(
 
 def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     """
-    Convert the networkx graph into a directed pytorch graph.
+    Convert the networkx graph into a directed pytorch_geometric graph.
     The transition probabilities are stored in edge_attr[:, 0].
     The reward for each transition is stored in edge_attr[:, 1].
     The node features are stored as usual in graph.x.
@@ -63,14 +67,13 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
         nx_state_space_graph, group_edge_attrs=["probs", "reward"]
     )
     pyg_graph.x = torch.zeros((pyg_graph.num_nodes,))  # start with values of zero
-    is_goal_state = torch.tensor(
-        [
-            True if attr["ntype"] == "goal" else False
-            for node, attr in nx_state_space_graph.nodes.data()
-        ],
+    is_goal_state = [False] * pyg_graph.num_nodes
+    for i, (node, attr) in enumerate(nx_state_space_graph.nodes.data()):
+        is_goal_state[i] = True if attr["ntype"] == "goal" else False
+    pyg_graph.goals = torch.tensor(
+        is_goal_state,
         dtype=torch.bool,
     )
-    pyg_graph.goals = is_goal_state
     return pyg_graph
 
 
@@ -88,6 +91,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
                  edge_attr[:, 1] = rewards
     - node_attr: Tensor of shape [num_nodes] containing the initial state values
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
+    - state_index_map: LongTensor of shape [num_nodes] with the original state indices before their order was shuffled.
     """
 
     def __init__(
@@ -101,7 +105,9 @@ class PolicyEvaluationMessagePassing(MessagePassing):
         self.num_iterations = num_iterations
         self.difference_threshold = difference_threshold
 
-    def forward(self, data: torch_geometric.data.Data) -> Tensor:
+    def forward(
+        self, data: torch_geometric.data.Data, goal_value: float = 0.0
+    ) -> Tensor:
         assert isinstance(data.x, torch.Tensor)
         assert data.x.shape == data.goals.shape
         assert data.edge_attr.ndim == 2
@@ -114,12 +120,14 @@ class PolicyEvaluationMessagePassing(MessagePassing):
             )
             if l1_loss(values, new_values) < self.difference_threshold:
                 break
-            # We have to ensure that goal states stay at 0.0
-            # In en environment transitions from goal states would terminate.
-            new_values.masked_fill_(goal_states, 0.0)
+            # We have to ensure that goal states stay at the given goal value (0.0 by default).
+            # environment transitions from goal states would terminate.
+            new_values.masked_fill_(goal_states, goal_value)
             values = new_values
+        data.x = values
         return values
+        # return values[data.state_index_map]
 
-    def message(self, x_j: Tensor, edge_attr) -> Tensor:
+    def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
         transition_prob, reward = edge_attr[:, 0], edge_attr[:, 1]
         return transition_prob * (reward + self.gamma * x_j)

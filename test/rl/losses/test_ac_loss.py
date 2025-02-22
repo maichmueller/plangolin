@@ -148,7 +148,7 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("embedding_mode", ["embedding_mock", "gnn"])
 def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, request):
-    space, domain, _ = small_blocks
+    space, domain, problem = small_blocks
     uses_gnn = embedding_mode == "gnn"
     embedding = (
         build_embedding_and_gnn(

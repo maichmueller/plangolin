@@ -1,19 +1,23 @@
 import abc
 from typing import Optional
 
-import pymimir as mi
+import xmimir as xmi
 
 
 class _TransitionMock(abc.ABCMeta):
     def __instancecheck__(self, instance):
-        return isinstance(instance, mi.Transition) or isinstance(instance, MTransition)
+        return isinstance(instance, xmi.XTransition) or isinstance(
+            instance, MTransition
+        )
 
 
 class MTransition(metaclass=_TransitionMock):
-    """There is sadly no constructor for mi.Transition, which is really just a data class.
+    """There is sadly no constructor for xmi.Transition, which is really just a data class.
     As there is no constructor we can't inherit from it, so we have to mock it."""
 
-    def __init__(self, source: mi.State, action: Optional[mi.Action], target: mi.State):
+    def __init__(
+        self, source: xmi.State, action: Optional[xmi.Action], target: xmi.State
+    ):
         super().__init__()
         self._source = source
         self._action = action
@@ -35,7 +39,7 @@ class MTransition(metaclass=_TransitionMock):
         return "%s(%r)" % (self.__class__, self.__dict__)
 
     def __eq__(self, __value):
-        return isinstance(__value, mi.Transition) and (
+        return isinstance(__value, xmi.XTransition) and (
             __value.action == self.action
             and __value.source == self.source
             and __value.target == self.target

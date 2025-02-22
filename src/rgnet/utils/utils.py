@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 import networkx as nx
-import pymimir as mi
 import torch
+
+import xmimir as xmi
 
 
 def get_colors(graph: nx.Graph):
@@ -42,41 +44,43 @@ def ftime(seconds: float) -> str:
 
 
 def import_all_from(
-    directory: Path | str, domain_name: str = "domain"
-) -> Tuple[mi.Domain, List[mi.Problem]]:
+    directory: Path | str, domain_filename: str = "domain"
+) -> Tuple[xmi.XDomain, List[xmi.XProblem]]:
     """
     Import all pddl-problems and their domain from a directory.
     :param directory: The directory in which both problems and domain-file are located.
-    :param domain_name: The exact file name (without suffix) of the domain-file
+    :param domain_filename: The exact file name (without suffix) of the domain-file
     :return: A tuple of domain and list of problems.
     """
     directory = Path(directory)
     assert directory.is_dir(), str(directory)
-    domain_file = (directory / domain_name).with_suffix(".pddl")
+    domain_file = (directory / domain_filename).with_suffix(".pddl")
     if not domain_file.exists():
         ValueError(f"Could not find domain file at {domain_file}")
-    domain = mi.DomainParser(str(domain_file.absolute())).parse()
-    return domain, import_problems(directory, domain, domain_name=domain_name)
+    return import_problems(directory, domain_file)
 
 
 def import_problems(
-    directory: Path | str, domain: mi.Domain, domain_name: Optional[str] = None
-) -> List[mi.Problem]:
-    directory = Path(directory)
+    directory: pathlib.Path | str, domain_filepath: Path
+) -> Tuple[xmi.XDomain, List[xmi.XProblem]]:
+    directory: pathlib.Path = Path(directory)
     assert directory.is_dir(), str(directory)
-    domain_name = domain.name if domain_name is None else domain_name
 
-    problems: List[mi.Problem] = []
-    for file in directory.glob("*.pddl"):
-        if file.stem == domain_name:
-            continue
+    problems: List[xmi.XProblem] = []
+    files = list(filter(lambda fp: fp != domain_filepath, directory.glob("*.pddl")))
+    if not files:
+        raise ValueError(f"No problems found in {directory}")
+    for file in files:
         try:
-            problem = mi.ProblemParser(str(file.absolute())).parse(domain)
+            domain, problem = xmi.parse(
+                str(domain_filepath.absolute()), str(file.absolute())
+            )
             assert problem is not None
             problems.append(problem)
         except (ValueError, AssertionError) as e:
             logging.warning(f"Skipped {file} while parsing problems: " + str(e))
-    return problems
+
+    return domain, problems
 
 
 class KeyAwareDefaultDict(dict):

@@ -2,12 +2,12 @@ import logging
 from abc import ABCMeta, abstractmethod
 from typing import Any, Callable, Dict, List
 
-import pymimir as mi
 import torch
 from tensordict import NestedKey, TensorDict
 from torchrl.modules import ValueOperator
 from torchrl.trainers import Trainer, TrainerHookBase
 
+import xmimir as xmi
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
@@ -43,7 +43,7 @@ class ValueFunctionConverged(EarlyStoppingTrainerHook):
         self,
         value_operator,
         reset_func,
-        optimal_values_lookup: Dict[mi.State, float],
+        optimal_values_lookup: Dict[xmi.State, float],
         atol=0.1,
         state_value_key=ActorCritic.default_keys.state_value,
     ):

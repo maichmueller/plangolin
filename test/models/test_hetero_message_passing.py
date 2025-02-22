@@ -14,8 +14,8 @@ from rgnet.models.hetero_message_passing import FanInMP, FanOutMP, SelectMP
 def get_enc_initial_and_goal(problem: str = "small"):
     space, domain, problem = problem_setup("blocks", problem)
     encoder = HeteroGraphEncoder(domain)
-    initial = space.get_initial_state()
-    goal = space.get_goal_states()[0]
+    initial = space.initial_state()
+    goal = next(space.goal_states_iter())
 
     pyg_graph_initial = encoder.to_pyg_data(encoder.encode(initial))
     pyg_graph_goal = encoder.to_pyg_data(encoder.encode(goal))

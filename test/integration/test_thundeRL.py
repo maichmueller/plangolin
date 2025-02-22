@@ -1,4 +1,5 @@
 import itertools
+import logging
 import shutil
 import sys
 from pathlib import Path
@@ -6,17 +7,16 @@ from test.fixtures import medium_blocks, small_blocks
 from typing import Any, List, Tuple
 
 import mockito
-import pymimir as mi
 import pytest
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
-
-# TODO experiments is not a source module
-from experiments.rl.thundeRL import run_lightning_fast
+import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils import get_device_cuda_if_possible
 
@@ -26,6 +26,13 @@ from ..supervised.test_data import hetero_data_equal
 @pytest.fixture(autouse=True, scope="class")
 def setup_multiprocessing():
     torch.multiprocessing.set_start_method("fork", force=True)
+
+
+def cli_main():
+    logging.getLogger().setLevel(logging.INFO)
+    torch.set_float32_matmul_precision("medium")
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    cli = ThundeRLCLI()
 
 
 class PolicyGradientLitModuleMock:
@@ -79,7 +86,7 @@ def launch_thundeRL(
         "training_step",
         training_step_mock,
     )
-    run_lightning_fast.cli_main()
+    cli_main()
     mockito.unstub(rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule)
 
 
@@ -155,8 +162,8 @@ def validate_successor_batch(
 
 
 def _validate_done_reward_num_transitions(
-    small_space: mi.StateSpace,
-    medium_space: mi.StateSpace,
+    small_space: xmi.XStateSpace,
+    medium_space: xmi.XStateSpace,
     mock: PolicyGradientLitModuleMock,
 ):
     assert len(mock.batched_list) == 5
@@ -177,7 +184,7 @@ def _validate_done_reward_num_transitions(
     # Verify done information
     def get_goal_transitions(space):
         return sum(
-            [len(space.get_forward_transitions(s)) for s in space.get_goal_states()]
+            [space.forward_transition_count(s) for s in space.goal_states_iter()]
         )
 
     goal_transitions = get_goal_transitions(small_space) + get_goal_transitions(
@@ -190,7 +197,9 @@ def _validate_done_reward_num_transitions(
     # assert that the rewards are 0 for all done_indices
     assert flattened_reward[done_indices].sum() == 0
     # assert that the rewards are 1 for all other indices
-    all_transitions = small_space.num_transitions() + medium_space.num_transitions()
+    all_transitions = (
+        small_space.total_transition_count + medium_space.total_transition_count
+    )
     assert torch.allclose(
         flattened_reward.sum().abs(),
         torch.tensor(
@@ -207,8 +216,8 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
     which simply records all incoming data.
     This test might take a bit longer, you can exclude it by adding `--ignore=test/integration` to your pytest script
     """
-    small_space: mi.StateSpace
-    medium_space: mi.StateSpace
+    small_space: xmi.XStateSpace
+    medium_space: xmi.XStateSpace
     small_space, domain, small_problem = small_blocks
     medium_space, _, medium_problem = medium_blocks
 
@@ -222,12 +231,12 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
             problem_path=problem,
             custom_dead_end_reward=-(1.0 / 1.0 - 0.9),
             root_dir=str(dataset_dir),
-            encoder_factory=HeteroGraphEncoder,
+            encoder_factory=EncoderFactory(HeteroGraphEncoder),
         )
         for problem in problem_dir.iterdir()
     ]
 
-    assert small_space.num_states() + medium_space.num_states() == 130
+    assert len(small_space) + len(medium_space) == 130
     mock = PolicyGradientLitModuleMock()
     # args are specified in config.yaml
     config_file = Path(__file__).parent / "config.yaml"

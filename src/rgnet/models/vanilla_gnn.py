@@ -62,18 +62,18 @@ class VanillaGNN(PyGModule):
 if __name__ == "__main__":
     from pathlib import Path
 
-    import pymimir as mi
+    import xmimir as xmi
 
     model = VanillaGNN(hidden_size=10, num_layer=4)
     data_folder = Path("data") / "pddl_domains" / "example" / "blocks"
-    domain = mi.DomainParser(str(data_folder / "domain.pddl")).parse()
-    problem = mi.ProblemParser(
+    domain = xmi.DomainParser(str(data_folder / "domain.pddl")).parse()
+    problem = xmi.ProblemParser(
         str(data_folder / "train" / "probBLOCKS-4-0.pddl")
     ).parse(domain)
 
-    space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
+    space = xmi.StateSpace.new(problem, xmi.GroundedSuccessorGenerator(problem))
 
-    state = space.get_initial_state()
+    state = get_initial_state(space)
     encoder = ColorGraphEncoder(domain)
     data = encoder.to_pyg_data(encoder.encode(state))
     out = model = data

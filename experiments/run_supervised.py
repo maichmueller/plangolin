@@ -26,7 +26,7 @@ from rgnet.utils import import_problems, time_delta_now
 
 
 def load_serialized(
-    domain: mi.Domain,
+    domain: xmi.Domain,
     encoder: GraphEncoderBase,
     dataset_type: DatasetType,
     data_layout: DataLayout,
@@ -43,8 +43,8 @@ def load_serialized(
     if len(problems) != len(prob_to_serialized):
         logging.warning(f"Mismatch between problems and serialized files.")
 
-    prob_to_serialized: Dict[mi.Problem, Path] = {
-        mi.ProblemParser(str(problem_path)).parse(domain): serialized
+    prob_to_serialized: Dict[xmi.Problem, Path] = {
+        xmi.ProblemParser(str(problem_path)).parse(domain): serialized
         for problem_path, serialized in prob_to_serialized.items()
     }
     dataset_path = data_layout.dataset_path_for(dataset_type)
@@ -70,7 +70,7 @@ def _setup_datasets(
     num_samples: int,
     oversampling_factor: float | None,
 ):
-    domain = mi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
+    domain = xmi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
 
     encoder = _create_encoder(domain, data_layout.encoder_type)
     loaders = []
@@ -111,7 +111,7 @@ def _setup_datasets(
     return train_loader, eval_loader, test_loader, encoder
 
 
-def _create_encoder(domain: mi.Domain, encoder_type: str) -> GraphEncoderBase:
+def _create_encoder(domain: xmi.Domain, encoder_type: str) -> GraphEncoderBase:
     if encoder_type == "color":
         encoder = ColorGraphEncoder(domain)
     elif encoder_type == "direct":

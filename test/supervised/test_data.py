@@ -7,6 +7,7 @@ from torch_geometric.data import Batch, Dataset, HeteroData
 from torch_geometric.loader import DataLoader
 
 from rgnet.encoding import ColorGraphEncoder, HeteroGraphEncoder
+from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.supervised.data import MultiInstanceSupervisedSet
 
 
@@ -53,7 +54,7 @@ class EmptyDataset(Dataset):
 
 def create_dataset(size: str, root_dir: str | pathlib.Path, domain="blocks"):
     root_dir = root_dir if isinstance(root_dir, str) else str(root_dir.absolute())
-    space, domain, problem = problem_setup(domain, size)
+    _, domain, problem = problem_setup(domain, size)
     encoder = HeteroGraphEncoder(domain)
     return MultiInstanceSupervisedSet(
         [problem], encoder, force_reload=True, root=root_dir
@@ -62,11 +63,11 @@ def create_dataset(size: str, root_dir: str | pathlib.Path, domain="blocks"):
 
 def test_init(tmp_path):
     space, domain, problem = problem_setup("blocks", "small")
-    encoder = ColorGraphEncoder(domain)
+    encoder = HeteroGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet(
         [problem], encoder, root=str(tmp_path.absolute())
     )
-    assert dataset.len() == space.num_states()
+    assert dataset.len() == len(space)
     assert all(
         data.y.dtype == torch.int64 and data.y.size() == torch.Size((1,))
         for data in dataset
@@ -82,15 +83,17 @@ def test_collate(tmp_path):
     medium_space, _, medium_problem = problem_setup("blocks", "medium")
     encoder = HeteroGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet(
-        [small_problem, medium_problem], encoder, root=str(tmp_path.absolute())
+        [small_problem, medium_problem],
+        encoder,
+        root=str(tmp_path.absolute()),
     )
     manual_data: List[HeteroData] = []
-    for space in [small_space, medium_space]:
-        for state in space.get_states():
+    for problem, space in zip(
+        [small_problem, medium_problem], [small_space, medium_space]
+    ):
+        for state in space:
             data = encoder.to_pyg_data(encoder.encode(state))
-            data.y = torch.tensor(
-                space.get_distance_to_goal_state(state), dtype=torch.int64
-            )
+            data.y = torch.tensor(space.goal_distance(state), dtype=torch.int64)
             manual_data.append(data)
     data: HeteroData
     expected: HeteroData

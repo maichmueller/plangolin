@@ -9,10 +9,9 @@ import warnings
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
-import pymimir as mi
-from pymimir import Problem
-
+import xmimir as xmi
 from rgnet.utils.plan import Plan, parse_fd_plan
+from xmimir import Problem, XDomain, XProblem, XStateSpace
 
 
 @dataclasses.dataclass
@@ -74,16 +73,16 @@ def _all_or_filter(instances: List[str] | Literal["all"]):
 class InputData:
     pddl_domains_dir: Path
     dataset_dir: Path
-    domain: mi.Domain
-    problems: List[mi.Problem]
+    domain: XDomain
+    problems: List[XProblem]
     _instances: List[Path]
-    validation_problems: Optional[List[mi.Problem]]
+    validation_problems: Optional[List[XProblem]]
     _validation_instances: Optional[List[Path]]
-    test_problems: Optional[List[mi.Problem]]
+    test_problems: Optional[List[XProblem]]
     _test_instances: Optional[List[Path]]
     # Not guaranteed to have a plan for every problem.
     # Shared across training, validation and test problems.
-    plan_by_problem: Dict[Problem, Plan]
+    plan_by_problem: Dict[XProblem, Plan]
 
     def __init__(
         self,
@@ -158,18 +157,18 @@ class InputData:
         self.plan_by_problem = self._look_for_plans()
 
         # We load state space lazily as it might be quite expensive
-        self._spaces: Optional[List[mi.StateSpace]] = None
-        self._validation_spaces: Optional[List[mi.StateSpace]] = None
-        self._space_by_problem: dict[mi.Problem, mi.StateSpace] = dict()
+        self._spaces: Optional[List[XStateSpace]] = None
+        self._validation_spaces: Optional[List[XStateSpace]] = None
+        self._space_by_problem: dict[XProblem, XStateSpace] = dict()
 
     def get_or_load_space(
-        self, problem: mi.Problem, max_expanded: int | None = None
-    ) -> mi.StateSpace:
+        self, problem: XProblem, max_expanded: int | None = None
+    ) -> XStateSpace:
         if problem not in self._space_by_problem:
-            self._space_by_problem[problem] = mi.StateSpace.new(
-                problem,
-                mi.GroundedSuccessorGenerator(problem),
-                max_expanded or 1_000_000,
+            self._space_by_problem[problem] = XStateSpace.create(
+                self.domain.filepath,
+                problem.filepath,
+                max_num_states=max_expanded or 1_000_000,
             )
         return self._space_by_problem.get(problem, None)
 
@@ -211,7 +210,7 @@ class InputData:
 
     def _resolve_instances(
         self, directory: Path, filter_list: List[str] | None
-    ) -> Tuple[List[Path], List[mi.Problem]]:
+    ) -> Tuple[List[Path], List[XProblem]]:
         """
         Collects pddl problems from a directory, potentially filters them, and parses them as pymimir Problems.
         :param directory: The directory in which the .pddl problems are in. Note the domain.pddl should not be in this directory.
@@ -254,7 +253,7 @@ class InputData:
         problems = []
         for instance in all_instances:
             try:
-                problems.append(mi.ProblemParser(str(instance)).parse(self.domain))
+                problems.append(xmi.parse(str(self.domain_path), str(instance))[1])
             except RuntimeError as e:
                 domain_warn_message = (
                     "Problem file is likely a domain."
@@ -270,12 +269,12 @@ class InputData:
         return all_instances, problems
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
-        self.domain: mi.Domain = mi.DomainParser(str(self.domain_path)).parse()
 
         train_dir = self.pddl_domains_dir / self.train_subdir
         found_instances, problems = self._resolve_instances(
             train_dir, _all_or_filter(instances)
         )
+        self.domain: xmi.XDomain = problems[0].domain
         self._instances = found_instances
         self.problems = problems
 
@@ -311,7 +310,7 @@ class InputData:
             self.test_problems = problems
             self._test_instances = instances
 
-    def _look_for_plans(self) -> Dict[mi.Problem, Plan]:
+    def _look_for_plans(self) -> Dict[XProblem, Plan]:
         plan_dir = self.pddl_domains_dir / self.plan_subdir
         plan_files = list(plan_dir.glob("*.plan"))
         if len(plan_files) == 0 and self.plan_subdir_was_specified:
@@ -331,10 +330,10 @@ class InputData:
                 if problems
             )
         )
-        problem_by_stem: Dict[str, mi.Problem] = {
-            p.name.split("(")[1].removesuffix(".pddl)"): p for p in all_problems
+        problem_by_stem: Dict[str, XProblem] = {
+            Path(p.filepath).stem: p for p in all_problems
         }
-        problem_to_plan: Dict[mi.Problem, Plan] = {}
+        problem_to_plan: Dict[XProblem, Plan] = {}
         for plan_file in plan_files:
             pddl_file = plan_file.stem.removesuffix(".pddl")
             problem = problem_by_stem.get(pddl_file)

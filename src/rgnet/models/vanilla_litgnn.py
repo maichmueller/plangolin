@@ -79,15 +79,15 @@ class LitVanillaGNN(LightningModule):
 
 
 if __name__ == "__main__":
-    import pymimir as mi
+    import xmimir as xmi
 
     model = VanillaGNN(hidden_size=10, num_layer=4)
-    domain = mi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
-    problem = mi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
+    domain = xmi.DomainParser("test/pddl_instances/blocks/domain.pddl").parse()
+    problem = xmi.ProblemParser("test/pddl_instances/blocks/minimal.pddl").parse(domain)
 
-    space = mi.StateSpace.new(problem, mi.GroundedSuccessorGenerator(problem))
+    space = xmi.StateSpace.new(problem, xmi.GroundedSuccessorGenerator(problem))
 
-    state = space.get_initial_state()
+    state = get_initial_state(space)
     encoder = ColorGraphEncoder(domain)
     data = encoder.to_pyg_data(encoder.encode(state))
     output = model(data.x, data.edge_index, data.batch)
