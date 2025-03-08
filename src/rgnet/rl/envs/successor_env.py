@@ -1,8 +1,10 @@
+import warnings
 from typing import Iterable, List, Tuple
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from xmimir import XLiteral, XState
+from xmimir.wrappers import StateLabel
 
 
 class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
@@ -33,4 +35,6 @@ class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
     def is_goal(
         self, active_instance: xmi.XSuccessorGenerator, state: xmi.XState
     ) -> bool:
-        return not any(state.unsatisfied_literals(active_instance.problem.goal()))
+        if state.problem != active_instance.problem:
+            raise warnings.warn("State does not belong to the active instance.")
+        return state.is_goal(active_instance.problem)

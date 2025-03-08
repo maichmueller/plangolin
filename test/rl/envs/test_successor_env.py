@@ -41,7 +41,7 @@ def test_successor_env_initial_state(medium_blocks):
 
 def test_successor_env_is_goal(medium_blocks):
     space, _, problem = medium_blocks
-    successor_gen = xmi.XSuccessorGenerator(problem, space.base.get_state_repository())
+    successor_gen = space.successor_generator
     goal_state: xmi.XState = next(space.goal_states_iter())
     env = SuccessorEnvironment([successor_gen], batch_size=torch.Size((1,)))
     td = env.reset(states=[goal_state])
