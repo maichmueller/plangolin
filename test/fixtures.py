@@ -16,6 +16,7 @@ from rgnet.rl.agents import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from rgnet.rl.reward import UniformActionReward
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
@@ -207,7 +208,7 @@ def fresh_drive(tmp_path, force_reload=True):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_end_reward=-100.0,
+        reward_function=UniformActionReward(deadend_reward=-100.0),
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),

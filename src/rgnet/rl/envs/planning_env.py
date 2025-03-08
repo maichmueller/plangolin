@@ -20,6 +20,8 @@ from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
+from rgnet.rl.reward import RewardFunction, UniformActionReward
+from rgnet.utils.utils import broadcastable
 
 InstanceType = TypeVar("InstanceType")
 
@@ -92,11 +94,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def __init__(
         self,
         all_instances: List[InstanceType],
+        reward_function: RewardFunction,
         batch_size: torch.Size,
         seed: Optional[int] = None,
         device: str = "cpu",
         keys: AcceptedKeys = default_keys,
-        reward_function: torch.nn.Module = RewardFunction,
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
         super().__init__(device=device, batch_size=batch_size)
@@ -125,14 +127,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             ),
             requires_grad=False,
         )
-        if custom_dead_end_reward is not None and custom_dead_end_reward > 0:
-            warnings.warn("Custom dead-end reward should be negative. Auto correcting.")
-            custom_dead_end_reward = -custom_dead_end_reward
-        self._dead_end_reward: float = (
-            custom_dead_end_reward or self.default_dead_end_reward
-        )
-        self._custom_dead_end_reward_was_set: bool = custom_dead_end_reward is not None
-        self._goal_reward: float = self.default_goal_reward
+        self.reward_function = reward_function
         self._make_spec()
 
     @property

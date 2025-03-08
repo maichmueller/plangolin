@@ -1,1 +1,1 @@
-from .flat import PrimitiveActionReward
+from .reward import RewardFunction, UniformActionReward

@@ -7,6 +7,7 @@ import torch
 import xmimir as xmi
 from rgnet.rl.envs import SuccessorEnvironment
 from rgnet.rl.non_tensor_data_utils import tolist
+from rgnet.rl.reward import UniformActionReward
 
 
 def create_successor_env(
@@ -23,7 +24,7 @@ def test_successor_env_init(medium_blocks):
         [xmi.XSuccessorGenerator(problem)],
         batch_size=torch.Size((1,)),
         device=torch.device("cpu"),
-        custom_dead_end_reward=-1000,
+        reward_function=UniformActionReward(deadend_reward=-1000),
         seed=42,
     )
 

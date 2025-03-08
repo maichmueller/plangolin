@@ -12,6 +12,7 @@ from rgnet.encoding import GraphEncoderBase
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
+from rgnet.rl.reward import RewardFunction, UniformActionReward
 from xmimir import XStateSpace, XTransition
 
 
@@ -20,7 +21,7 @@ class FlashDrive(InMemoryDataset):
         self,
         domain_path: Path,
         problem_path: Path,
-        custom_dead_end_reward: float,
+        reward_function: RewardFunction = UniformActionReward(gamma=0.9),
         encoder_factory: Optional[EncoderFactory] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
@@ -34,7 +35,7 @@ class FlashDrive(InMemoryDataset):
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
         self.encoder_factory = encoder_factory
-        self.custom_dead_end_reward = custom_dead_end_reward
+        self.reward_function = reward_function
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process()
@@ -74,7 +75,7 @@ class FlashDrive(InMemoryDataset):
             space,
             batch_size=torch.Size((1,)),
             reset_strategy=IteratingReset(),
-            custom_dead_end_reward=self.custom_dead_end_reward,
+            reward_function=self.reward_function,
         )
         data_list = self._build(
             env,
