@@ -238,14 +238,20 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             case (xmi.StateLabel.deadend, _):
                 return True
             case (xmi.StateLabel.unknown, None):
+                # this is a dead-end state that was not marked as such in the original problem yet.
+                # Hence, we update the label here. This update can be erroneous if the state is not actually a
+                # dead-end, but the environment determines this state to be a dead-end for its own environment specifics.
                 transition.source.update_label(xmi.StateLabel.deadend)
                 return True
             case (_, a) if a is not None:
                 return False
+            case (_, a) if a is None:
+                # the case of a state with a label that is not unknown but does not have an action is a manual override
+                # by the environment of the state's actual function in the problem.
+                # We accept this here as a dead-end.
+                return True
             case _:
-                raise ValueError(
-                    f"case {(label, transition.action)} unexpectedly not covered. This indicates a bug."
-                )
+                raise ValueError(f"Unexpected transition case: {transition}.")
 
     def get_reward_and_done(
         self,

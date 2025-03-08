@@ -14,7 +14,9 @@ def create_successor_env(
     problem: xmi.XProblem, batch_size: int = 1
 ) -> SuccessorEnvironment:
     return SuccessorEnvironment(
-        [xmi.XSuccessorGenerator(problem)], batch_size=torch.Size((batch_size,))
+        [xmi.XSuccessorGenerator(problem)],
+        batch_size=torch.Size((batch_size,)),
+        reward_function=UniformActionReward(deadend_reward=-1000),
     )
 
 
@@ -43,7 +45,11 @@ def test_successor_env_is_goal(medium_blocks):
     space, _, problem = medium_blocks
     successor_gen = space.successor_generator
     goal_state: xmi.XState = next(space.goal_states_iter())
-    env = SuccessorEnvironment([successor_gen], batch_size=torch.Size((1,)))
+    env = SuccessorEnvironment(
+        [successor_gen],
+        batch_size=torch.Size((1,)),
+        reward_function=UniformActionReward(gamma=0.9),
+    )
     td = env.reset(states=[goal_state])
     assert env.is_goal(td[env.keys.instance][0], goal_state)
 
@@ -66,7 +72,11 @@ def test_dead_end(medium_blocks):
     successor_gen = xmi.XSuccessorGenerator(problem)
     successor_gen.action_generator = mocked_action_generator
 
-    env = SuccessorEnvironment([successor_gen], batch_size=torch.Size((1,)))
+    env = SuccessorEnvironment(
+        [successor_gen],
+        batch_size=torch.Size((1,)),
+        reward_function=UniformActionReward(deadend_reward=-1000),
+    )
     td = env.reset()
     transitions: List[List[xmi.XTransition]] = tolist(td[env.keys.transitions])
     initial_state = successor_gen.initial_state
