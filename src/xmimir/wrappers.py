@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, auto
 from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
@@ -390,6 +390,14 @@ class XAction(MimirWrapper[GroundAction]):
     def objects(self):
         objs = self.problem.objects
         return [objs[i] for i in self.base.get_object_indices()]
+
+
+class StateLabel(Enum):
+    unknown = auto()
+    goal = auto()
+    deadend = auto()
+    initial = auto()
+    default = auto()
 
 
 class XState(MimirWrapper[State]):
@@ -930,6 +938,7 @@ __all__ = [
     "XProblem",
     "XDomain",
     "XState",
+    "StateLabel",
     "XLiteral",
     "XAtom",
     "XPredicate",
