@@ -1,9 +1,9 @@
 import abc
-from typing import Any, Sequence
+from typing import Sequence
 
 import torch
 
-from xmimir import StateLabel, XTransition
+from xmimir import StateLabel, XAction, XTransition
 
 
 class RewardFunction:
@@ -55,8 +55,10 @@ class UniformActionReward(RewardFunction):
             raise ValueError("Either deadend_reward or gamma has to be set.")
         if deadend_reward is not None:
             self.deadend_reward = deadend_reward
+            self.gamma = 1.0 / deadend_reward + 1.0
         else:
             self.deadend_reward = 1.0 / (gamma - 1.0)
+            self.gamma = gamma
 
     def __call__(
         self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
@@ -69,8 +71,17 @@ class UniformActionReward(RewardFunction):
                 case StateLabel.goal:
                     rewards.append(self.goal_reward)
                 case _:
-                    rewards.append(self.regular_reward)
+                    if isinstance(transition.action, Sequence):
+                        rewards.append(
+                            self._reward_macro_action(transition.action, label)
+                        )
+                    else:
+                        rewards.append(self.regular_reward)
+
         return torch.tensor(rewards, dtype=torch.float, device=self.device)
+
+    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+        return self.regular_reward
 
 
 class FactoredMacroReward(UniformActionReward):
@@ -86,21 +97,36 @@ class FactoredMacroReward(UniformActionReward):
         super().__init__(**kwargs)
         self.factor = factor
 
-    def __call__(
-        self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
+    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+        return self.regular_reward - len(macro) / self.factor
+
+
+class DiscountedMacroReward(UniformActionReward):
+    """
+    A reward function that returns a reward of
+
+    .. math::
+        \sum_{i=1}^{n} \gamma^{i-1} = (\gamma^n - 1) / (1 - \gamma)
+
+    for a macro action taken.
+    """
+
+    def __init__(
+        self,
+        *args,
+        gamma_macros: float | None = None,
+        **kwargs,
     ):
-        rewards = []
-        for transition, label in zip(transitions, labels):
-            match label:
-                case StateLabel.deadend:
-                    rewards.append(self.deadend_reward)
-                case StateLabel.goal:
-                    rewards.append(self.goal_reward)
-                case _:
-                    if isinstance(transition.action, Sequence):
-                        rewards.append(
-                            self.regular_reward - len(transition.action) / self.factor
-                        )
-                    else:
-                        rewards.append(self.regular_reward)
-        return torch.tensor(rewards, dtype=torch.float, device=self.device)
+        super().__init__(*args, **kwargs)
+        self.gamma_macros = gamma_macros if gamma_macros is not None else self.gamma
+
+    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+        match length := len(macro):
+            case 0:
+                raise ValueError("Cannot compute cost for empty action list")
+            case 1:
+                return -1.0
+            case 2:
+                return -(1.0 + self.gamma_macros)
+            case _:
+                return (1.0 - self.gamma**length) / (1.0 - self.gamma)
