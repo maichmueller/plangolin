@@ -100,10 +100,7 @@ class FlashDrive(InMemoryDataset):
         for state in space_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
             transitions: list[XTransition] = list(space.forward_transitions(state))
-            reward, done = env.get_reward_and_done(
-                transitions=transitions,
-                instances=[space] * len(transitions),
-            )
+            reward, done = env.get_reward_and_done(transitions)
             data.reward = reward
             # Save the index of the state
             # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
