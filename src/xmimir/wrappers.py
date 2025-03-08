@@ -402,6 +402,7 @@ class StateLabel(Enum):
 
 class XState(MimirWrapper[State]):
     problem: XProblem
+    label: StateLabel
 
     """
     The extended state class.
@@ -418,13 +419,27 @@ class XState(MimirWrapper[State]):
     """
 
     @multimethod
-    def __init__(self, state: State, problem: XProblem):
+    def __init__(
+        self,
+        state: State,
+        problem: XProblem,
+        label: StateLabel = StateLabel.unknown,
+    ):
         super().__init__(state)
         self.problem = problem
+        self.label = label
 
     @multimethod
     def __init__(self, index: int, space: StateSpace):
-        self.__init__(space.get_vertex(index).get_state(), XProblem(space))
+        if space.is_goal_vertex(index):
+            cat = StateLabel.goal
+        elif space.is_deadend_vertex(index):
+            cat = StateLabel.deadend
+        elif space.get_initial_vertex_index() == index:
+            cat = StateLabel.initial
+        else:
+            cat = StateLabel.default
+        self.__init__(space.get_vertex(index).get_state(), XProblem(space), cat)
 
     @multimethod
     def __init__(self, index: int, space: XStateSpace):
@@ -480,12 +495,27 @@ class XState(MimirWrapper[State]):
         """
         return self.base.get_index()
 
-    def is_goal(self) -> bool:
-        for _ in self.unsatisfied_literals(
-            self.problem.goal(XCategory.fluent, XCategory.derived)
-        ):
-            return False
-        return True
+    def update_label(self, label: StateLabel):
+        if self.label == StateLabel.unknown:
+            self.label = label
+
+    @multimethod
+    def is_goal(self, problem: XProblem | None = None) -> bool:
+        if problem is not None:
+            if problem == self.problem:
+                # a state's label is only valid for the problem it was created with
+                if self.label == StateLabel.goal:
+                    return True
+                elif self.label == StateLabel.unknown:
+                    for _ in self.unsatisfied_literals(
+                        self.problem.goal(XCategory.fluent, XCategory.derived)
+                    ):
+                        return False
+                    self.update_label(StateLabel.goal)
+                    return True
+            else:
+                return self.any_unsatisfied_literals(problem.goal())
+        return False
 
     def atoms(self, with_statics: bool = False) -> Iterable[XAtom]:
         return chain(
@@ -661,6 +691,7 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
         return XState(
             self.base.get_or_create_initial_state(),
             self.problem,
+            StateLabel.initial,
         )
 
     def successor(self, state: XState, action: XAction) -> XState:
