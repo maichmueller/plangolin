@@ -530,6 +530,18 @@ class XState(MimirWrapper[State]):
     def unsatisfied_literals(self, literals: Iterable[XLiteral]) -> Iterable[XLiteral]:
         return (lit for lit in literals if not self.base.literal_holds(lit.base))
 
+    def any_satisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
+        return any(self.base.literal_holds(lit.base) for lit in literals)
+
+    def all_satisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
+        return all(self.base.literal_holds(lit.base) for lit in literals)
+
+    def any_unsatisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
+        return any(not self.base.literal_holds(lit.base) for lit in literals)
+
+    def all_unsatisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
+        return all(not self.base.literal_holds(lit.base) for lit in literals)
+
     def __str__(self):
         return (
             f"State(Index={self.index}, Fluents=["
@@ -783,15 +795,13 @@ class XStateSpace(MimirWrapper[StateSpace]):
         self._vertices = space.get_vertices()
 
     @multimethod
-    def __init__(  # noqa: F811
-        self, domain_path, problem_path, **options: dict[str, Any]
-    ):
+    def __init__(self, domain_path, problem_path, **options):  # noqa: F811
         self.__init__(
             StateSpace.create(domain_path, problem_path, StateSpaceOptions(**options)),
         )
 
     @multimethod
-    def __init__(self, problem: XProblem, **options: dict[str, Any]):  # noqa: F811
+    def __init__(self, problem: XProblem, **options):  # noqa: F811
         self.__init__(
             problem.domain.filepath,
             problem.filepath,
