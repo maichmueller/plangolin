@@ -14,7 +14,7 @@ from torch_geometric.loader import ImbalancedSampler
 
 from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.reward import UniformActionReward
+from rgnet.rl.reward import RewardFunction, UniformActionReward
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from xmimir import Domain
@@ -24,7 +24,7 @@ class ThundeRLDataModule(LightningDataModule):
     def __init__(
         self,
         input_data: InputData,
-        gamma: float,
+        reward_function: RewardFunction,
         batch_size: int,
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
@@ -37,7 +37,7 @@ class ThundeRLDataModule(LightningDataModule):
         super().__init__()
 
         self.data = input_data
-        self.gamma = gamma
+        self.reward_function = reward_function
         self.batch_size = batch_size
         self.batch_size_validation = batch_size_validation or batch_size
         self.parallel = parallel
@@ -58,7 +58,7 @@ class ThundeRLDataModule(LightningDataModule):
         datasets: Dict[Path, FlashDrive] = dict()
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,
-            reward_function=UniformActionReward(gamma=self.gamma),
+            reward_function=RewardFunction,
             root_dir=str(self.data.dataset_dir),
             logging_kwargs=None,
             encoder_factory=self.encoder_factory,
