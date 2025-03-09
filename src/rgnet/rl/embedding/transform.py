@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import torch
 from tensordict import NestedKey, TensorDictBase
-from torchrl.data import CompositeSpec, UnboundedContinuousTensorSpec
+from torchrl.data import Composite, UnboundedContinuousTensorSpec
 from torchrl.envs import Transform, TransformedEnv
 
 from rgnet.rl.embedding.embedding_module import EmbeddingModule
@@ -59,16 +59,14 @@ class EmbeddingTransform(Transform):
         """
         return self._call(tensordict_reset)
 
-    def transform_observation_spec(
-        self, observation_spec: CompositeSpec
-    ) -> CompositeSpec:
+    def transform_observation_spec(self, observation_spec: Composite) -> Composite:
         """Add current_embeddings to the observation spec.
         This is important for _StepMDP validate."""
         new_observation_spec = observation_spec.clone()
         embedding_shape: List[int] = list(observation_spec.shape)
         embedding_shape.append(self.embedding_module.hidden_size)
         device = self.embedding_module.device
-        new_observation_spec[self.current_embedding_key] = CompositeSpec(
+        new_observation_spec[self.current_embedding_key] = Composite(
             dense_embedding=UnboundedContinuousTensorSpec(
                 shape=torch.Size(embedding_shape), device=device
             ),

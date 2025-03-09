@@ -20,12 +20,7 @@ import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
 from torch.nn import Parameter
-from torchrl.data import (
-    BoundedTensorSpec,
-    CompositeSpec,
-    DiscreteTensorSpec,
-    NonTensorSpec,
-)
+from torchrl.data import Bounded, Categorical, Composite, NonTensor
 from torchrl.envs import EnvBase
 
 import xmimir as xmi
@@ -154,41 +149,41 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         """Configure environment specification."""
 
         batch_size = self.batch_size
-        self.observation_spec = CompositeSpec(
+        self.observation_spec = Composite(
             **{
                 # a pymimir.State object
-                self._keys.state: NonTensorSpec(shape=batch_size),
+                self._keys.state: NonTensor(shape=batch_size),
                 # a List[pymimir.Transition] might be empty
-                self._keys.transitions: NonTensorSpec(shape=batch_size),
+                self._keys.transitions: NonTensor(shape=batch_size),
                 # a pymimir.LiteralList object
-                self._keys.goals: NonTensorSpec(shape=batch_size),
+                self._keys.goals: NonTensor(shape=batch_size),
                 # an instance object, e.g. a StateSpace or a SuccessorGenerator
                 # The state, transitions and goals are all related to this instance.
-                self._keys.instance: NonTensorSpec(shape=batch_size),
+                self._keys.instance: NonTensor(shape=batch_size),
             },
             shape=batch_size,
         )
         # Defines what else the step function requires beside the "action" entry
-        self.state_spec = CompositeSpec(shape=batch_size)  # a.k.a. void
+        self.state_spec = Composite(shape=batch_size)  # a.k.a. void
         # For states without outgoing transitions the action will be None
-        self.action_spec = NonTensorSpec(shape=batch_size)  # Optional[pymimir.State]
-        self.reward_spec: BoundedTensorSpec = BoundedTensorSpec(
+        self.action_spec = NonTensor(shape=batch_size)  # Optional[pymimir.State]
+        self.reward_spec: Bounded = Bounded(
             low=-1.0,
             high=1.0,
             dtype=torch.float32,
             shape=torch.Size((*batch_size, 1)),
         )
-        self.done_spec = CompositeSpec(
+        self.done_spec = Composite(
             **{
                 # a boolean tensor indicating whether the episode is done
-                self.keys.done: DiscreteTensorSpec(
+                self.keys.done: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
-                self.keys.terminated: DiscreteTensorSpec(
+                self.keys.terminated: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
                 # We don't set truncated, but can be set in rollout
-                self.keys.truncated: DiscreteTensorSpec(
+                self.keys.truncated: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
             },
