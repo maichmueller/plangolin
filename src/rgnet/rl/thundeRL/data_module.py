@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime
 import logging
+import time
 import warnings
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
@@ -58,11 +60,12 @@ class ThundeRLDataModule(LightningDataModule):
         datasets: Dict[Path, FlashDrive] = dict()
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,
-            reward_function=RewardFunction,
+            reward_function=self.reward_function,
             root_dir=str(self.data.dataset_dir),
             logging_kwargs=None,
             encoder_factory=self.encoder_factory,
         )
+        start_time = time.time()
         if self.parallel and len(problem_paths) > 1:
 
             def enqueue_parallel(problem_path: Path, thread_id: int):
@@ -96,6 +99,15 @@ class ThundeRLDataModule(LightningDataModule):
                 )
                 update(drive)
                 datasets[problem_path] = drive
+
+        elapsed = time.time() - start_time
+        hours, remainder = divmod(
+            datetime.timedelta(seconds=elapsed).total_seconds(), 3600
+        )
+        minutes, seconds = divmod(remainder, 60)
+        logging.info(
+            f"Loading problems took {hours:.0f} hours, {minutes:.0f} minutes, {seconds:.0f} seconds."
+        )
         return datasets
 
     def prepare_data(self) -> None:
