@@ -1,4 +1,5 @@
 import logging
+import pickle
 from pathlib import Path
 from typing import Any, List, Mapping, Optional, Tuple, Union
 
@@ -47,7 +48,45 @@ class FlashDrive(InMemoryDataset):
             log=log,
             force_reload=force_reload,
         )
+        self.metadata_path = self.processed_paths[0] + ".meta"
+        # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
+        # data will align with our expectations.
+        with open(self.metadata_path, "rb") as file:
+            if not self._metadata_matches(pickle.load(file)):
+                self.force_reload = True
         self.load(self.processed_paths[0])
+
+    def _metadata_matches(self, meta: Tuple) -> bool:
+        (
+            encoder_factory,
+            reward_function,
+            domain_content,
+            problem_content,
+            max_expanded,
+        ) = meta
+        if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
+            return False
+        if self.reward_function != reward_function:
+            return False
+        if self.domain_file.read_text() != domain_content:
+            return False
+        if self.problem_path.read_text() != problem_content:
+            return False
+        if self.max_expanded != max_expanded:
+            return False
+        return True
+
+    @property
+    def metadata(self):
+        domain_content = self.domain_file.read_text()
+        problem_content = self.problem_path.read_text()
+        return (
+            self.encoder_factory,
+            self.reward_function,
+            domain_content,
+            problem_content,
+            self.max_expanded,
+        )
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
@@ -81,6 +120,8 @@ class FlashDrive(InMemoryDataset):
             env,
             self.encoder_factory(space.problem.domain),
         )
+        with open(self.metadata_path, "wb") as file:
+            pickle.dump(self.metadata, file)
         self.save(data_list, self.processed_paths[0])
 
     def _build(
