@@ -118,7 +118,7 @@ class FactoredMacroReward(UniformActionReward):
 
 
 class DiscountedMacroReward(UniformActionReward):
-    """
+    r"""
     A reward function that returns a reward of
 
     .. math::
