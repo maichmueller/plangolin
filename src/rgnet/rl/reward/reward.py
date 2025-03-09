@@ -33,6 +33,9 @@ class RewardFunction:
         """
         ...
 
+    @abc.abstractmethod
+    def __eq__(self, other): ...
+
 
 class UniformActionReward(RewardFunction):
     """
@@ -59,6 +62,16 @@ class UniformActionReward(RewardFunction):
         else:
             self.deadend_reward = 1.0 / (gamma - 1.0)
             self.gamma = gamma
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            self.regular_reward == other.regular_reward
+            and self.goal_reward == other.goal_reward
+            and self.deadend_reward == other.deadend_reward
+            and self.gamma == other.gamma
+        )
 
     def __call__(
         self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
@@ -97,6 +110,9 @@ class FactoredMacroReward(UniformActionReward):
         super().__init__(**kwargs)
         self.factor = factor
 
+    def __eq__(self, other):
+        return super().__eq__(other) and self.factor == other.factor
+
     def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
         return self.regular_reward - len(macro) / self.factor
 
@@ -119,6 +135,9 @@ class DiscountedMacroReward(UniformActionReward):
     ):
         super().__init__(*args, **kwargs)
         self.gamma_macros = gamma_macros if gamma_macros is not None else self.gamma
+
+    def __eq__(self, other):
+        return super().__eq__(other) and self.gamma_macros == other.gamma_macros
 
     def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
         match length := len(macro):
