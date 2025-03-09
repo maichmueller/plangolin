@@ -422,11 +422,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 partial_reset = partial_reset.squeeze(
                     -1
                 )  # unpack torch.tensor([[True]])
-            to_be_reset_indices: List = partial_reset.nonzero().squeeze(-1).tolist()
+            indices_to_reset: List = partial_reset.nonzero().squeeze(-1).tolist()
         else:
-            to_be_reset_indices = list(range(batch_size))
+            indices_to_reset = list(range(batch_size))
 
-        for index in to_be_reset_indices:
+        for index in indices_to_reset:
             self._active_instances[index] = self._instance_replacement_strategy(index)
 
         initial_states, initial_goals = zip(

@@ -6,7 +6,7 @@ from torch_geometric.data import Batch
 
 def collate_fn(data_list, **kwargs):
     flattened_targets = list(
-        itertools.chain.from_iterable([d.targets for d in data_list])
+        itertools.chain.from_iterable(d.targets for d in data_list)
     )
 
     num_successors = torch.tensor(

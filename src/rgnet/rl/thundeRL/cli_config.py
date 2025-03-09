@@ -290,7 +290,7 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.link_arguments(
             "data_layout.input_data.domain",
-            f"encoder.init_args.domain",
+            "encoder.init_args.domain",
             apply_on="instantiate",
         )
         parser.link_arguments(

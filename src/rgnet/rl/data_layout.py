@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
 import datetime
 import itertools
 import logging
 import os
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -14,7 +14,7 @@ from rgnet.utils.plan import Plan, parse_fd_plan
 from xmimir import XDomain, XProblem, XStateSpace
 
 
-@dataclasses.dataclass
+@dataclass
 class OutputData:
     out_dir: Path
     experiment_name: str
