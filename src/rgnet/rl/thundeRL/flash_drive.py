@@ -113,11 +113,7 @@ class FlashDrive(InMemoryDataset):
             # Same index concerns for transition.target.index
             data.targets = list(t.target.index for t in transitions)
             # pymimir returns -1 for states where to goal is not reachable
-            distance_to_goal = (
-                abs(self.custom_dead_end_reward)
-                if space.is_deadend(state)
-                else space.goal_distance(state)
-            )
+            distance_to_goal = space.goal_distance(state)
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[state.index] = data
         return batched_data
