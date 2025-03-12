@@ -7,6 +7,24 @@ from xmimir import StateLabel, XAction, XTransition
 from .base_reward import RewardFunction
 
 
+def _discounted_macro_reward(macro, gamma, primitive_reward):
+    r"""
+    Computes the discounted reward for a macro action.
+
+    ..math::
+        \sum_{i=1}^{n} r \cdot \gamma^{i-1} = r \cdot \frac{1 - \gamma^n}{1 - \gamma}
+    """
+    match length := len(macro):
+        case 0:
+            raise ValueError("Cannot compute cost for empty macro")
+        case 1:
+            return primitive_reward
+        case 2:
+            return primitive_reward + gamma * primitive_reward
+        case _:
+            return primitive_reward * (1.0 - gamma**length) / (1.0 - gamma)
+
+
 class DefaultUniformReward(RewardFunction):
     """
     A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
@@ -65,7 +83,7 @@ class DefaultUniformReward(RewardFunction):
         return torch.tensor(rewards, dtype=torch.float, device=self.device)
 
     def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
-        return self.regular_reward * len(macro)
+        return _discounted_macro_reward(macro, self.gamma, self.regular_reward)
 
 
 class MacroAgnosticReward(DefaultUniformReward):
@@ -95,12 +113,11 @@ class FactoredMacroReward(DefaultUniformReward):
 
 class DiscountedMacroReward(DefaultUniformReward):
     r"""
-    A reward function that returns a reward of
+    A reward function that returns a discounted reward for a macro action taken.
 
-    .. math::
-        \sum_{i=1}^{n} \gamma^{i-1} = (\gamma^n - 1) / (1 - \gamma)
-
-    for a macro action taken.
+    The difference to the DefaultUniformReward is that the discount factor for macros is not forced to be the same
+    as the primitive gamma. This allows to further discount the cost of macros to incentivize choosing longer macros
+    over shorter macros or simply chains of primitives.
     """
 
     def __init__(
@@ -116,12 +133,4 @@ class DiscountedMacroReward(DefaultUniformReward):
         return super().__eq__(other) and self.gamma_macros == other.gamma_macros
 
     def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
-        match length := len(macro):
-            case 0:
-                raise ValueError("Cannot compute cost for empty action list")
-            case 1:
-                return -1.0
-            case 2:
-                return -(1.0 + self.gamma_macros)
-            case _:
-                return (1.0 - self.gamma**length) / (1.0 - self.gamma)
+        return _discounted_macro_reward(macro, self.gamma_macros, self.regular_reward)

@@ -6,6 +6,7 @@ try:
     from enum import StrEnum  # Available in Python 3.11+
 except ImportError:
     from strenum import StrEnum  # Backport for Python < 3.11
+
 from typing import Optional
 
 import torch
@@ -17,8 +18,7 @@ from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.losses.all_actions_estimator import EnvironmentBasedRewardProvider
-from rgnet.rl.losses.optimal_value_function import OptimalValueFunction
-from rgnet.rl.optimality_utils import discounted_value
+from rgnet.rl.optimality_utils import OptimalValueFunction, discounted_value
 
 ARGS_BOOL_TYPE = lambda x: bool(strtobool(str(x)))
 
