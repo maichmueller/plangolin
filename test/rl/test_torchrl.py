@@ -11,7 +11,7 @@ import pytest
 import torch
 from tensordict import NonTensorData, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule
-from torchrl.data import BinaryCategorical, Composite, NonTensor
+from torchrl.data import Binary, Composite, NonTensor
 from torchrl.envs import EnvBase, GymEnv, step_mdp
 from torchrl.envs.utils import ExplorationType, _update_during_reset
 from torchrl.modules import (
@@ -231,7 +231,7 @@ def test_environment_partial_reset():
                 observation=NonTensor(shape=batch_size), shape=batch_size
             )
             self.action_spec = NonTensor(shape=batch_size)
-            self.reward_spec: BinaryCategorical = BinaryCategorical(
+            self.reward_spec: Binary = Binary(
                 n=1, dtype=torch.int8, shape=torch.Size([test_batch_size, 1])
             )
 

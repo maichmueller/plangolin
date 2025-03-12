@@ -8,6 +8,9 @@ data:
 encoder:
   class_path: HeteroGraphEncoder
 
+reward:
+  class_path: DefaultUniformReward
+
 optimizer_setup:
   optimizer:
     class_path: torch.optim.Adam
