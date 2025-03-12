@@ -16,7 +16,7 @@ import rgnet
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl.reward import UniformActionReward
+from rgnet.rl.reward import DefaultUniformReward
 from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
@@ -227,7 +227,7 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
         FlashDrive(
             domain_path=domain_path,
             problem_path=problem,
-            reward_function=UniformActionReward(gamma=0.9),
+            reward_function=DefaultUniformReward(gamma=0.9),
             root_dir=str(dataset_dir),
             encoder_factory=EncoderFactory(HeteroGraphEncoder),
         )

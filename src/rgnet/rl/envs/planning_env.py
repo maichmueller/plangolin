@@ -25,7 +25,7 @@ from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
-from rgnet.rl.reward import RewardFunction, UniformActionReward
+from rgnet.rl.reward import DefaultUniformReward, RewardFunction
 from rgnet.utils.utils import broadcastable
 
 InstanceType = TypeVar("InstanceType")

@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from enum import auto
 
-from rgnet.rl.reward import UniformActionReward
+from rgnet.rl.reward import DefaultUniformReward
 
 try:
     from enum import StrEnum  # Available in Python 3.11+
@@ -34,7 +34,7 @@ def from_parser_args(
         batch_size=torch.Size((batch_size,)),
         seed=seed,
         device=device,
-        reward_function=UniformActionReward(deadend_reward=dead_end_reward),
+        reward_function=DefaultUniformReward(deadend_reward=dead_end_reward),
     )
     env.make_replacement_strategy(WeightedRandomReset)
 

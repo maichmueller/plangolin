@@ -1,45 +1,18 @@
-import abc
 from typing import Sequence
 
 import torch
 
 from xmimir import StateLabel, XAction, XTransition
 
-
-class RewardFunction:
-    """
-    Base class for reward functions.
-
-    Reward functions are used to calculate the reward of a state transition.
-    A transition is defined by the current state, the action taken and the next state.
-    They can optionally take in an info dictionary (e.g.dead-end info or goal info).
-    A reward function has to be able to calculate the reward with only this information.
-    """
-
-    def __init__(self, *, device: str | torch.device = "cpu"):
-        super().__init__()
-        self.device = device
-
-    @abc.abstractmethod
-    def __call__(
-        self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
-    ):
-        """
-        Abstract method for calculating the reward of a transition.
-
-        :param transitions: A sequence of transitions.
-        :param labels: A sequence of labels for the source state of each transition.
-            Requires the same length as transitions.
-        """
-        ...
-
-    @abc.abstractmethod
-    def __eq__(self, other): ...
+from .base_reward import RewardFunction
 
 
-class UniformActionReward(RewardFunction):
+class DefaultUniformReward(RewardFunction):
     """
     A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
+
+    The reward for macros is abstracted to primitive reward as well. This can be overriden in child classes by
+    overriding the _reward_macro_action method.
     """
 
     def __init__(
@@ -85,19 +58,22 @@ class UniformActionReward(RewardFunction):
                     rewards.append(self.goal_reward)
                 case _:
                     if isinstance(transition.action, Sequence):
-                        rewards.append(
-                            self._reward_macro_action(transition.action, label)
-                        )
+                        rewards.append(self._reward_macro(transition.action, label))
                     else:
                         rewards.append(self.regular_reward)
 
         return torch.tensor(rewards, dtype=torch.float, device=self.device)
 
-    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
+        return self.regular_reward * len(macro)
+
+
+class MacroAgnosticReward(DefaultUniformReward):
+    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
         return self.regular_reward
 
 
-class FactoredMacroReward(UniformActionReward):
+class FactoredMacroReward(DefaultUniformReward):
     """
     A reward function that returns a reward of -(1 + len(actions) / factor) for a (macro) action taken.
     """
@@ -113,11 +89,11 @@ class FactoredMacroReward(UniformActionReward):
     def __eq__(self, other):
         return super().__eq__(other) and self.factor == other.factor
 
-    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
         return self.regular_reward - len(macro) / self.factor
 
 
-class DiscountedMacroReward(UniformActionReward):
+class DiscountedMacroReward(DefaultUniformReward):
     r"""
     A reward function that returns a reward of
 
@@ -139,7 +115,7 @@ class DiscountedMacroReward(UniformActionReward):
     def __eq__(self, other):
         return super().__eq__(other) and self.gamma_macros == other.gamma_macros
 
-    def _reward_macro_action(self, macro: Sequence[XAction], label: StateLabel):
+    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
         match length := len(macro):
             case 0:
                 raise ValueError("Cannot compute cost for empty action list")

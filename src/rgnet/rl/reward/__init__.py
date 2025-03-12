@@ -1,1 +1,2 @@
-from .reward import RewardFunction, UniformActionReward
+from .base_reward import RewardFunction
+from .uniform_reward import DefaultUniformReward

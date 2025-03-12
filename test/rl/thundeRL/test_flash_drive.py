@@ -7,7 +7,7 @@ from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl.reward import UniformActionReward
+from rgnet.rl.reward import DefaultUniformReward
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
@@ -43,7 +43,7 @@ def test_save_and_load(fresh_drive, medium_blocks):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        reward_function=UniformActionReward(deadend_reward=-100.0),
+        reward_function=DefaultUniformReward(deadend_reward=-100.0),
         root_dir=fresh_drive.root,
         force_reload=False,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),

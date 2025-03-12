@@ -14,7 +14,7 @@ from rgnet.encoding import GraphEncoderBase
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
-from rgnet.rl.reward import RewardFunction, UniformActionReward
+from rgnet.rl.reward import DefaultUniformReward, RewardFunction
 from xmimir import XStateSpace, XTransition
 
 
@@ -23,7 +23,7 @@ class FlashDrive(InMemoryDataset):
         self,
         domain_path: Path,
         problem_path: Path,
-        reward_function: RewardFunction = UniformActionReward(gamma=0.9),
+        reward_function: RewardFunction = DefaultUniformReward(gamma=0.9),
         encoder_factory: Optional[EncoderFactory] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
