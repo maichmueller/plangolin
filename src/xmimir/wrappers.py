@@ -5,7 +5,6 @@ from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
 from typing import (
-    Any,
     Generator,
     Generic,
     Iterable,
@@ -177,7 +176,6 @@ class XLiteral(MimirWrapper[GroundLiteral]):
 
 
 class XDomain(MimirWrapper[Domain]):
-
     def __init__(self, domain: Domain):
         super().__init__(domain)
 
@@ -607,6 +605,22 @@ class XTransition(MimirWrapper[GroundActionEdge]):
 
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
+
+    def to_string(self, detailed: bool = False):
+        if not detailed:
+            return str(self)
+        if isinstance(self.action, XAction):
+            action_string = str(self.action)
+        elif isinstance(self.action, Sequence):
+            action_string = list(map(str, self.action))
+        else:
+            action_string = "None"
+        return (
+            f"Transition(\n"
+            f"from: {self.source.fluent_atoms + self.source.derived_atoms}\n"
+            f"action: {action_string}\n"
+            f"to: {self.target.fluent_atoms + self.target.derived_atoms})"
+        )
 
     def explain(self) -> str:
         fluents_before = set(self.source.fluent_atoms)
