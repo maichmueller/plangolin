@@ -132,7 +132,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             ),
             requires_grad=False,
         )
-        self.reward_function = reward_function
+        self.reward_function = reward_function.to(self.device)
         self._make_spec()
 
     @property

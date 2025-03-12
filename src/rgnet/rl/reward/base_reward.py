@@ -35,3 +35,7 @@ class RewardFunction:
 
     @abc.abstractmethod
     def __eq__(self, other): ...
+
+    def to(self, device: str | torch.device):
+        self.device = device
+        return self
