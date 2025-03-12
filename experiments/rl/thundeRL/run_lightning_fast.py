@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import logging
+import sys
 
 import torch
 import torch.nn
@@ -17,5 +18,6 @@ def cli_main():
 
 if __name__ == "__main__":
     # https://discuss.pytorch.org/t/training-fails-due-to-memory-exhaustion-when-running-in-a-python-multiprocessing-process/202773/2
-    torch.multiprocessing.set_start_method("fork", force=True)
+    if sys.platform == "linux":
+        torch.multiprocessing.set_start_method("fork", force=True)
     cli_main()
