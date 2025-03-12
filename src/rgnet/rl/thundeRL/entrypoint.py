@@ -6,7 +6,7 @@ import sys
 import torch
 import torch.nn
 
-from rgnet.rl.thundeRL.cli_config import ThundeRLCLI
+from .cli_config import ThundeRLCLI
 
 
 def cli_main():
