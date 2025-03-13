@@ -1,20 +1,21 @@
 from test.fixtures import medium_blocks, small_blocks
 from typing import List, Tuple
 
-import pymimir as mi
 import pytest
 import torch
-from rl.envs.test_state_space_env import get_expected_root_keys
 from tensordict import TensorDict
 
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from xmimir import XState, XStateSpace, XTransition
+
+from .test_state_space_env import get_expected_root_keys
 
 
 @pytest.fixture
 def multi_instance_env(
     batch_size, small_blocks, medium_blocks, seed=42
-) -> Tuple[mi.StateSpace, mi.StateSpace, MultiInstanceStateSpaceEnv]:
+) -> Tuple[XStateSpace, XStateSpace, MultiInstanceStateSpaceEnv]:
     space_small, _, _ = small_blocks
     space_medium, _, _ = medium_blocks
 
@@ -38,17 +39,17 @@ def test_reset(multi_instance_env, batch_size):
     assert td.sorted_keys == expected_keys
 
     if batch_size == 1:
-        expected_states = [small_space.get_initial_state()]
+        expected_states = [small_space.initial_state]
     elif batch_size == 2:
         expected_states = [
-            small_space.get_initial_state(),
-            medium_space.get_initial_state(),
+            small_space.initial_state,
+            medium_space.initial_state,
         ]
     else:
         expected_states = [
-            small_space.get_initial_state(),
-            medium_space.get_initial_state(),
-            small_space.get_initial_state(),  # <- we only provided two spaces
+            small_space.initial_state,
+            medium_space.initial_state,
+            small_space.initial_state,  # <- we only provided two spaces
         ]
     assert td[ExpandedStateSpaceEnv.default_keys.state] == expected_states
 
@@ -63,14 +64,13 @@ def test_partial_reset(multi_instance_env, batch_size):
     small_space, medium_space, environment = multi_instance_env
     spaces = [small_space, medium_space]
 
-    goal_state = small_space.get_goal_states()[0]
-    transition_from_goal = small_space.get_forward_transitions(goal_state)[0]
-
+    goal_state = next(small_space.goal_states_iter())
+    transition_from_goal = next(small_space.forward_transitions(goal_state))
     keys = environment.keys
 
     # Set the initial states such that (only) the first batch entry will be done
     batch_space_indices: List[int] = [0, 1, 0][:batch_size]
-    initial_states = [spaces[idx].get_initial_state() for idx in batch_space_indices]
+    initial_states = [spaces[idx].initial_state for idx in batch_space_indices]
     initial_states[0] = goal_state
     td = environment.reset(states=initial_states)
 
@@ -79,7 +79,7 @@ def test_partial_reset(multi_instance_env, batch_size):
 
     # Execute a random action but make sure that the first entry is done
     td = environment.rand_action(td)
-    actions: List[mi.Transition] = td[keys.action]
+    actions: List[XTransition] = td[keys.action]
     actions[0] = transition_from_goal
     td[keys.action] = as_non_tensor_stack(actions)
 
@@ -91,11 +91,11 @@ def test_partial_reset(multi_instance_env, batch_size):
     expected_next_states = [a.target for a in tensordict["action"]]
     assert tensordict[("next", "state")] == expected_next_states
 
-    expected_next_initial: mi.State
+    expected_next_initial: XState
     if batch_size == 1 or batch_size == 3:
-        expected_next_initial = medium_space.get_initial_state()
+        expected_next_initial = medium_space.initial_state
     elif batch_size == 2:
-        expected_next_initial = small_space.get_initial_state()
+        expected_next_initial = small_space.initial_state
     else:
         raise RuntimeError("Test was not design for batch_size > 3")
 
@@ -121,7 +121,7 @@ def test_partial_reset(multi_instance_env, batch_size):
     # 2: medium-space
 
     # This of course can only happen for a batch_size > 1
-    expected_active_instance: List[mi.StateSpace]
+    expected_active_instance: List[XStateSpace]
     if batch_size == 1:
         # Small instance was replaced with next which is medium
         assert next_tensordict[keys.instance] == [medium_space]
@@ -135,15 +135,15 @@ def test_partial_reset(multi_instance_env, batch_size):
     if batch_size == 2:
         expected_active_instance = [small_space, medium_space]
         expected_transitions = [
-            small_space.get_forward_transitions(expected_next_states[0]),
-            medium_space.get_forward_transitions(expected_next_states[1]),
+            list(small_space.forward_transitions(expected_next_states[0])),
+            list(medium_space.forward_transitions(expected_next_states[1])),
         ]
     else:
         expected_active_instance = [medium_space, medium_space, small_space]
         expected_transitions = [
-            medium_space.get_forward_transitions(expected_next_states[0]),
-            medium_space.get_forward_transitions(expected_next_states[1]),
-            small_space.get_forward_transitions(expected_next_states[2]),
+            list(medium_space.forward_transitions(expected_next_states[0])),
+            list(medium_space.forward_transitions(expected_next_states[1])),
+            list(small_space.forward_transitions(expected_next_states[2])),
         ]
 
     # Assert that the chosen actions are sampled from the allowed transitions

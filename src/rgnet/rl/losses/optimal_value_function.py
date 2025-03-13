@@ -1,25 +1,25 @@
 from typing import Dict, List
 
-import pymimir as mi
 import torch
 from tensordict import NestedKey
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, non_tensor_to_list
+import xmimir as xmi
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 
 
 class OptimalValueFunction(torch.nn.Module):
     """Don't predict the value target just use the discounted distance to goal"""
 
-    def __init__(self, optimal_values: Dict[mi.State, float], device: torch.device):
+    def __init__(self, optimal_values: Dict[xmi.State, float], device: torch.device):
         super().__init__()
         self.optimal_values = optimal_values
         self.device = device
 
     def __call__(
-        self, batched_states: List[mi.State] | NonTensorWrapper
+        self, batched_states: List[xmi.State] | NonTensorWrapper
     ) -> torch.Tensor:
-        batched_states = non_tensor_to_list(batched_states)
+        batched_states = tolist(batched_states)
         return torch.stack(
             [
                 torch.tensor(

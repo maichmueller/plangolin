@@ -1,5 +1,10 @@
-from . import torchrl_patches
-from .agents import ActorCritic, EGreedyActorCriticHook, EGreedyModule, EpsilonAnnealing
-from .embedding import EmbeddingModule, EmbeddingTransform, NonTensorTransformedEnv
-from .losses import ActorCriticLoss
-from .rollout_collector import RolloutCollector
+from . import (
+    agents,
+    configs,
+    embedding,
+    envs,
+    losses,
+    thundeRL,
+    torchrl_patches,
+    trainer,
+)

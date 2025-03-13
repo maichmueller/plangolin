@@ -1,20 +1,24 @@
 import dataclasses
-import enum
 from argparse import ArgumentParser
 from typing import Callable, List
 
-import pymimir as mi
 import torch.nn
 from tensordict import NestedKey, TensorDict
 from tensordict.nn import TensorDictModuleBase
 from torch.distributions import Categorical
 from torchrl.envs.utils import ExplorationType, exploration_type
 
+import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+
+try:
+    from enum import StrEnum  # Available in Python 3.11+
+except ImportError:
+    from strenum import StrEnum  # Backport for Python < 3.11
 
 
 class EpsilonAnnealing:
-    class Parameter(enum.StrEnum):
+    class Parameter(StrEnum):
         EPSILON_INIT = "epsilon_init"
         EPSILON_END = "epsilon_end"
         ANNEALING_STEPS = "annealing_steps"
@@ -128,7 +132,7 @@ class EGreedyModule(TensorDictModuleBase):
         batch_size = len(transitions)
         random_steps = torch.rand(size=(batch_size,)) < self.epsilon_manager.epsilon
 
-        new_actions: List[mi.Transition] = tensordict[self.actions_key]
+        new_actions: List[xmi.XTransition] = tensordict[self.actions_key]
         for idx, should_replace in enumerate(random_steps):
             if should_replace:
                 sampled_action_idx = torch.randint(0, len(transitions[idx]), (1,))

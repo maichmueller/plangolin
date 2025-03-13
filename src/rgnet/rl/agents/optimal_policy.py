@@ -1,38 +1,33 @@
-import itertools
+from __future__ import annotations
+
 from typing import Dict, List
 
-import pymimir as mi
 from tensordict import NestedKey
 from tensordict.nn import TensorDictModule
 
-from rgnet.rl.non_tensor_data_utils import (
-    NonTensorWrapper,
-    as_non_tensor_stack,
-    non_tensor_to_list,
-)
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
+from xmimir import XState, XStateSpace, XTransition
 
 
-def optimal_action(space: mi.StateSpace, state: mi.State) -> mi.Transition:
+def optimal_action(space: XStateSpace, state: XState) -> XTransition:
     return min(
-        space.get_forward_transitions(state),
-        key=lambda t: space.get_distance_to_goal_state(t.target),
+        space.forward_transitions(state),
+        key=lambda t: space.goal_distance(t.target),
     )
 
 
 class OptimalPolicy:
 
-    def __init__(self, spaces: mi.StateSpace | List[mi.StateSpace]):
-        spaces = [spaces] if isinstance(spaces, mi.StateSpace) else spaces
-        self.best_actions: Dict[mi.State, mi.Transition] = {}
+    def __init__(self, spaces: XStateSpace | List[XStateSpace]):
+        spaces = [spaces] if isinstance(spaces, XStateSpace) else spaces
+        self.best_actions: Dict[XState, XTransition] = {}
         for space in spaces:
-            self.best_actions.update(
-                {s: optimal_action(space, s) for s in space.get_states()}
-            )
+            self.best_actions.update({s: optimal_action(space, s) for s in space})
 
     def __call__(
-        self, batched_states: List[List[mi.State]] | NonTensorWrapper
-    ) -> List[mi.Transition] | NonTensorWrapper:
-        batched_states = non_tensor_to_list(batched_states)
+        self, batched_states: List[List[XState]] | NonTensorWrapper
+    ) -> List[XTransition] | NonTensorWrapper:
+        batched_states = tolist(batched_states)
         return as_non_tensor_stack(
             [self.best_actions[state] for state in batched_states]
         )

@@ -4,15 +4,17 @@ from datetime import datetime
 
 import torch
 
-from experiments.rl.configs import agent as agent_module
-from experiments.rl.configs import data_resolver
-from experiments.rl.configs import embedding as embedding_module
-from experiments.rl.configs import environment
-from experiments.rl.configs import logger as logger_module
-from experiments.rl.configs import trainer as trainer_module
-from experiments.rl.configs import value_estimator
-from rgnet.rl import (
-    ActorCritic,
+from rgnet.rl.agents import ActorCritic
+from rgnet.rl.configs import agent as agent_module
+from rgnet.rl.configs import data_resolver as data_resolver_module
+from rgnet.rl.configs import embedding as embedding_module
+from rgnet.rl.configs import environment
+from rgnet.rl.configs import logger as logger_module
+from rgnet.rl.configs import trainer as trainer_module
+from rgnet.rl.configs import value_estimator
+from rgnet.rl.configs.agent import Agent
+from rgnet.rl.data_layout import OutputData
+from rgnet.rl.embedding import (
     EmbeddingModule,
     EmbeddingTransform,
     NonTensorTransformedEnv,
@@ -27,7 +29,7 @@ def create_args():
     parser = logger_module.add_parser_args(parser)
     parser = trainer_module.add_parser_args(parser)
     parser = value_estimator.add_parser_args(parser)
-    parser = data_resolver.add_parser_args(parser)
+    parser = data_resolver_module.add_parser_args(parser)
     parser.add_argument(
         "--gamma",
         type=float,
@@ -64,12 +66,23 @@ def transformed_environment(
     return env
 
 
+def save_model(agent: Agent, data: OutputData):
+    torch.save(agent.critic.state_dict(), data.out_dir / "critic_dict.pt")
+    torch.save(agent.actor.state_dict(), data.out_dir / "actor_dict.pt")
+    if len(list(agent.embedding.parameters())) > 1:
+        torch.save(agent.embedding.state_dict(), data.out_dir / "embedding_dict.pt")
+
+    logging.info("Saved models to " + str(data.out_dir.absolute()))
+
+
 def run():
     logging.getLogger().setLevel(logging.INFO)
     time_stamp: str = datetime.now().strftime("%d-%m_%H-%M-%S")
     parser = create_args()
     parser_args = parser.parse_args()
-    data = data_resolver.from_parser_args(parser_args, exp_id=time_stamp)
+    input_data, output_data = data_resolver_module.from_parser_args(
+        parser_args, exp_id=time_stamp
+    )
 
     requested_device = parser_args.device
     if requested_device == "auto":
@@ -79,10 +92,10 @@ def run():
 
     gamma = parser_args.gamma
 
-    base_env = environment.from_parser_args(parser_args, data, device, gamma)
+    base_env = environment.from_parser_args(parser_args, input_data, device, gamma)
 
     embedding = embedding_module.from_parser_args(
-        parser_args, device=device, data_resolver=data
+        parser_args, device=device, data_resolver=input_data
     )
     env = transformed_environment(
         base_env=base_env,
@@ -90,13 +103,13 @@ def run():
         agent_keys=ActorCritic.default_keys,
     )
 
-    agent = agent_module.from_parser_args(
-        parser_args, data_resolver=data, embedding=embedding
+    agent: Agent = agent_module.from_parser_args(
+        parser_args, data_resolver=input_data, embedding=embedding
     )
 
     value_estimator.from_parser_args(
         parser_args,
-        data_resolver=data,
+        data_resolver=input_data,
         device=device,
         loss=agent.loss,
         gamma=gamma,
@@ -105,15 +118,17 @@ def run():
     )
 
     logger = logger_module.from_parser_args(
-        parser_args, data_resolver=data, agent=agent
+        parser_args, data_resolver=output_data, agent=agent
     )
 
     trainer = trainer_module.from_parser_args(
-        parser_args, data_resolver=data, logger=logger, agent=agent, env=env
+        parser_args, data_resolver=input_data, logger=logger, agent=agent, env=env
     )
-    logging.info(f"Starting training with {len(data.problems)} training problems")
+    logging.info(f"Starting training with {len(input_data.problems)} training problems")
     trainer.train()
-    logging.info(f"Finished training. Saved under {data.output_dir}")
+    logging.info(f"Finished training. Saved under {output_data.out_dir}")
+
+    save_model(agent, output_data)
 
 
 if __name__ == "__main__":

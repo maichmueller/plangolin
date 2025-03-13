@@ -10,7 +10,7 @@ from torchrl.objectives import LossModule
 from torchrl.record.loggers import Logger
 from tqdm import tqdm
 
-from rgnet.rl import RolloutCollector
+from rgnet.rl.rollout_collector import RolloutCollector
 
 
 class Trainer(torchrl.trainers.Trainer):
@@ -33,7 +33,8 @@ class Trainer(torchrl.trainers.Trainer):
         log_interval: int = 10000,
         save_trainer_file: Optional[Union[str, pathlib.Path]] = None,
         eval_hooks: List | None = None,
-        eval_interval: int = 100,
+        eval_interval: Optional[int] = None,
+        validate_after_epoch: bool = False,
     ) -> None:
         super().__init__(
             collector=collector,
@@ -59,7 +60,8 @@ class Trainer(torchrl.trainers.Trainer):
         self.epochs = epochs
         self._early_stopping_ops = []
         self.eval_hooks = eval_hooks
-        self.eval_interval: int = eval_interval
+        self.eval_interval: Optional[int] = eval_interval
+        self.validate_after_epoch: bool = validate_after_epoch
 
     def register_op(self, dest: str, op: Callable, **kwargs) -> None:
         if dest == "early_stopping":
@@ -115,11 +117,13 @@ class Trainer(torchrl.trainers.Trainer):
             self._pbar = tqdm(total=self.total_frames)
             self._pbar_str = {}
 
+        total_batches = 0
         for epoch in range(self.epochs):
 
             self.collector.reset()
 
             for batch in self.collector:
+                total_batches += 1
                 batch = self._process_batch_hook(batch)
                 current_frames = (
                     batch.get(("collector", "mask"), torch.tensor(batch.numel()))
@@ -148,11 +152,16 @@ class Trainer(torchrl.trainers.Trainer):
                     self._pbar.update(current_frames)
                     self._pbar_description()
 
-                if self.collected_frames % self.eval_interval == 0:
+                if (
+                    self.eval_interval is not None
+                    and total_batches % self.eval_interval == 0
+                ):
                     self.validate()
 
             # Save trainer after each epoch
             self.save_trainer()
+            if self.validate_after_epoch:
+                self.validate()
 
         self.collector.shutdown()
 
@@ -168,6 +177,7 @@ class Trainer(torchrl.trainers.Trainer):
             results = eval_hook()
             if self.logger is not None:
                 for key, item in results.items():
+                    # wandb only support one level of nesting
                     self.logger.log_scalar(
-                        "val/" + key, item, step=self.collected_frames
+                        "validate_" + key, item, step=self.collected_frames
                     )

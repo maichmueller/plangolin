@@ -1,8 +1,7 @@
 import pathlib
 
-from pymimir import Domain, Problem
-
 from rgnet.utils import ftime, import_all_from
+from xmimir import XDomain, XProblem
 
 
 def test_ftime():
@@ -19,9 +18,12 @@ def test_ftime():
 def test_import_all_from():
     path = "test/pddl_instances/blocks"
     domain, problems = import_all_from(
-        "test/pddl_instances/blocks", domain_name="domain"
+        "test/pddl_instances/blocks", domain_filename="domain"
     )
-    assert isinstance(domain, Domain)
-    assert all(isinstance(p, Problem) and p.domain == domain for p in problems)
+    assert isinstance(domain, XDomain)
+    assert all(
+        isinstance(prob, XProblem) and prob.domain.filepath == domain.filepath
+        for prob in problems
+    )
     # -1 as one pddl file is the domain
     assert len(problems) == len(list(pathlib.Path(path).glob("*.pddl"))) - 1

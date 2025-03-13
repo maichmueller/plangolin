@@ -1,39 +1,36 @@
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Tuple
 
-import pymimir as mi
-import torch
-
-from rgnet.rl.envs.manual_transition import MTransition
+import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
+from xmimir import XLiteral, XState
 
 
-class SuccessorEnvironment(
-    PlanningEnvironment[Tuple[mi.SuccessorGenerator, mi.Problem]]
-):
+class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
 
-    def __init__(
-        self,
-        generators: List[mi.SuccessorGenerator],
-        problems: List[mi.Problem],
-        batch_size: torch.Size,
-        seed: Optional[int] = None,
-        device: str = "cpu",
-    ):
-        super().__init__(list(zip(generators, problems)), batch_size, seed, device)
+    def __init__(self, generators: Iterable[xmi.XSuccessorGenerator], *args, **kwargs):
+        super().__init__(list(generators), *args, **kwargs)
 
     def transitions_for(
-        self, active_instance: int, state: mi.State
-    ) -> List[mi.Transition]:
-        generator, _ = self._active_instances[active_instance]
-
-        actions = generator.get_applicable_actions(state)
-        return [MTransition(state, action, action.apply(state)) for action in actions]
+        self,
+        active_instance: xmi.XSuccessorGenerator,
+        state: xmi.XState,
+    ) -> List[xmi.XTransition]:
+        return [
+            xmi.XTransition.make_hollow(
+                state,
+                next_state,
+                action,
+            )
+            for action, next_state in active_instance.successors(state)
+        ]
 
     def initial_for(
-        self, active_instances: Tuple[mi.SuccessorGenerator, mi.Problem]
-    ) -> Tuple[mi.State, List[mi.Literal]]:
-        problem = active_instances[1]
-        return problem.create_state(problem.initial), problem.goal
+        self,
+        active_instance: xmi.XSuccessorGenerator,
+    ) -> Tuple[XState, List[XLiteral]]:
+        return active_instance.initial_state, list(active_instance.problem.goal())
 
-    def is_goal(self, active_instance: Tuple, state: mi.State) -> bool:
-        return state.matches_all(active_instance[1].goal)
+    def is_goal(
+        self, active_instance: xmi.XSuccessorGenerator, state: xmi.XState
+    ) -> bool:
+        return not any(state.unsatisfied_literals(active_instance.problem.goal()))

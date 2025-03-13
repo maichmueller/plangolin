@@ -1,17 +1,18 @@
 import itertools
 import logging
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple
 
 import matplotlib
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import pymimir as mi
 import torch
 import wandb
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 from torchrl.record import WandbLogger
+
+import xmimir as xmi
 
 
 def entropy(tensor):
@@ -32,16 +33,14 @@ class RLExperiment:
         self.logger = logger
         self.blocks_instance = blocks_instance
         self.run_name = run_name
-
-        self.blocks_domain = mi.DomainParser(
-            "../test/pddl_instances/blocks/domain.pddl"
-        ).parse()
-        self.blocks_problem = mi.ProblemParser(
-            f"../test/pddl_instances/blocks/{blocks_instance}.pddl"
-        ).parse(self.blocks_domain)
-        self.space = mi.StateSpace.new(
-            self.blocks_problem, mi.GroundedSuccessorGenerator(self.blocks_problem)
+        domain, problem = xmi.parse(
+            "../test/pddl_instances/blocks/domain.pddl",
+            f"../test/pddl_instances/blocks/{blocks_instance}.pddl",
         )
+        self.blocks_domain: xmi.XDomain = domain
+        self.blocks_problem: xmi.XProblem = problem
+
+        self.space: xmi.XStateSpace = xmi.XStateSpace(self.blocks_problem)
 
         self.out_dir = (
             Path(f"../out/{blocks_instance}/{run_name}/")
@@ -52,9 +51,7 @@ class RLExperiment:
             self.out_dir / "values.pt", map_location=torch.device("cpu")
         )
         self.total_iterations = len(self.values)
-        self.distances = [
-            self.space.get_distance_to_goal_state(s) for s in self.space.get_states()
-        ]
+        self.distances = [self.space.goal_distance(s) for s in self.space.states_iter()]
         self.optimal_values = self._calculate_optimal_discounted_distances()
         self.sqavg_values = (self.values - self.optimal_values).square()
         self.mse_loss = torch.mean(self.sqavg_values, dim=1)
@@ -62,12 +59,10 @@ class RLExperiment:
 
         self.one_before_goal = next(
             i
-            for i, s in enumerate(self.space.get_states())
-            if self.space.get_distance_to_goal_state(s) == 1
+            for i, s in enumerate(self.space.states_iter())
+            if self.space.goal_distance(s) == 1
         )
-        self.initial_state_idx = self.space.get_states().index(
-            self.space.get_initial_state()
-        )
+        self.initial_state_idx = self.space.initial_state.index
         graph, goal_indices = self._construct_graph()
         self.graph: nx.DiGraph = graph
         self.goal_indices: set[int] = goal_indices
@@ -85,28 +80,28 @@ class RLExperiment:
             for file in loss_files
         }
         # The indices of the best actions for every state
-        self.best_actions_indices: dict[mi.State, set[int]] = {
-            s: self._idx_of_best_transition(self.space.get_forward_transitions(s))
-            for s in self.space.get_states()
+        self.best_actions_indices: dict[xmi.XState, set[int]] = {
+            s: self._idx_of_best_transition(self.space.forward_transitions(s))
+            for s in self.space.states_iter()
         }
         self.best_actions_by_state_idx: dict[int, set[int]] = {
             i: self.best_actions_indices[state]
-            for (i, state) in enumerate(self.space.get_states())
+            for (i, state) in enumerate(self.space.states_iter())
         }
         self.action_indices: list[list[int]] = torch.load(
             self.out_dir / "actions.pt", map_location=torch.device("cpu")
         )
 
-    def _state(self, idx: int) -> mi.State:
-        return self.space.get_states()[idx]
+    def _state(self, idx: int) -> xmi.XState:
+        return self.space.get_state(idx)
 
     def has_probs(self) -> bool:
         return self.probs_list_of_nested is not None
 
-    def _idx_of_best_transition(self, transitions) -> set[int]:
-        dis_to_goal = [
-            self.space.get_distance_to_goal_state(t.target) for t in transitions
-        ]
+    def _idx_of_best_transition(
+        self, transitions: Iterable[xmi.XTransition]
+    ) -> set[int]:
+        dis_to_goal = [self.space.goal_distance(t.target) for t in transitions]
         best_d = min(dis_to_goal)
         best_indices = set(i for i, d in enumerate(dis_to_goal) if d == best_d)
         return best_indices
@@ -114,7 +109,7 @@ class RLExperiment:
     def _calculate_optimal_discounted_distances(self, gamma=0.9):
 
         distances = torch.tensor(
-            [self.space.get_distance_to_goal_state(s) for s in self.space.get_states()],
+            [self.space.goal_distance(s) for s in self.space.states_iter()],
             dtype=torch.int,
         )
         optimal_values = -(1 - gamma**distances) / (1 - gamma)
@@ -123,16 +118,16 @@ class RLExperiment:
     def _construct_graph(self):
         graph = nx.DiGraph()
         goal_indices = set()
-        for idx, state in enumerate(self.space.get_states()):
-            if self.space.is_goal_state(state):
+        for idx, state in enumerate(self.space.states_iter()):
+            if self.space.is_goal(state):
                 goal_indices.add(idx)
             graph.add_node(state.__repr__(), idx=idx)
-        for state in self.space.get_states():
-            for t in self.space.get_forward_transitions(state):
+        for state in self.space.states_iter():
+            for t in self.space.forward_transitions(state):
                 graph.add_edge(
                     t.source.__repr__(),
                     t.target.__repr__(),
-                    action=t.action.schema.name,
+                    action=t.action.name,
                 )
         return graph, goal_indices
 
@@ -231,7 +226,7 @@ class RLExperiment:
             number_of_optimal_actions(time) for time in range(self.total_iterations)
         ]
         fraction_best_action = [
-            num_opt_actions / self.space.num_states()
+            num_opt_actions / len(self.space)
             for num_opt_actions in num_selected_best_action
         ]
 
@@ -399,9 +394,9 @@ class RLExperiment:
         edge_list: List[List[Tuple[str, str]]] = [
             [
                 (t.source.__repr__(), t.target.__repr__())
-                for t in self.space.get_forward_transitions(s)
+                for t in self.space.forward_transitions(s)
             ]
-            for s in self.space.get_states()
+            for s in self.space.states_iter()
             # Watch out goal has edges too which are not in probs_list
         ]
         edge_list = list(itertools.chain.from_iterable(edge_list))

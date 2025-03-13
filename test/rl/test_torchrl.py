@@ -1,4 +1,4 @@
-from test.fixtures import (
+from test.fixtures import (  # noqa: 401
     embedding_mock,
     expanded_state_space_env,
     small_blocks,
@@ -24,17 +24,11 @@ from torchrl.objectives import A2CLoss, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 from torchrl.trainers import Trainer
 
-from rgnet.rl import (
-    ActorCritic,
-    ActorCriticLoss,
-    EmbeddingModule,
-    RolloutCollector,
-    torchrl_patches,
-)
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.rl.agents import ActorCritic
+from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-
-print(torchrl_patches)
+from rgnet.rl.losses import ActorCriticLoss
+from rgnet.rl.rollout_collector import RolloutCollector
 
 
 def test_step_function():
@@ -316,7 +310,9 @@ def test_trainer(
     embedding_mock: EmbeddingModule = env.transform.embedding_module
     env_keys = ExpandedStateSpaceEnv.default_keys
 
-    agent = ActorCritic(embedding_mock)
+    agent = ActorCritic(
+        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+    )
     policy = agent.as_td_module(env_keys.state, env_keys.transitions, env_keys.action)
     loss = ActorCriticLoss(agent.value_operator)
     loss.make_value_estimator(ValueEstimators.TD0, gamma=0.9, shifted=True)

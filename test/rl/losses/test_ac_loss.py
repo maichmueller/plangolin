@@ -1,6 +1,6 @@
 import copy
-import itertools
-from test.fixtures import embedding_mock, small_blocks
+from itertools import chain
+from test.fixtures import embedding_mock, small_blocks  # noqa: F401
 
 import mockito
 import pytest
@@ -12,10 +12,15 @@ from torch.distributions import Categorical
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet import HeteroGraphEncoder
-from rgnet.rl import ActorCritic, ActorCriticLoss, EmbeddingModule
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from rgnet.encoding import HeteroGraphEncoder
+from rgnet.rl.agents import ActorCritic
+from rgnet.rl.embedding import (
+    EmbeddingTransform,
+    NonTensorTransformedEnv,
+    build_embedding_and_gnn,
+)
 from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.losses import ActorCriticLoss
 
 
 @pytest.fixture
@@ -81,11 +86,9 @@ def actor_mock(hidden_size=3):
 def test_forward(critic_mock, actor_mock, rollout_not_done):
     gamma = 0.9
     loss = ActorCriticLoss(critic_mock, reduction="mean")
-    loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=True)
+    loss.make_value_estimator(ValueEstimators.TD0, gamma=gamma, shifted=False)
 
-    optim = torch.optim.SGD(
-        itertools.chain(critic_mock.parameters(), actor_mock.parameters())
-    )
+    optim = torch.optim.SGD(chain(critic_mock.parameters(), actor_mock.parameters()))
 
     actor_mock(rollout_not_done)  # add log_probs with gradients
 
@@ -145,10 +148,15 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("embedding_mode", ["embedding_mock", "gnn"])
 def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, request):
-    space, domain, _ = small_blocks
+    space, domain, problem = small_blocks
     uses_gnn = embedding_mode == "gnn"
     embedding = (
-        EmbeddingModule(HeteroGraphEncoder(domain), hidden_size, 1, "sum")
+        build_embedding_and_gnn(
+            hidden_size=hidden_size,
+            num_layer=1,
+            encoder=HeteroGraphEncoder(domain),
+            aggr="sum",
+        )
         if uses_gnn
         else request.getfixturevalue(embedding_mode)
     )
@@ -165,7 +173,7 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
         cache_specs=True,
     )
 
-    agent = ActorCritic(embedding)
+    agent = ActorCritic(hidden_size=embedding.hidden_size, embedding_module=embedding)
     agent_policy = agent.as_td_module(
         env.keys.state, env.keys.transitions, env.keys.action
     )
@@ -188,12 +196,22 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
 
     optim.zero_grad()
     assert all(param.grad is None for param in agent.value_operator.parameters())
-    assert all(param.grad is None for param in agent.actor_net.parameters())
+    assert all(
+        param.grad is None
+        for param in chain(
+            agent.actor_net_probs.parameters(), agent.actor_objects_net.parameters()
+        )
+    )
     if uses_gnn:
         assert all(param.grad is None for param in embedding.gnn.parameters())
     (loss_actor + loss_critic).backward()
 
     assert not all(param.grad is None for param in agent.value_operator.parameters())
-    assert not all(param.grad is None for param in agent.actor_net.parameters())
+    assert not all(
+        param.grad is None
+        for param in chain(
+            agent.actor_net_probs.parameters(), agent.actor_objects_net.parameters()
+        )
+    )
     if uses_gnn:
         assert not all(param.grad is None for param in embedding.gnn.parameters())

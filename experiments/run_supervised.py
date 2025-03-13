@@ -13,22 +13,21 @@ from torch_geometric.loader import ImbalancedSampler
 from experiments import PlanResult
 from experiments.analyze_run import CompletedExperiment
 from experiments.data_layout import DataLayout, DatasetType
-from rgnet import (
+from rgnet.encoding import (
     ColorGraphEncoder,
     DirectGraphEncoder,
+    GraphEncoderBase,
     HeteroGraphEncoder,
-    LightningHetero,
-    PureGNN,
-    StateEncoderBase,
 )
+from rgnet.models import LightningHetero, VanillaGNN
 from rgnet.supervised.over_sampler import OverSampler
 from rgnet.supervised.parse_serialized_dataset import *
 from rgnet.utils import import_problems, time_delta_now
 
 
 def load_serialized(
-    domain: mi.Domain,
-    encoder: StateEncoderBase,
+    domain: xmi.Domain,
+    encoder: GraphEncoderBase,
     dataset_type: DatasetType,
     data_layout: DataLayout,
 ):
@@ -44,8 +43,8 @@ def load_serialized(
     if len(problems) != len(prob_to_serialized):
         logging.warning(f"Mismatch between problems and serialized files.")
 
-    prob_to_serialized: Dict[mi.Problem, Path] = {
-        mi.ProblemParser(str(problem_path)).parse(domain): serialized
+    prob_to_serialized: Dict[xmi.Problem, Path] = {
+        xmi.ProblemParser(str(problem_path)).parse(domain): serialized
         for problem_path, serialized in prob_to_serialized.items()
     }
     dataset_path = data_layout.dataset_path_for(dataset_type)
@@ -61,7 +60,7 @@ def load_serialized(
     return dataset
 
 
-def _dataset_of(problems, root, encoder: StateEncoderBase):
+def _dataset_of(problems, root, encoder: GraphEncoderBase):
     return MultiInstanceSupervisedSet(problems, encoder, root=root, log=True)
 
 
@@ -71,7 +70,7 @@ def _setup_datasets(
     num_samples: int,
     oversampling_factor: float | None,
 ):
-    domain = mi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
+    domain = xmi.DomainParser(str(data_layout.domain_file_path.absolute())).parse()
 
     encoder = _create_encoder(domain, data_layout.encoder_type)
     loaders = []
@@ -112,7 +111,7 @@ def _setup_datasets(
     return train_loader, eval_loader, test_loader, encoder
 
 
-def _create_encoder(domain: mi.Domain, encoder_type: str) -> StateEncoderBase:
+def _create_encoder(domain: xmi.Domain, encoder_type: str) -> GraphEncoderBase:
     if encoder_type == "color":
         encoder = ColorGraphEncoder(domain)
     elif encoder_type == "direct":
@@ -209,10 +208,10 @@ def run(
         )
         wlogger.watch(model.model)
     else:
-        model = PureGNN(
+        model = VanillaGNN(
             size_out=1,
             size_in=1,
-            size_embedding=kwargs["hidden_size"],
+            hidden_size=kwargs["hidden_size"],
             num_layer=kwargs["num_layer"],
         )
         wlogger.watch(model)
@@ -223,7 +222,7 @@ def run(
     checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     # Lightning prioritizes the logger-save dir over its own default_dir for
-    # checkpoints. Therefore, we have to use this callback (which has top priority).
+    # _checkpoints. Therefore, we have to use this callback (which has top priority).
     checkpoint_callback = lightning.pytorch.callbacks.ModelCheckpoint(
         dirpath=checkpoint_path
     )

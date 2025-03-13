@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import logging
-from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
-from pymimir import GroundedSuccessorGenerator, Problem, StateSpace
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
-from torch_geometric.data.data import BaseData
 
-from rgnet.encoding import StateEncoderBase
+from rgnet.encoding import GraphEncoderBase
+from xmimir import XProblem, XStateSpace
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
@@ -18,8 +18,8 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
 
     def __init__(
         self,
-        problems: List[Problem] | None,
-        state_encoder: StateEncoderBase | None,
+        problems: List[XProblem] | None,
+        state_encoder: GraphEncoderBase | None,
         max_expanded: Optional[int] = None,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
@@ -30,10 +30,10 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     ) -> None:
         if (problems is None or state_encoder is None) and root is None:
             raise ValueError(
-                "Neither list of problems nor path to stored dataset was " "provided"
+                "Neither list of problems nor path to stored dataset was provided"
             )
-        self.problems: List[Problem] = problems
-        self.encoder = state_encoder
+        self.problems: List[XProblem] = problems
+        self.state_encoder = state_encoder
         self.max_expanded = max_expanded
         if problems is None and force_reload:
             raise ValueError("Tried to force reload problems but none where given.")
@@ -52,21 +52,19 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
     def download(self) -> None:
         pass
 
-    def parse_problem(self, problem: Problem) -> List[Data]:
+    def parse_problem(self, problem: XProblem) -> List[Data]:
         data_list = []
-        space = StateSpace.new(
+        space = XStateSpace(
             problem,
-            GroundedSuccessorGenerator(problem),
-            max_expanded=self.max_expanded or 1_000_000,
+            max_num_states=self.max_expanded or 1_000_000,
         )
+        encoder = self.state_encoder
         if space is None:  # None if more states than max_expanded
             logging.warning(f"Could not create state space for {problem}")
             return []
-        for state in space.get_states():
-            data: Data = self.encoder.to_pyg_data(self.encoder.encode(state))
-            data.y = torch.tensor(
-                space.get_distance_to_goal_state(state), dtype=torch.int64
-            )
+        for state in space:
+            data: Data = encoder.to_pyg_data(encoder.encode(state))
+            data.y = torch.tensor(space.goal_distance(state), dtype=torch.int64)
             data_list.append(data)
         return data_list
 
@@ -111,7 +109,9 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         return torch.bincount(self.y.int())
 
     def __getattr__(self, key: str) -> Any:
-        """InMemoryDataset forgot the poor HeteroData objects, logic is equivalent."""
+        """
+        InMemoryDataset forgot the poor HeteroData objects, logic is equivalent.
+        """
         data = self.__dict__.get("_data")
         if isinstance(data, HeteroData) and key in data:
             if self._indices is None and data.__inc__(key, data[key]) == 0:
