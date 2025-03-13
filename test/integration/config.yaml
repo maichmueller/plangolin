@@ -9,7 +9,7 @@ encoder:
   class_path: HeteroGraphEncoder
 
 reward:
-  class_path: DefaultUniformReward
+  class_path: UnitReward
 
 optimizer_setup:
   optimizer:
