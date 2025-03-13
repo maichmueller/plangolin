@@ -673,7 +673,7 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
         self.__init__(Grounder(problem.base, problem.repositories))
 
     @property
-    def grounder(self):
+    def action_grounder(self):
         return self.base.get_action_grounder()
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
