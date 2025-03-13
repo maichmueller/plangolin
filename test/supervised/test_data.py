@@ -6,8 +6,28 @@ import torch
 from torch_geometric.data import Batch, Dataset, HeteroData
 from torch_geometric.loader import DataLoader
 
-from rgnet.encoding import ColorGraphEncoder, HeteroGraphEncoder
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.supervised.data import MultiInstanceSupervisedSet
+from rgnet.utils.utils import broadcastable
+
+
+def hetero_data_equal(data: HeteroData, expected: HeteroData):
+    assert isinstance(data, HeteroData) and isinstance(expected, HeteroData)
+    assert set(data.node_types) == set(expected.node_types)
+    assert set(data.edge_types) == set(expected.edge_types)
+    for key in data.node_types:
+        dx = data[key].x
+        ex = expected[key].x
+        if dx.numel() == ex.numel() == 0:
+            continue
+        if not broadcastable(dx.shape, ex.shape):
+            return False
+        if not torch.allclose(dx, ex):
+            return False
+    for edge_type in data.edge_types:
+        if not torch.equal(data[edge_type].edge_index, expected[edge_type].edge_index):
+            return False
+    return True
 
 
 class EmptyDataset(Dataset):
@@ -31,7 +51,7 @@ class EmptyDataset(Dataset):
 
 def create_dataset(size: str, root_dir: str | pathlib.Path, domain="blocks"):
     root_dir = root_dir if isinstance(root_dir, str) else str(root_dir.absolute())
-    space, domain, problem = problem_setup(domain, size)
+    _, domain, problem = problem_setup(domain, size)
     encoder = HeteroGraphEncoder(domain)
     return MultiInstanceSupervisedSet(
         [problem], encoder, force_reload=True, root=root_dir
@@ -40,11 +60,11 @@ def create_dataset(size: str, root_dir: str | pathlib.Path, domain="blocks"):
 
 def test_init(tmp_path):
     space, domain, problem = problem_setup("blocks", "small")
-    encoder = ColorGraphEncoder(domain)
+    encoder = HeteroGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet(
         [problem], encoder, root=str(tmp_path.absolute())
     )
-    assert dataset.len() == space.num_states()
+    assert dataset.len() == len(space)
     assert all(
         data.y.dtype == torch.int64 and data.y.size() == torch.Size((1,))
         for data in dataset
@@ -60,20 +80,22 @@ def test_collate(tmp_path):
     medium_space, _, medium_problem = problem_setup("blocks", "medium")
     encoder = HeteroGraphEncoder(domain)
     dataset = MultiInstanceSupervisedSet(
-        [small_problem, medium_problem], encoder, root=str(tmp_path.absolute())
+        [small_problem, medium_problem],
+        encoder,
+        root=str(tmp_path.absolute()),
     )
     manual_data: List[HeteroData] = []
-    for space in [small_space, medium_space]:
-        for state in space.get_states():
+    for problem, space in zip(
+        [small_problem, medium_problem], [small_space, medium_space]
+    ):
+        for state in space:
             data = encoder.to_pyg_data(encoder.encode(state))
-            data.y = torch.tensor(
-                space.get_distance_to_goal_state(state), dtype=torch.int64
-            )
+            data.y = torch.tensor(space.goal_distance(state), dtype=torch.int64)
             manual_data.append(data)
     data: HeteroData
     expected: HeteroData
     for i, (data, expected) in enumerate(zip(dataset, manual_data)):
-        compare_hetero_stores(data, expected)
+        assert hetero_data_equal(data, expected)
         assert torch.all(data.y == expected.y)
 
 
@@ -85,14 +107,14 @@ def test_batched(tmp_path):
 
     for i, expected in enumerate(dataset):
         data = batched.get_example(i)
-        compare_hetero_stores(data, expected)
+        assert hetero_data_equal(data, expected)
         assert torch.all(data.y == expected.y)
 
     sliced = dataset[dataset.y == 0]
     sliced_batched = Batch.from_data_list(sliced)
     for i, expected in enumerate(sliced):
         data = sliced_batched.get_example(i)
-        compare_hetero_stores(data, expected)
+        assert hetero_data_equal(data, expected)
         assert torch.all(data.y == expected.y)
 
 
@@ -105,22 +127,8 @@ def test_loader(tmp_path):
     )
     for i, batch in enumerate(loader):
         assert isinstance(batch, Batch)
-        data0 = batch.get_example(0)
-        compare_hetero_stores(data0, dataset[i * 2])
+        data0: HeteroData = batch.get_example(0)
+        assert hetero_data_equal(data0, dataset[i * 2])
         if batch.batch_size == 2:
             data1 = batch.get_example(1)
-            compare_hetero_stores(data1, dataset[i * 2 + 1])
-
-
-def compare_hetero_stores(data, expected):
-    assert isinstance(data, HeteroData) and isinstance(expected, HeteroData)
-    assert set(data.node_types) == set(expected.node_types)
-    assert set(data.edge_types) == set(expected.edge_types)
-    for key in data.node_types:
-        dx = data[key].x
-        ex = expected[key].x
-        if dx.numel() == ex.numel() == 0:
-            continue
-        assert torch.allclose(dx, ex)
-    for edge_type in data.edge_types:
-        assert torch.equal(data[edge_type].edge_index, expected[edge_type].edge_index)
+            assert hetero_data_equal(data1, dataset[i * 2 + 1])

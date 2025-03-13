@@ -1,3 +1,5 @@
+.DS_Store
+
 ### C++ template
 # Prerequisites
 *.d
@@ -196,3 +198,7 @@ cython_debug/
 
 
 .idea/
+
+data/pddl_domains/*
+!data/pddl_domains/example
+slurm

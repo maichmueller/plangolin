@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import itertools
 import logging
+import operator
 from collections import defaultdict
-from typing import Dict, List, NamedTuple
+from functools import cache
+from typing import Dict, Iterable, List, NamedTuple, Sequence
 
 import networkx as nx
 import torch
-from pymimir import Atom, Domain, Literal, Predicate, State
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from rgnet.encoding.base_encoder import StateEncoderBase, check_encoded_by_this
-from rgnet.encoding.node_factory import Node, NodeFactory
+from xmimir import XAtom, XDomain, XLiteral, XPredicate
+
+from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
+from .node_factory import Node, NodeFactory
 
 
 class PredicateEdgeType(NamedTuple):
@@ -21,31 +23,26 @@ class PredicateEdgeType(NamedTuple):
     dst_type: str
 
 
-class HeteroGraphEncoder(StateEncoderBase):
+class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
+    """
+    An encoder to represent states as heterogeneous graphs with objects and predicates as vertices
+    and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.
+
+    """
+
     def __init__(
         self,
-        domain: Domain,
-        node_factory: NodeFactory = NodeFactory(),
+        domain: XDomain,
+        node_factory: NodeFactory | None = None,
         obj_type_id: str = "obj",
     ) -> None:
-        super().__init__()
+        super().__init__(domain)
         self.obj_type_id: str = obj_type_id
-        self.node_factory: NodeFactory = node_factory
-        self.predicates: List[Predicate] = domain.predicates
-
-        self.arity_dict: Dict[Node, int] = dict(
-            sorted(
-                (
-                    (self.node_factory(predicate, **kwargs_dict), predicate.arity)
-                    for predicate in self.predicates
-                    for kwargs_dict in (
-                        {"is_goal": True, "is_negated": False},
-                        {"is_goal": False, "is_negated": False},
-                        {"is_goal": True, "is_negated": True},
-                    )
-                ),
-                key=lambda x: x[0],
-            )
+        # Initialize the default here to please jsonargparse.
+        self.node_factory: NodeFactory = node_factory or NodeFactory()
+        self.predicates: tuple[XPredicate, ...] = self.domain.predicates()
+        self.arity_dict: Dict[Node, int] = HeteroGraphEncoder.make_arity_dict(
+            self.predicates, self.node_factory
         )
         # Generate all possible edge types
         self.all_edge_types: List[EdgeType] = []
@@ -57,38 +54,63 @@ class HeteroGraphEncoder(StateEncoderBase):
     def __eq__(self, other: HeteroGraphEncoder) -> bool:
         return (
             self.obj_type_id == other.obj_type_id
+            and self.node_factory == other.node_factory
             and self.predicates == other.predicates
         )
 
-    def encode(self, state: State) -> nx.Graph:
+    @staticmethod
+    @cache
+    def make_arity_dict(
+        predicates: Iterable[XPredicate], node_factory: NodeFactory = NodeFactory()
+    ) -> Dict[Node, int]:
+        return dict(
+            sorted(
+                (
+                    (node_factory(predicate, **kwargs_dict), predicate.arity)
+                    for predicate in predicates
+                    for kwargs_dict in (
+                        {"is_goal": True, "is_negated": False},
+                        {"is_goal": False, "is_negated": False},
+                        {"is_goal": True, "is_negated": True},
+                    )
+                ),
+                key=operator.itemgetter(0),
+            )
+        )
+
+    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
-        problem = state.get_problem()
-        graph = nx.Graph(encoding=self, state=state)
 
-        for obj in problem.objects:
+        for obj in self._contained_objects(items):
             graph.add_node(self.node_factory(obj), type=self.obj_type_id)
 
-        atom_or_literal: Atom | Literal
-        for atom_or_literal in itertools.chain(state.get_atoms(), problem.goal):
-            atom: Atom = getattr(atom_or_literal, "atom", atom_or_literal)
-            if atom.predicate.arity == 0:
+        atom_or_literal: XAtom | XLiteral
+        for atom_or_literal in items:
+            if isinstance(atom_or_literal, XLiteral):
+                atom = atom_or_literal.atom
+                is_goal = not hasattr(atom_or_literal, "is_not_goal")
+            else:
+                atom = atom_or_literal
+                is_goal = False
+            predicate = atom.predicate
+            arity = predicate.arity
+            if arity == 0:
                 continue
 
             atom_node = self.node_factory(atom_or_literal)
             graph.add_node(
-                atom_node, type=self.node_factory(atom_or_literal, as_predicate=True)
+                atom_node, type=self.node_factory(predicate, is_goal=is_goal)
             )
 
-            for pos, obj in enumerate(atom.terms):
+            for pos, obj in enumerate(atom.objects):
                 # Connect predicate node to object node
                 graph.add_edge(self.node_factory(obj), atom_node, position=pos)
-        return graph
 
     @check_encoded_by_this
-    def to_pyg_data(self, graph: nx.Graph) -> HeteroData:
+    def to_pyg_data(self, graph: GraphT) -> HeteroData:
         del graph.graph["encoding"]
         del graph.graph["state"]
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)

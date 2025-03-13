@@ -3,7 +3,6 @@ from test.fixtures import direct_encoded_state
 import pytest
 
 from rgnet.encoding import DirectGraphEncoder
-from rgnet.encoding.node_factory import NodeFactory
 
 
 @pytest.mark.parametrize(

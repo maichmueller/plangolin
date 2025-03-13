@@ -1,0 +1,49 @@
+seed_everything: true
+
+data:
+  batch_size: 26
+  parallel: False
+  balance_by_distance_to_goal: False
+
+encoder:
+  class_path: HeteroGraphEncoder
+
+optimizer_setup:
+  optimizer:
+    class_path: torch.optim.Adam
+    init_args:
+      lr: 0.002
+  lr_actor: 0.0002
+
+data_layout:
+  input_data:
+    domain_name: blocks
+    instances: [ small, medium ]
+    validation_instances: [ small ]
+  root_dir: null
+
+trainer:
+  accelerator: "cpu"
+  devices: 1
+  max_epochs: 1
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      project: rgnet
+      group: rl-test
+      offline: True
+
+loss:
+  class_path: ActorCriticLoss
+
+estimator_config:
+  value_type: TD0
+  gamma: 0.9
+
+model:
+  gnn:
+    class_path: HeteroGNN
+    init_args:
+      num_layer: 8
+      hidden_size: 3
+      aggr: logsumexp

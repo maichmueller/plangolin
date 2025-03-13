@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from argparse import ArgumentParser
 from collections import defaultdict
 from typing import Dict, List, Optional
@@ -10,11 +12,10 @@ from torch import Tensor
 from torch.nn import L1Loss, MSELoss
 from torch.nn.modules.loss import _Loss
 
-from .hetero_gnn import HeteroGNN
+from .hetero_gnn import ValueHeteroGNN
 
 
 class LightningHetero(LightningModule):
-
     DEFAULT_LEARNING_RATE = 0.001
     DEFAULT_WEIGHT_DECAY = 5e-4
     DEFAULT_LOSS = "L1Loss"
@@ -43,11 +44,14 @@ class LightningHetero(LightningModule):
             self.loss_function = MSELoss()
         elif not isinstance(loss_function, _Loss):
             raise ValueError(f"Unknown loss function: {loss_function}")
-        aggr = aggregation
-        if aggr == "softmax":  # torch_geometric does not support softmax string
-            aggr = pyg.nn.aggr.SoftmaxAggregation()
 
-        self.model = HeteroGNN(hidden_size, num_layer, aggr, obj_type_id, arity_dict)
+        self.model = ValueHeteroGNN(
+            hidden_size,
+            num_layer=num_layer,
+            obj_type_id=obj_type_id,
+            arity_dict=arity_dict,
+            aggr=aggregation,
+        )
         self.save_hyperparameters()
         self.val_loss_by_label: Dict[int, List[Tensor]] = defaultdict(list)
 
