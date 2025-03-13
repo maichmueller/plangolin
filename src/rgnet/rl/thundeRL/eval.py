@@ -76,7 +76,7 @@ def resolve_checkpoints(
     if len(checkpoint_paths) == 0:
         raise RuntimeError(f"Could not find any checkpoints in {checkpoint_dir}")
     for checkpoint_path in checkpoint_paths:
-        if checkpoint_path.name == "last":
+        if checkpoint_path.stem == "last":
             last_checkpoint = checkpoint_path
         else:
             try:
@@ -156,7 +156,7 @@ class ProbabilisticPlanResult(Plan):
         }
 
 
-class RlExperimentAnalyzer:
+class RLExperimentAnalyzer:
     env_keys = PlanningEnvironment.default_keys
 
     def __init__(
@@ -174,7 +174,7 @@ class RlExperimentAnalyzer:
         self.agent_keys = lightning_agent.actor_critic.keys
         self.device: torch.device = device
 
-        self._model_for_checkpoint: Dict[Path, RlExperimentAnalyzer.ModelResults] = (
+        self._model_for_checkpoint: Dict[Path, RLExperimentAnalyzer.ModelResults] = (
             dict()
         )
         self._policy_gradient_lit_module = lightning_agent
@@ -191,7 +191,7 @@ class RlExperimentAnalyzer:
                 for ckpt in checkpoints_paths
             )
 
-        self._current_model: RlExperimentAnalyzer.ModelResults
+        self._current_model: RLExperimentAnalyzer.ModelResults
         self._current_checkpoint: Path
         self.load_checkpoint(
             last_checkpoint if last_checkpoint is not None else checkpoints_paths[-1]
@@ -233,10 +233,12 @@ class RlExperimentAnalyzer:
             checkpoint_path: Path,
             experiment_analyzer,
         ):
-            self._parent: RlExperimentAnalyzer = experiment_analyzer
+            self._parent: RLExperimentAnalyzer = experiment_analyzer
 
             adapter = copy.deepcopy(policy_gradient_lit_module)
-            checkpoint = torch.load(checkpoint_path, map_location=self._parent.device)
+            checkpoint = torch.load(
+                checkpoint_path, map_location=self._parent.device, weights_only=False
+            )
             adapter.load_state_dict(checkpoint["state_dict"])
             embedding = EmbeddingModule(
                 encoder=HeteroGraphEncoder(self._parent.in_data.domain),
@@ -363,7 +365,7 @@ class RlExperimentAnalyzer:
 
     def load_checkpoint(self, checkpoint_path: Path):
         if checkpoint_path not in self._model_for_checkpoint:
-            model = RlExperimentAnalyzer.ModelResults(
+            model = RLExperimentAnalyzer.ModelResults(
                 self._policy_gradient_lit_module, checkpoint_path, self
             )
             self._model_for_checkpoint[checkpoint_path] = model
@@ -706,7 +708,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
         return self._call(tensordict_reset)
 
 
-class TestThundeRLCLI(ThundeRLCLI):
+class EvalThundeRLCLI(ThundeRLCLI):
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         super().add_arguments_to_parser(parser)
         # fit subcommand adds this value to the config
@@ -747,7 +749,7 @@ def eval_lightning_agent(
     if not input_data.test_problems:
         raise ValueError("No test instances provided")
 
-    analyzer = RlExperimentAnalyzer(
+    analyzer = RLExperimentAnalyzer(
         policy_gradient_lit_module,
         in_data=input_data,
         out_data=output_data,
@@ -769,7 +771,7 @@ def eval_lightning_agent(
             analyzer.map_to_probabilistic_plan(problem, rollout)
             for problem, rollout in zip(test_instances, test_results)
         ]
-        solved = sum(1 for p in analyzed_data if p.solved)
+        solved = sum(p.solved for p in analyzed_data)
         logging.info(f"Solved {solved} out of {len(analyzed_data)}")
 
         results_name = f"results_epoch={epoch}-step={step}"
@@ -809,7 +811,7 @@ def eval_lightning_agent_cli():
     # Should be set to avoid overwriting the previous run with the same id
     sys.argv.append("--trainer.logger.init_args.resume")
     sys.argv.append("true")
-    cli = TestThundeRLCLI(run=False)
+    cli = EvalThundeRLCLI(run=False)
     policy_gradient_lit_module: PolicyGradientLitModule = cli.model
     in_data: InputData = cli.datamodule.data
     out_data = cli.config_init["data_layout.output_data"]
@@ -825,6 +827,5 @@ def eval_lightning_agent_cli():
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
-    torch.set_float32_matmul_precision("medium")
     torch.multiprocessing.set_sharing_strategy("file_system")
     eval_lightning_agent_cli()
