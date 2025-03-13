@@ -1,7 +1,5 @@
 import abc
-from typing import Sequence
-
-import torch
+from typing import List, Sequence
 
 from xmimir import StateLabel, XTransition
 
@@ -16,14 +14,10 @@ class RewardFunction:
     A reward function has to be able to calculate the reward with only this information.
     """
 
-    def __init__(self, *, device: str | torch.device = "cpu"):
-        super().__init__()
-        self.device = device
-
     @abc.abstractmethod
     def __call__(
         self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
-    ):
+    ) -> List[float]:
         """
         Abstract method for calculating the reward of a transition.
 
@@ -35,7 +29,3 @@ class RewardFunction:
 
     @abc.abstractmethod
     def __eq__(self, other): ...
-
-    def to(self, device: str | torch.device):
-        self.device = device
-        return self

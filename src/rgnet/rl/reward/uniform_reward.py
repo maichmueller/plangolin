@@ -1,6 +1,5 @@
+import math
 from typing import Sequence
-
-import torch
 
 from xmimir import StateLabel, XAction, XTransition
 
@@ -39,10 +38,7 @@ class UnitReward(RewardFunction):
         deadend_reward: float | None = None,
         goal_reward: float = 0.0,
         regular_reward: float = -1.0,
-        *,
-        device: str | torch.device = "cpu",
     ):
-        super().__init__(device=device)
         self.regular_reward = regular_reward
         self.goal_reward = goal_reward
         if deadend_reward is None and gamma is None:
@@ -58,15 +54,15 @@ class UnitReward(RewardFunction):
         if not isinstance(other, type(self)):
             return NotImplemented
         return (
-            self.regular_reward == other.regular_reward
-            and self.goal_reward == other.goal_reward
-            and self.deadend_reward == other.deadend_reward
-            and self.gamma == other.gamma
+            math.isclose(self.regular_reward, other.regular_reward, rel_tol=1e-9)
+            and math.isclose(self.goal_reward, other.goal_reward, rel_tol=1e-9)
+            and math.isclose(self.deadend_reward, other.deadend_reward, rel_tol=1e-9)
+            and math.isclose(self.gamma, other.gamma, rel_tol=1e-9)
         )
 
     def __call__(
         self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
-    ):
+    ) -> list[float]:
         rewards = []
         for transition, label in zip(transitions, labels):
             match label:
@@ -79,8 +75,7 @@ class UnitReward(RewardFunction):
                         rewards.append(self._reward_macro(transition, label))
                     else:
                         rewards.append(self.regular_reward)
-
-        return torch.tensor(rewards, dtype=torch.float, device=self.device)
+        return rewards
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         return _discounted_macro_reward(
@@ -107,7 +102,7 @@ class FactoredMacroReward(UnitReward):
         self.factor = factor
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.factor == other.factor
+        return super().__eq__(other) and math.isclose(self.factor, other.factor)
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         return self.regular_reward - len(transition.action) / self.factor
@@ -132,7 +127,9 @@ class DiscountedMacroReward(UnitReward):
         self.gamma_macros = gamma_macros if gamma_macros is not None else self.gamma
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.gamma_macros == other.gamma_macros
+        return super().__eq__(other) and math.isclose(
+            self.gamma_macros, other.gamma_macros, rel_tol=1e-9
+        )
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         return _discounted_macro_reward(

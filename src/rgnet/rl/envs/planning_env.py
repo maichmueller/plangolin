@@ -119,7 +119,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             ),
             requires_grad=False,
         )
-        self.reward_function = reward_function.to(self.device)
+        self.reward_function = reward_function
         self._make_spec()
 
     @property
@@ -278,7 +278,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                     if transition.source.label == xmi.StateLabel.initial
                     else xmi.StateLabel.default
                 )
-        rewards = self.reward_function(transitions, labels)
+        rewards = torch.tensor(
+            self.reward_function(transitions, labels),
+            dtype=torch.float,
+            device=self.device,
+        )
         return rewards, torch.tensor(done, dtype=torch.bool, device=self.device)
 
     def get_applicable_transitions(
