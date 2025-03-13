@@ -391,16 +391,13 @@ class XAction(MimirWrapper[GroundAction]):
 
 
 class StateLabel(Enum):
-    unknown = auto()
     goal = auto()
     deadend = auto()
-    initial = auto()
     default = auto()
 
 
 class XState(MimirWrapper[State]):
     problem: XProblem
-    label: StateLabel
 
     """
     The extended state class.
@@ -421,23 +418,13 @@ class XState(MimirWrapper[State]):
         self,
         state: State,
         problem: XProblem,
-        label: StateLabel = StateLabel.unknown,
     ):
         super().__init__(state)
         self.problem = problem
-        self.label = label
 
     @multimethod
     def __init__(self, index: int, space: StateSpace):
-        if space.is_goal_vertex(index):
-            cat = StateLabel.goal
-        elif space.is_deadend_vertex(index):
-            cat = StateLabel.deadend
-        elif space.get_initial_vertex_index() == index:
-            cat = StateLabel.initial
-        else:
-            cat = StateLabel.default
-        self.__init__(space.get_vertex(index).get_state(), XProblem(space), cat)
+        self.__init__(space.get_vertex(index).get_state(), XProblem(space))
 
     @multimethod
     def __init__(self, index: int, space: XStateSpace):
@@ -493,27 +480,17 @@ class XState(MimirWrapper[State]):
         """
         return self.base.get_index()
 
-    def update_label(self, label: StateLabel):
-        if self.label == StateLabel.unknown:
-            self.label = label
+    @cached_property
+    def is_goal(self) -> bool:
+        return not any(self.unsatisfied_literals(self.problem.goal()))
 
-    @multimethod
-    def is_goal(self, problem: XProblem | None = None) -> bool:
-        if problem is not None:
-            if problem == self.problem:
-                # a state's label is only valid for the problem it was created with
-                if self.label == StateLabel.goal:
-                    return True
-                elif self.label == StateLabel.unknown:
-                    for _ in self.unsatisfied_literals(
-                        self.problem.goal(XCategory.fluent, XCategory.derived)
-                    ):
-                        return False
-                    self.update_label(StateLabel.goal)
-                    return True
-            else:
-                return self.any_unsatisfied_literals(problem.goal())
-        return False
+    @cached_property
+    def is_initial(self) -> bool:
+        initials = tuple(self.problem.initial_atoms())
+        my_atoms = tuple(self.atoms(with_statics=False))
+        return all(atom in initials for atom in my_atoms) and len(initials) == len(
+            my_atoms
+        )
 
     def atoms(self, with_statics: bool = False) -> Iterable[XAtom]:
         return chain(
@@ -527,18 +504,6 @@ class XState(MimirWrapper[State]):
 
     def unsatisfied_literals(self, literals: Iterable[XLiteral]) -> Iterable[XLiteral]:
         return (lit for lit in literals if not self.base.literal_holds(lit.base))
-
-    def any_satisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
-        return any(self.base.literal_holds(lit.base) for lit in literals)
-
-    def all_satisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
-        return all(self.base.literal_holds(lit.base) for lit in literals)
-
-    def any_unsatisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
-        return any(not self.base.literal_holds(lit.base) for lit in literals)
-
-    def all_unsatisfied_literals(self, literals: Iterable[XLiteral]) -> bool:
-        return all(not self.base.literal_holds(lit.base) for lit in literals)
 
     def __str__(self):
         return (
@@ -714,11 +679,7 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
 
     @property
     def initial_state(self) -> XState:
-        return XState(
-            self.base.get_or_create_initial_state(),
-            self.problem,
-            StateLabel.initial,
-        )
+        return XState(self.base.get_or_create_initial_state(), self.problem)
 
     def successor(self, state: XState, action: XAction) -> XState:
         return XState(

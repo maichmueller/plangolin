@@ -215,25 +215,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     @staticmethod
     def is_dead_end_transition(transition: xmi.XTransition) -> bool:
-        label = transition.target.label
-        match (label, transition.action):
-            case (xmi.StateLabel.deadend, _):
-                return True
-            case (xmi.StateLabel.unknown, None):
-                # this is a dead-end state that was not marked as such in the original problem yet.
-                # Hence, we update the label here. This update can be erroneous if the state is not actually a
-                # dead-end, but the environment determines this state to be a dead-end for its own environment specifics.
-                transition.source.update_label(xmi.StateLabel.deadend)
-                return True
-            case (_, a) if a is not None:
-                return False
-            case (_, a) if a is None:
-                # the case of a state with a label that is not unknown but does not have an action is a manual override
-                # by the environment of the state's actual function in the problem.
-                # We accept this here as a dead-end.
-                return True
-            case _:
-                raise ValueError(f"Unexpected transition case: {transition}.")
+        return transition.action is None
 
     def get_reward_and_done(
         self,
@@ -273,11 +255,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 labels.append(xmi.StateLabel.deadend)
             else:
                 done.append(False)
-                labels.append(
-                    xmi.StateLabel.initial
-                    if transition.source.label == xmi.StateLabel.initial
-                    else xmi.StateLabel.default
-                )
+                labels.append(xmi.StateLabel.default)
         rewards = torch.tensor(
             self.reward_function(transitions, labels),
             dtype=torch.float,
