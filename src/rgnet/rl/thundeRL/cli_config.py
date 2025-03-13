@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
 
 import torch
+from jsonargparse import lazy_instance
 from lightning import Trainer
 from lightning.pytorch.cli import (
     ArgsType,
@@ -57,7 +58,6 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
 
 
 class OptimizerSetup:
-
     def __init__(
         self,
         agent: ActorCritic,
@@ -132,7 +132,6 @@ def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str
 
 
 class ValueEstimatorConfig:
-
     def __init__(
         self,
         gamma: float,
@@ -180,7 +179,6 @@ class TestSetup:
 
 
 class ThundeRLCLI(LightningCLI):
-
     def __init__(
         self,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
@@ -213,12 +211,13 @@ class ThundeRLCLI(LightningCLI):
         )
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-
         parser.add_subclass_arguments(GraphEncoderBase, "encoder")
 
         parser.add_class_arguments(EncoderFactory, "encoder_factory")
 
-        parser.add_subclass_arguments(RewardFunction, "reward")
+        parser.add_subclass_arguments(
+            RewardFunction, "reward", default=lazy_instance(UnitReward)
+        )
 
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None

@@ -51,7 +51,6 @@ class ThundeRLDataModule(LightningDataModule):
         self.validation_sets: Sequence[Dataset] = []
 
     def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
-
         def update(dataset):
             logging.info(
                 f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
