@@ -492,7 +492,7 @@ class XState(MimirWrapper[State]):
             my_atoms
         )
 
-    def atoms(self, with_statics: bool = False) -> Iterable[XAtom]:
+    def atoms(self, with_statics: bool = True) -> Iterable[XAtom]:
         return chain(
             (self.problem.static_atoms() if with_statics else tuple()),
             self.fluent_atoms,
