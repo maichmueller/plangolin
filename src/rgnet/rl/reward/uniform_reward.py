@@ -29,8 +29,8 @@ class DefaultUniformReward(RewardFunction):
     """
     A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
 
-    The reward for macros is abstracted to primitive reward as well. This can be overriden in child classes by
-    overriding the _reward_macro_action method.
+    The reward for macros is abstracted to primitive reward as well. This can be changed in child classes by
+    overriding the _reward_macro method.
     """
 
     def __init__(
@@ -76,14 +76,16 @@ class DefaultUniformReward(RewardFunction):
                     rewards.append(self.goal_reward)
                 case _:
                     if isinstance(transition.action, Sequence):
-                        rewards.append(self._reward_macro(transition.action, label))
+                        rewards.append(self._reward_macro(transition, label))
                     else:
                         rewards.append(self.regular_reward)
 
         return torch.tensor(rewards, dtype=torch.float, device=self.device)
 
-    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
-        return _discounted_macro_reward(macro, self.gamma, self.regular_reward)
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return _discounted_macro_reward(
+            transition.action, self.gamma, self.regular_reward
+        )
 
 
 class MacroAgnosticReward(DefaultUniformReward):
@@ -107,17 +109,17 @@ class FactoredMacroReward(DefaultUniformReward):
     def __eq__(self, other):
         return super().__eq__(other) and self.factor == other.factor
 
-    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
-        return self.regular_reward - len(macro) / self.factor
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return self.regular_reward - len(transition.action) / self.factor
 
 
 class DiscountedMacroReward(DefaultUniformReward):
     r"""
     A reward function that returns a discounted reward for a macro action taken.
 
-    The difference to the DefaultUniformReward is that the discount factor for macros is not forced to be the same
-    as the primitive gamma. This allows to further discount the cost of macros to incentivize choosing longer macros
-    over shorter macros or simply chains of primitives.
+    The difference to `DefaultUniformReward` is that the discount factor for macros is not forced to be the same
+    as for primitive actions. This allows to further discount the cost of macros to incentivize choosing longer macros
+    over shorter macros or mere chains of primitives.
     """
 
     def __init__(
@@ -132,5 +134,7 @@ class DiscountedMacroReward(DefaultUniformReward):
     def __eq__(self, other):
         return super().__eq__(other) and self.gamma_macros == other.gamma_macros
 
-    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
-        return _discounted_macro_reward(macro, self.gamma_macros, self.regular_reward)
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return _discounted_macro_reward(
+            transition.action, self.gamma_macros, self.regular_reward
+        )
