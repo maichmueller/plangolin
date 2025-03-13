@@ -202,8 +202,8 @@ class XDomain(MimirWrapper[Domain]):
         return self.base.get_constants()
 
     @cached_property
-    def actions(self) -> ActionList:
-        return self.base.get_actions()
+    def actions(self) -> tuple[XActionSchema, ...]:
+        return tuple(map(XActionSchema, self.base.get_actions()))
 
     @cached_property
     def functions(self) -> FunctionSkeletonList:
@@ -304,6 +304,40 @@ class XProblem(MimirWrapper[Problem]):
             f"}}"
         )
 
+class XActionSchema(MimirWrapper[Action]):
+    @property
+    def name(self) -> str:
+        return self.base.get_name()
+
+    @property
+    def arity(self) -> float:
+        return self.base.get_arity()
+
+    @cached_property
+    def condition(self) -> tuple[XLiteral, ...]:
+        return tuple(
+            map(
+                XLiteral,
+                chain(
+                    self.base.get_precondition().get_fluent_conditions(),
+                    self.base.get_precondition().get_derived_conditions(),
+                    self.base.get_precondition().get_precondition(),
+                ),
+            )
+        )
+
+    @cached_property
+    def effects(self) -> tuple[XLiteral, ...]:
+        return tuple(
+            map(
+                XLiteral,
+                self.base.get_strips_effect().get_effects(),
+            )
+        )
+
+    def __str__(self):
+        return str(self.base)
+
 
 class XAction(MimirWrapper[GroundAction]):
     action_generator: XActionGenerator
@@ -341,7 +375,7 @@ class XAction(MimirWrapper[GroundAction]):
 
     @property
     def name(self) -> str:
-        return self.action_schema.get_name()
+        return self.action_schema.name
 
     @property
     def cost(self) -> float:
