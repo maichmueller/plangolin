@@ -78,7 +78,54 @@ class MimirWrapper(Generic[T]):
     def __eq__(self, other):
         if not isinstance(other, type(self)):
             return NotImplemented
+        if other.is_hollow:
+            return self.hollow_eq(other)
         return self.base == other.base
+
+    @hollow_check
+    def hollow_eq(self, other):
+        r"""
+        Check for equality of the object with another hollow object.
+        """
+        return self._hollow_eq(other)
+
+    def _hollow_eq(self, other):
+        raise NotImplementedError
+
+    def semantic_eq(self, other):
+        r"""
+        Check for semantic equality of the object.
+
+        This method is used to compare objects that are not the same in memory but are semantically the same.
+        Most pymimir objects are mere views onto underlying data. In consequence, two states, two literals, two atoms,
+        two actions, etc. may be semantically the same but are created in different repositories and thus may compare
+        to unequal.
+        Semantic equality should provide a way for the user to identify equality between such objects regardless.
+
+        It should be understood that semantic equality does not ensure that the objects can be used interchangeably,
+        particularly not in pymimir functionality.
+        """
+        raise NotImplementedError(
+            f"Semantic equality is not implemented for class {self.__class__.__name__}."
+        )
+
+    @staticmethod
+    def _semantic_eq_container(
+        container1: Sequence[MimirWrapper],
+        container2: Sequence[MimirWrapper],
+        *,
+        ordered,
+    ):
+        """
+        Check for semantic equality of two containers.
+        """
+        if len(container1) != len(container2):
+            return False
+
+        if not ordered:
+            return all(any(a.semantic_eq(b) for b in container2) for a in container1)
+        else:
+            return all(a.semantic_eq(b) for a, b in zip(container1, container2))
 
 
 class XPredicate(MimirWrapper[Predicate]):
@@ -104,6 +151,13 @@ class XPredicate(MimirWrapper[Predicate]):
 
     def __str__(self):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
+
+    def semantic_eq(self, other: XPredicate):
+        return (
+            self.name == other.name
+            and self.arity == other.arity
+            and self.category == other.category
+        )
 
 
 class XAtom(MimirWrapper[GroundAtom]):
@@ -134,10 +188,15 @@ class XAtom(MimirWrapper[GroundAtom]):
         obj.objects = tuple(objects)
         return obj
 
-    def __eq__(self, other):
+    def _hollow_eq(self, other):
         if not isinstance(other, type(self)):
             return NotImplemented
         return self.predicate == other.predicate and self.objects == other.objects
+
+    def semantic_eq(self, other):
+        return self.predicate.semantic_eq(other.predicate) and all(
+            a.get_name() == b.get_name() for a, b in zip(self.objects, other.objects)
+        )
 
     def __hash__(self):
         return hash((self.predicate, self.objects))
@@ -166,10 +225,13 @@ class XLiteral(MimirWrapper[GroundLiteral]):
     def __str__(self):
         return f"{'-' if self.base.is_negated() else '+'}{self.atom}"
 
-    def __eq__(self, other):
+    def _hollow_eq(self, other):
         if not isinstance(other, type(self)):
             return NotImplemented
         return self.is_negated == other.is_negated and self.atom == other.atom
+
+    def semantic_eq(self, other):
+        return self.is_negated == other.is_negated and self.atom.semantic_eq(other.atom)
 
     def __hash__(self):
         return hash((self.is_negated, self.atom))
@@ -215,6 +277,24 @@ class XDomain(MimirWrapper[Domain]):
 
     def __str__(self):
         return str(self.base)
+
+    def semantic_eq(self, other):
+        if Path(self.filepath).exists() and Path(other.filepath).exists():
+            content1 = Path(self.filepath).read_text()
+            content2 = Path(other.filepath).read_text()
+            if content1 == content2:
+                # two identical files must be semantically equal
+                return True
+
+        raise NotImplementedError("Still WIP.")
+
+        return (
+            self.name == other.name
+            and self._semantic_eq_container(
+                self.predicates(), other.predicates(), ordered=False
+            )
+            and all(action for action in self.actions)
+        )
 
 
 class XProblem(MimirWrapper[Problem]):
@@ -304,6 +384,31 @@ class XProblem(MimirWrapper[Problem]):
             f"}}"
         )
 
+    def semantic_eq(self, other):
+        if Path(self.filepath).exists() and Path(other.filepath).exists():
+            content1 = Path(self.filepath).read_text()
+            content2 = Path(other.filepath).read_text()
+            if content1 == content2:
+                # two identical files must be semantically equal
+                return True
+
+        return (
+            self.name == other.name
+            and self.domain.semantic_eq(other.domain)
+            and len(self.objects) == len(other.objects)
+            and all(
+                a.get_name() == b.get_name()
+                for a, b in zip(self.objects, other.objects)
+            )
+            and self._semantic_eq_container(
+                tuple(self.initial_atoms()), tuple(other.initial_atoms()), ordered=False
+            )
+            and self._semantic_eq_container(
+                tuple(self.goal()), tuple(other.goal()), ordered=False
+            )
+        )
+
+
 class XActionSchema(MimirWrapper[Action]):
     @property
     def name(self) -> str:
@@ -333,6 +438,16 @@ class XActionSchema(MimirWrapper[Action]):
                 XLiteral,
                 self.base.get_strips_effect().get_effects(),
             )
+        )
+
+    def semantic_eq(self, other):
+        return (
+            self.name == other.name
+            and self.arity == other.arity
+            and self._semantic_eq_container(
+                self.condition, other.condition, ordered=False
+            )
+            and self._semantic_eq_container(self.effects, other.effects, ordered=False)
         )
 
     def __str__(self):
@@ -381,7 +496,7 @@ class XAction(MimirWrapper[GroundAction]):
     def cost(self) -> float:
         return self.base.get_strips_effect().get_cost()
 
-    def preconditions(
+    def conditions(
         self, *category: XCategory, positive: bool = True
     ) -> Generator[XAtom]:
         conditions = self.base.get_strips_precondition()
@@ -422,6 +537,11 @@ class XAction(MimirWrapper[GroundAction]):
     def objects(self):
         objs = self.problem.objects
         return [objs[i] for i in self.base.get_object_indices()]
+
+    def semantic_eq(self, other):
+        return self.action_schema.semantic_eq(other.action_schema) and all(
+            a.get_name() == b.get_name() for a, b in zip(self.objects, other.objects)
+        )
 
 
 class StateLabel(Enum):
@@ -558,6 +678,13 @@ class XState(MimirWrapper[State]):
             + "])"
         )
 
+    def semantic_eq(self, other):
+        return self._semantic_eq_container(
+            self.fluent_atoms, other.fluent_atoms, ordered=False
+        ) and self._semantic_eq_container(
+            self.derived_atoms, other.derived_atoms, ordered=False
+        )
+
 
 class XTransition(MimirWrapper[GroundActionEdge]):
     source: XState
@@ -590,9 +717,7 @@ class XTransition(MimirWrapper[GroundActionEdge]):
     def __iter__(self):
         return iter((self.source, self.target, self.action))
 
-    def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
+    def _hollow_eq(self, other):
         return (
             self.source == other.source
             and self.target == other.target
@@ -604,6 +729,13 @@ class XTransition(MimirWrapper[GroundActionEdge]):
 
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
+
+    def semantic_eq(self, other):
+        return (
+            self.source.semantic_eq(other.source)
+            and self.target.semantic_eq(other.target)
+            and self.action.semantic_eq(other.action)
+        )
 
     def to_string(self, detailed: bool = False):
         if not detailed:
@@ -727,6 +859,11 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
     def successors(self, state: XState) -> Generator[tuple[XAction, XState]]:
         for action in self.action_generator.generate_actions(state):
             yield action, self.successor(state, action)
+
+    def semantic_eq(self, other):
+        raise NotImplementedError(
+            "Semantic equality is not implemented for successor generators."
+        )
 
     __hash__ = None
 
