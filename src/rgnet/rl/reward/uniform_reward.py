@@ -25,7 +25,7 @@ def _discounted_macro_reward(macro, gamma, primitive_reward):
             return primitive_reward * (1.0 - gamma**length) / (1.0 - gamma)
 
 
-class DefaultUniformReward(RewardFunction):
+class UnitReward(RewardFunction):
     """
     A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
 
@@ -88,12 +88,12 @@ class DefaultUniformReward(RewardFunction):
         )
 
 
-class MacroAgnosticReward(DefaultUniformReward):
+class MacroAgnosticReward(UnitReward):
     def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
         return self.regular_reward
 
 
-class FactoredMacroReward(DefaultUniformReward):
+class FactoredMacroReward(UnitReward):
     """
     A reward function that returns a reward of -(1 + len(actions) / factor) for a (macro) action taken.
     """
@@ -113,7 +113,7 @@ class FactoredMacroReward(DefaultUniformReward):
         return self.regular_reward - len(transition.action) / self.factor
 
 
-class DiscountedMacroReward(DefaultUniformReward):
+class DiscountedMacroReward(UnitReward):
     r"""
     A reward function that returns a discounted reward for a macro action taken.
 

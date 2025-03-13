@@ -41,7 +41,7 @@ from rgnet.rl.losses import (  # noqa: F401
 )
 from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
-from rgnet.rl.reward import RewardFunction
+from rgnet.rl.reward import RewardFunction, UnitReward
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 

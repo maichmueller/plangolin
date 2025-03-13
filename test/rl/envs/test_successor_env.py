@@ -7,7 +7,7 @@ import torch
 import xmimir as xmi
 from rgnet.rl.envs import SuccessorEnvironment
 from rgnet.rl.non_tensor_data_utils import tolist
-from rgnet.rl.reward import DefaultUniformReward
+from rgnet.rl.reward import UnitReward
 
 
 def create_successor_env(
@@ -16,7 +16,7 @@ def create_successor_env(
     return SuccessorEnvironment(
         [xmi.XSuccessorGenerator(problem)],
         batch_size=torch.Size((batch_size,)),
-        reward_function=DefaultUniformReward(deadend_reward=-1000),
+        reward_function=UnitReward(deadend_reward=-1000),
     )
 
 
@@ -26,7 +26,7 @@ def test_successor_env_init(medium_blocks):
         [xmi.XSuccessorGenerator(problem)],
         batch_size=torch.Size((1,)),
         device=torch.device("cpu"),
-        reward_function=DefaultUniformReward(deadend_reward=-1000),
+        reward_function=UnitReward(deadend_reward=-1000),
         seed=42,
     )
 
@@ -48,7 +48,7 @@ def test_successor_env_is_goal(medium_blocks):
     env = SuccessorEnvironment(
         [successor_gen],
         batch_size=torch.Size((1,)),
-        reward_function=DefaultUniformReward(gamma=0.9),
+        reward_function=UnitReward(gamma=0.9),
     )
     td = env.reset(states=[goal_state])
     assert env.is_goal(td[env.keys.instance][0], goal_state)
@@ -75,7 +75,7 @@ def test_dead_end(medium_blocks):
     env = SuccessorEnvironment(
         [successor_gen],
         batch_size=torch.Size((1,)),
-        reward_function=DefaultUniformReward(deadend_reward=-1000),
+        reward_function=UnitReward(deadend_reward=-1000),
     )
     td = env.reset()
     transitions: List[List[xmi.XTransition]] = tolist(td[env.keys.transitions])

@@ -6,7 +6,7 @@ import torch
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.reward import DefaultUniformReward
+from rgnet.rl.reward import UnitReward
 from xmimir import XLiteral, XState, XStateSpace
 
 
@@ -62,7 +62,7 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
         space=space,
         batch_size=torch.Size([batch_size]),
         seed=42,
-        reward_function=DefaultUniformReward(deadend_reward=custom_dead_end_reward),
+        reward_function=UnitReward(deadend_reward=custom_dead_end_reward),
         is_dead_end=is_dead_end,
         is_goal=is_goal,
     )

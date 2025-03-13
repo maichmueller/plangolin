@@ -7,7 +7,7 @@ from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
-from rgnet.rl.reward import DefaultUniformReward, RewardFunction
+from rgnet.rl.reward import RewardFunction, UnitReward
 from xmimir import XState
 
 
@@ -78,7 +78,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         seed: Optional[int] = None,
         device: DEVICE_TYPING = "cpu",
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
-        reward_function: RewardFunction = DefaultUniformReward(gamma=0.9),
+        reward_function: RewardFunction = UnitReward(gamma=0.9),
     ):
         self.reset_strategy = reset_strategy
         super().__init__(

@@ -16,7 +16,7 @@ from torch_geometric.loader import ImbalancedSampler
 
 from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.reward import DefaultUniformReward, RewardFunction
+from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from xmimir import Domain
