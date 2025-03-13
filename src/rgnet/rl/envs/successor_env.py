@@ -4,11 +4,9 @@ from typing import Iterable, List, Tuple
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from xmimir import XLiteral, XState
-from xmimir.wrappers import StateLabel
 
 
 class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
-
     def __init__(self, generators: Iterable[xmi.XSuccessorGenerator], *args, **kwargs):
         super().__init__(list(generators), *args, **kwargs)
 
@@ -18,11 +16,7 @@ class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
         state: xmi.XState,
     ) -> List[xmi.XTransition]:
         return [
-            xmi.XTransition.make_hollow(
-                state,
-                next_state,
-                action,
-            )
+            xmi.XTransition.make_hollow(state, action, next_state)
             for action, next_state in active_instance.successors(state)
         ]
 

@@ -1,16 +1,13 @@
 from collections import deque
 from test.fixtures import large_blocks, medium_blocks, small_blocks  # noqa: F401
 
-import pymimir
 import pytest
 import torch
 from tensordict.tensorclass import NonTensorData
-from torchrl.envs.transforms import RenameTransform
 
 import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from xmimir import XProblem
-from xmimir.wrappers import StateLabel, XSearchResult
+from xmimir.wrappers import StateLabel
 
 
 @pytest.mark.parametrize("space_fixture", ["small_blocks", "medium_blocks"])
@@ -72,7 +69,7 @@ def test_state_label_in_env(space_fixture, batch_size, request):
     source = result.start
     for action in result.plan:
         target = successor_generator.successor(source, action)
-        transitions.append(xmi.XTransition.make_hollow(source, target, action))
+        transitions.append(xmi.XTransition.make_hollow(source, action, target))
         source = target
     # print(*map(str, result.plan), sep="\n")
     env = ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)

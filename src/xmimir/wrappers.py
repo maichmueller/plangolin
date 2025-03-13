@@ -579,8 +579,8 @@ class XTransition(MimirWrapper[GroundActionEdge]):
     def make_hollow(
         cls,
         source: XState,
-        target: XState,
         action: XAction | Iterable[XAction] | None,
+        target: XState,
     ):
         obj = super().make_hollow()
         obj.source = source

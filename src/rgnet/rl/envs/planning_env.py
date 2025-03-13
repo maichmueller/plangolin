@@ -2,19 +2,8 @@ from __future__ import annotations
 
 import abc
 import dataclasses
-import warnings
 from itertools import cycle
-from typing import (
-    Generic,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Sized,
-    Tuple,
-    Type,
-    TypeVar,
-)
+from typing import Generic, List, Optional, Sequence, Tuple, Type, TypeVar
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
@@ -25,8 +14,7 @@ from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
-from rgnet.rl.reward import DefaultUniformReward, RewardFunction
-from rgnet.utils.utils import broadcastable
+from rgnet.rl.reward import RewardFunction
 
 InstanceType = TypeVar("InstanceType")
 
@@ -46,7 +34,6 @@ class InstanceReplacementStrategy(metaclass=abc.ABCMeta):
 
 
 class RoundRobinReplacement(InstanceReplacementStrategy):
-
     def __init__(self, all_instances: List[InstanceType]):
         super().__init__(all_instances)
         self._next_active_iterator = cycle(all_instances)
@@ -301,7 +288,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # whenever we encounter dead-end states.
         return [
             self.transitions_for(instance, state)
-            or [xmi.XTransition.make_hollow(state, state, None)]
+            or [xmi.XTransition.make_hollow(state, None, state)]
             for (instance, state) in zip(self._active_instances, states)
         ]
 
@@ -403,7 +390,6 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         states: List[xmi.State] | NonTensorWrapper | None = None,
         **kwargs,
     ) -> TensorDict:
-
         batch_size = self.batch_size[0]
 
         if (
