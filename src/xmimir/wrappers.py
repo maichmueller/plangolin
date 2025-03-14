@@ -110,7 +110,7 @@ class MimirWrapper(Generic[T]):
         )
 
     @staticmethod
-    def _semantic_eq_container(
+    def semantic_eq_sequences(
         container1: Sequence[MimirWrapper],
         container2: Sequence[MimirWrapper],
         *,
@@ -280,20 +280,15 @@ class XDomain(MimirWrapper[Domain]):
 
     def semantic_eq(self, other):
         if Path(self.filepath).exists() and Path(other.filepath).exists():
+            if self.filepath == other.filepath:
+                return True
             content1 = Path(self.filepath).read_text()
             content2 = Path(other.filepath).read_text()
             if content1 == content2:
                 # two identical files must be semantically equal
                 return True
-
-        raise NotImplementedError("Still WIP.")
-
-        return (
-            self.name == other.name
-            and self._semantic_eq_container(
-                self.predicates(), other.predicates(), ordered=False
-            )
-            and all(action for action in self.actions)
+        raise NotImplementedError(
+            "No semantic check for domains beyond PDDL file contents."
         )
 
 
@@ -400,10 +395,10 @@ class XProblem(MimirWrapper[Problem]):
                 a.get_name() == b.get_name()
                 for a, b in zip(self.objects, other.objects)
             )
-            and self._semantic_eq_container(
+            and self.semantic_eq_sequences(
                 tuple(self.initial_atoms()), tuple(other.initial_atoms()), ordered=False
             )
-            and self._semantic_eq_container(
+            and self.semantic_eq_sequences(
                 tuple(self.goal()), tuple(other.goal()), ordered=False
             )
         )
@@ -444,10 +439,10 @@ class XActionSchema(MimirWrapper[Action]):
         return (
             self.name == other.name
             and self.arity == other.arity
-            and self._semantic_eq_container(
+            and self.semantic_eq_sequences(
                 self.condition, other.condition, ordered=False
             )
-            and self._semantic_eq_container(self.effects, other.effects, ordered=False)
+            and self.semantic_eq_sequences(self.effects, other.effects, ordered=False)
         )
 
     def __str__(self):
@@ -679,9 +674,9 @@ class XState(MimirWrapper[State]):
         )
 
     def semantic_eq(self, other):
-        return self._semantic_eq_container(
+        return self.semantic_eq_sequences(
             self.fluent_atoms, other.fluent_atoms, ordered=False
-        ) and self._semantic_eq_container(
+        ) and self.semantic_eq_sequences(
             self.derived_atoms, other.derived_atoms, ordered=False
         )
 
