@@ -936,9 +936,13 @@ class XStateSpace(MimirWrapper[StateSpace]):
         self._vertices = space.get_vertices()
 
     @multimethod
-    def __init__(self, domain_path, problem_path, **options):  # noqa: F811
+    def __init__(
+        self, domain_path: str | Path, problem_path: str | Path, **options
+    ):  # noqa: F811
         self.__init__(
-            StateSpace.create(domain_path, problem_path, StateSpaceOptions(**options)),
+            StateSpace.create(
+                str(domain_path), str(problem_path), StateSpaceOptions(**options)
+            ),
         )
 
     @multimethod
