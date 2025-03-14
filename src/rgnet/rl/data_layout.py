@@ -26,6 +26,7 @@ class OutputData:
         ensure_new_out_dir: bool = False,
         root_dir: Path | None = None,
         domain_name: str | None = None,
+        output_dir_order: Literal["domain"] | Literal["experiment"] = "domain",
     ):
         super().__init__()
         out_dir = Path(out_dir)
@@ -42,7 +43,14 @@ class OutputData:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
 
         if domain_name is not None:
-            self.out_dir = out_dir / domain_name / experiment_name
+            if output_dir_order == "domain":
+                self.out_dir = out_dir / domain_name / experiment_name
+            elif output_dir_order == "experiment":
+                self.out_dir = out_dir / experiment_name / domain_name
+            else:
+                raise ValueError(
+                    f"Invalid 'output_dir_order'. Must be 'domain' or 'experiment'. Given {output_dir_order=}"
+                )
         else:
             self.out_dir = out_dir / experiment_name
 
@@ -270,7 +278,6 @@ class InputData:
         return all_instances, problems
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
-
         train_dir = self.pddl_domains_dir / self.train_subdir
         found_instances, problems = self._resolve_instances(
             train_dir, _all_or_filter(instances)
