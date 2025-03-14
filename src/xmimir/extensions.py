@@ -11,15 +11,26 @@ from .wrappers import XAtom, XDomain, XProblem, XState
 
 
 def parse(
-    domain: Union[str, Path, Domain], problem: Union[str, Path, Problem]
+    domain: Union[str, Path, Domain, XDomain],
+    problem: Union[str, Path, Problem, XProblem],
 ) -> tuple[XDomain, XProblem]:
     """
     Parse the problem into a domain, problem, and repositories.
     """
-    if isinstance(domain, Domain):
-        domain = domain.get_filepath()
-    if isinstance(problem, Problem):
-        problem = problem.get_filepath()
+    match domain:
+        case Domain():
+            domain = domain.get_filepath()
+        case XDomain():
+            domain = domain.filepath
+        case Path():
+            domain = str(domain.absolute())
+    match problem:
+        case Problem():
+            problem = problem.get_filepath()
+        case XProblem():
+            problem = problem.filepath
+        case Path():
+            problem = str(problem.absolute())
 
     parser = PDDLParser(domain, problem)
     return (
