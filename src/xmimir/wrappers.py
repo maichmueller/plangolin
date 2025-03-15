@@ -123,9 +123,23 @@ class MimirWrapper(Generic[T]):
             return False
 
         if not ordered:
-            return all(any(a.semantic_eq(b) for b in container2) for a in container1)
+            return MimirWrapper.semantic_eq_subset(container1, container2)
         else:
             return all(a.semantic_eq(b) for a, b in zip(container1, container2))
+
+    @staticmethod
+    def semantic_eq_subset(
+        container1: Sequence[MimirWrapper], container2: Sequence[MimirWrapper]
+    ):
+        """
+        Check that container1 is a semantic subset of container2.
+
+        This means that we check for all x in cont1 that x is semantically equal to at least 1 element in cont2.
+
+        Note:
+            An empty container1 is always a subset of container2.
+        """
+        return all(any(a.semantic_eq(b) for b in container2) for a in container1)
 
 
 class XPredicate(MimirWrapper[Predicate]):
@@ -591,6 +605,10 @@ class XState(MimirWrapper[State]):
         return hash((self.base, self.problem))
 
     @cached_property
+    def static_atoms(self):
+        return tuple(self.problem.static_atoms())
+
+    @cached_property
     def fluent_atoms(self) -> tuple[XAtom, ...]:
         """
         Get the fluent atoms of the state.
@@ -673,12 +691,23 @@ class XState(MimirWrapper[State]):
             + "])"
         )
 
-    def semantic_eq(self, other):
+    @multimethod
+    def semantic_eq(self, other: XState):
         return self.semantic_eq_sequences(
             self.fluent_atoms, other.fluent_atoms, ordered=False
         ) and self.semantic_eq_sequences(
             self.derived_atoms, other.derived_atoms, ordered=False
         )
+
+    @multimethod
+    def semantic_eq(self, other: Sequence[XAtom]):
+        if not self.semantic_eq_subset(self.static_atoms, other):
+            return False
+        if not self.semantic_eq_subset(self.fluent_atoms, other):
+            return False
+        if not self.semantic_eq_subset(self.derived_atoms, other):
+            return False
+        return True
 
 
 class XTransition(MimirWrapper[GroundActionEdge]):
