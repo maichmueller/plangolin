@@ -51,38 +51,47 @@ class ThundeRLDataModule(LightningDataModule):
         self.validation_sets: Sequence[Dataset] = []
 
     def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
+        nr_total = len(problem_paths)
+        completed = 0
+
         def update(dataset):
+            nonlocal completed
+            completed += 1
             logging.info(
-                f"Finished loading problem {dataset.problem_path.stem} (#{len(dataset)} states)."
+                f"Finished loading problem {completed}/{nr_total} - {dataset.problem_path.stem} "
+                f"(#{len(dataset)} states)."
             )
 
         datasets: Dict[Path, FlashDrive] = dict()
         flashdrive_kwargs = dict(
             domain_path=self.data.domain_path,
             reward_function=self.reward_function,
-            root_dir=str(self.data.dataset_dir),
             logging_kwargs=None,
             encoder_factory=self.encoder_factory,
         )
         start_time = time.time()
         if self.parallel and len(problem_paths) > 1:
 
-            def enqueue_parallel(problem_path: Path, thread_id: int):
+            def enqueue_parallel(problem_path: Path, task_id: int):
                 return pool.apply_async(
                     FlashDrive,
                     kwds=flashdrive_kwargs
                     | dict(
                         problem_path=problem_path,
+                        root_dir=str(self.data.dataset_dir / problem_path.stem),
                         show_progress=False,
                         logging_kwargs=dict(
-                            log_level=logging.getLogger().level, thread_id=thread_id
+                            log_level=logging.getLogger().level, task_id=task_id
                         ),
                     ),
                     callback=update,
                 )
 
-            with Pool(min(cpu_count(), len(problem_paths))) as pool:
-                logging.info(f"Loading #{len(problem_paths)} problems in parallel.")
+            pool_size = min(cpu_count(), len(problem_paths))
+            with Pool(pool_size) as pool:
+                logging.info(
+                    f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
+                )
                 results = {
                     problem_path: enqueue_parallel(problem_path, i)
                     for i, problem_path in enumerate(problem_paths)

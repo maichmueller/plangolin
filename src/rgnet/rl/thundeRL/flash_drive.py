@@ -1,5 +1,4 @@
 import logging
-import os.path
 import pickle
 from pathlib import Path
 from typing import Any, List, Mapping, Optional, Tuple, Union
@@ -40,19 +39,18 @@ class FlashDrive(InMemoryDataset):
         self.reward_function = reward_function
         self.max_expanded = max_expanded
         self.show_progress = show_progress
-        self.logging_kwargs = logging_kwargs  # will be removed after process()
+        self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
         self.metadata_path = Path(root_dir) / (
             str(self.processed_file_names[0]) + ".meta"
         )
-        # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
-        # data will align with our expectations.
-        if not os.path.exists(self.metadata_path) or not self._metadata_matches(
-            pickle.load(open(self.metadata_path, "rb"))
-        ):
-            logging.getLogger("root").info(
-                f"Metadata mismatch for problem {self.problem_path}, forcing reload."
-            )
-            force_reload = True
+        if self.metadata_path.exists():
+            # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
+            # data will align with our expectations.
+            if not self._metadata_matches(pickle.load(open(self.metadata_path, "rb"))):
+                logging.getLogger("root").info(
+                    f"Metadata mismatch for problem {self.problem_path}, forcing reload."
+                )
+                force_reload = True
         super().__init__(
             root=root_dir,
             transform=self.target_idx_to_data_transform,
@@ -164,11 +162,13 @@ class FlashDrive(InMemoryDataset):
             distance_to_goal = space.goal_distance(state)
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[state.index] = data
+        # self._log_build_end(space)
+        del self.logging_kwargs
         return batched_data
 
     def _log_build_start(self, space: XStateSpace) -> None:
         if self.logging_kwargs is not None:
-            logger = logging.getLogger(f"thread-{self.logging_kwargs['thread_id']}")
+            logger = logging.getLogger(f"FD-{self.logging_kwargs['task_id']}")
             logger.setLevel(self.logging_kwargs["log_level"])
         else:
             logger = logging.getLogger("root")
@@ -176,7 +176,16 @@ class FlashDrive(InMemoryDataset):
             f"Building {self.__class__.__name__} "
             f"(problem: {space.problem.name}, #space: {space})"
         )
-        del self.logging_kwargs
+
+    def _log_build_end(self, space: XStateSpace) -> None:
+        if self.logging_kwargs is not None:
+            logger = logging.getLogger(f"thread-{self.logging_kwargs['task_id']}")
+        else:
+            logger = logging.getLogger("root")
+        logger.info(
+            f"Finished {self.__class__.__name__} "
+            f"(problem: {space.problem.name}, #space: {space})"
+        )
 
     def target_idx_to_data_transform(
         self, data: Union[HeteroData, Data]
