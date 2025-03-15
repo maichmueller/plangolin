@@ -693,6 +693,12 @@ class XState(MimirWrapper[State]):
 
     @multimethod
     def semantic_eq(self, other: XState):
+        if not (
+            (self.problem == other.problem) or self.problem.semantic_eq(other.problem)
+        ):
+            self.semantic_eq_sequences(
+                self.static_atoms, other.fluent_atoms, ordered=False
+            )
         return self.semantic_eq_sequences(
             self.fluent_atoms, other.fluent_atoms, ordered=False
         ) and self.semantic_eq_sequences(
