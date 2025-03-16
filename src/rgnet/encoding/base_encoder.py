@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Iterable, Optional, Sequence, Type, TypeVar, get_args
 
@@ -83,6 +84,11 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
     def _contained_objects(
         items: Sequence[XAtom] | Sequence[XLiteral],
     ) -> list[Object]:
+        if len(items) == 0:
+            warnings.warn(
+                "Received empty atom/literal sequence. Check if the state or goal is empty."
+            )
+            return []
         return sorted(
             (
                 gather_objects(items)
