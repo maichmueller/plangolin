@@ -1167,4 +1167,5 @@ __all__ = [
     "XAction",
     "XActionGenerator",
     "XSuccessorGenerator",
+    "XSearchResult",
 ]

@@ -3,64 +3,86 @@ import logging
 import time
 from abc import abstractmethod
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
-from typing import Callable, Dict, Iterable, Iterator, List, NamedTuple
+from typing import Callable, Iterable, Iterator, List, NamedTuple, Sequence
 
 import torch
 from pymimir import StateSpace
 
 from .wrappers import *
 
+__all__ = [
+    "Novelty",
+    "NoveltyCheck",
+    "CollectorHook",
+    "ExpansionNode",
+    "ExpansionStrategy",
+    "InOrderExpansion",
+    "ReverseOrderExpansion",
+    "RandomizedExpansion",
+    "IWSearch",
+    "IWStateSpace",
+]
 
-class NoveltyCheck(NamedTuple):
-    is_novel: bool
+
+@dataclass(slots=True)
+class NoveltyCheck:
+    novelty: int
     novel_tuples: List[tuple[XAtom, ...]]
+
+    def __bool__(self):
+        return self.novelty > -1
 
 
 class Novelty:
     def __init__(self, arity: int, problem: XProblem):
         self.arity = arity
         self.problem = problem
-        self.visited_lookup: Dict[tuple[XAtom, ...], bool] = defaultdict(bool)
+        self.known_tuples: set[tuple[XAtom, ...]] = set()
 
     @staticmethod
-    def ordered_atom_tuple(atom_tuple: Iterable[XAtom]):
-        return tuple(sorted(atom_tuple, key=hash))
+    def as_ordered_atom_tuple(atom_tuple: Iterable[XAtom]):
+        return tuple(sorted(atom_tuple, key=str))
 
-    def _tuple_generator(self, atoms: Iterable[XAtom]):
+    def _tuple_generator(self, atoms: Sequence[XAtom]):
         for arity in range(1, self.arity + 1):
-            for atom_tuples in itertools.combinations_with_replacement(atoms, arity):
-                atom_set = set(atom_tuples)
-                if len(atom_set) < arity:
-                    # we have yielded this atom already in a previous iteration
-                    continue
-                yield self.ordered_atom_tuple(atom_set)
+            for atom_tuple in itertools.combinations(atoms, arity):
+                yield self.as_ordered_atom_tuple(atom_tuple)
 
-    def mark_visited(self, atom_tuple_iter: Iterable[tuple[XAtom, ...]]):
-        for atom_tuple in map(self.ordered_atom_tuple, atom_tuple_iter):
-            self.visited_lookup[atom_tuple] = True
+    def add_known_tuples(self, atom_tuple_iter: Iterable[tuple[XAtom, ...]]):
+        for atom_tuple in map(self.as_ordered_atom_tuple, atom_tuple_iter):
+            self.known_tuples.add(atom_tuple)
 
     @singledispatchmethod
-    def test(self, atoms: Iterable[XAtom]) -> NoveltyCheck:
-        novel = False
+    def test(self, atoms: Sequence[XAtom]) -> NoveltyCheck:
+        novelty = -1
         novel_tuples = []
         for atom_tuple in self._tuple_generator(atoms):
-            if not self.visited_lookup[atom_tuple]:
-                self.visited_lookup[atom_tuple] = True
+            if atom_tuple not in self.known_tuples:
+                self.known_tuples.add(atom_tuple)
                 novel_tuples.append(atom_tuple)
-                novel = True
-        return NoveltyCheck(novel, novel_tuples)
+                novelty = (
+                    len(novel_tuples)
+                    if novelty == -1
+                    else min(novelty, len(novel_tuples))
+                )
+        return NoveltyCheck(novelty, novel_tuples)
 
     @test.register
     def _(self, state: XState):
-        return self.test(state.atoms(with_statics=False))
+        # logically we would like a Set datastruct here with stable iteration,
+        # but `set`'s iteration order is not guaranteed.
+        # Hence, we convert the atom-`iterable` to a `dict` which comes with necessary guarantees.
+        # Its keys are also multipass with respect to iteration and behave like a `set`
+        return self.test(dict.fromkeys(state.atoms(with_statics=False)).keys())
 
 
 class ExpansionNode(NamedTuple):
     state: XState
     trace: List[XTransition]
-    novelty_trace: List[tuple[XAtom, ...]]
+    novelty_trace: List[List[tuple[XAtom, ...]]]
     depth: int
 
 
@@ -96,6 +118,14 @@ class RandomizedExpansion(ExpansionStrategy):
             yield self.options[index]
 
 
+class CollectorHook:
+    def __init__(self):
+        self.nodes = []
+
+    def __call__(self, node: ExpansionNode):
+        self.nodes.append(node)
+
+
 class IWSearch:
     def __init__(
         self,
@@ -129,9 +159,9 @@ class IWSearch:
 
         if start_state is None:
             start_state = successor_generator.initial_state
-        novelty_condition.test(start_state.atoms(with_statics=False))
+        novelty_condition.test(start_state)
         if atom_tuples_to_avoid is not None:
-            novelty_condition.mark_visited(atom_tuples_to_avoid)
+            novelty_condition.add_known_tuples(atom_tuples_to_avoid)
 
         visit_queue: deque[ExpansionNode] = deque(
             [ExpansionNode(start_state, [], [], 0)]
@@ -162,7 +192,7 @@ class IWSearch:
 
         goal_found = False
         while iteration < expansion_budget and not (
-            (goal_found and stop_on_goal) or (visit_queue and not nodes)
+            (goal_found and stop_on_goal) or (not visit_queue and not nodes)
         ):
             if not visit_queue:
                 process_nodes()
@@ -190,7 +220,7 @@ class IWSearch:
             nodes
         ):
             for action, child_state in successor_generator.successors(state):
-                if (novel_check := novelty_condition.test(child_state)).is_novel:
+                if novel_check := novelty_condition.test(child_state):
                     child_trace = trace + [
                         XTransition.make_hollow(state, action, child_state)
                     ]
@@ -208,7 +238,7 @@ class IWSearch:
         return goal_nodes
 
 
-def atom_set(state_space: XStateSpace):
+def complete_atom_set(state_space: XStateSpace):
     all_atoms = set(state_space.initial_state.atoms(with_statics=True))
     for state in state_space:
         all_atoms.update(state.atoms(with_statics=False))
