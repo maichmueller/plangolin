@@ -1,15 +1,17 @@
 import itertools
 import logging
+import multiprocessing as mp
 import time
 from abc import abstractmethod
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
-from typing import Callable, Iterable, Iterator, List, NamedTuple, Sequence
+from typing import Any, Callable, Iterable, Iterator, List, NamedTuple, Sequence
 
 import torch
 from pymimir import StateSpace
+from tqdm import tqdm
 
 from .wrappers import *
 
@@ -256,6 +258,44 @@ def complete_atom_set(state_space: XStateSpace):
     return all_atoms
 
 
+def initialize_iw_state_space_worker(
+    domain_path: str,
+    problem_path: str,
+    space_options: dict[str, Any],
+    iw: IWSearch,
+    max_transitions: int,
+    max_time: timedelta,
+):
+    globals()["state_space"] = XStateSpace(
+        str(domain_path), str(problem_path), **space_options
+    )
+    globals()["iw"] = iw
+    globals()["max_transitions"] = max_transitions
+    globals()["max_time"] = max_time
+
+
+def _check_timeout(
+    nr_transitions: int,
+    start_time: datetime,
+    max_transitions: int,
+    max_time: timedelta,
+    problem_name: str,
+):
+    elapsed: timedelta = datetime.fromtimestamp(time.time()) - start_time
+    if nr_transitions >= max_transitions or elapsed >= max_time:
+        hours = elapsed.total_seconds() / 3600
+        minutes = int((hours % 1) * 60)
+        logging.info(
+            f"Stopping Criterion reached for instance {problem_name}. "
+            f"Transition buffer size: {nr_transitions} / {max_transitions}, "
+            f"time elapsed: {hours}h {minutes}m "
+            f"(max {max_time.total_seconds() / 3600}h {max_time.total_seconds() / 60}m)"
+        )
+        raise TimeoutError(
+            f"IWStateSpace({problem_name}) construction maxed out time or transition budget."
+        )
+
+
 class IWStateSpace(XStateSpace):
     @dataclass(slots=True)
     class StateInfo:
@@ -265,15 +305,18 @@ class IWStateSpace(XStateSpace):
     def __init__(
         self,
         iw: IWSearch,
-        primitive_space: XStateSpace | StateSpace,
+        problem: str | XProblem,
         *,
+        n_cpus: int = 1,
         max_transitions: int = float("inf"),
         max_time: timedelta = timedelta(hours=6),
+        chunk_size: int = 100,
+        **space_options,
     ):
         super().__init__(
-            primitive_space
-            if isinstance(primitive_space, StateSpace)
-            else primitive_space.base
+            StateSpace.create(
+                problem.domain.filepath, problem.filepath, **space_options
+            )
         )
         self.iw = iw
         self.iw_fwd_transitions: dict[XState, list[XTransition]] = dict()
@@ -283,24 +326,106 @@ class IWStateSpace(XStateSpace):
                 distance_to_goal=-1, distance_from_initial=-1
             )
         )
+        self.space_options = space_options
         self.max_transitions = max_transitions
         self.max_time = max_time
-        self._build()
+        self.chunk_size = chunk_size
+        self.n_cpus = min(n_cpus, mp.cpu_count())
+        if self.n_cpus > 1:
+            self._build_mp()
+        else:
+            self._build()
+
+    @staticmethod
+    def worker_build_transitions(state_indices):
+        state_space = globals()["state_space"]
+        iw = globals()["iw"]
+        transitions = []
+        # print("Worker started. Processing states:", state_indices)
+        for idx in state_indices:
+            state = state_space[idx]
+            collector = CollectorHook()
+            iw.solve(
+                state_space.successor_generator,
+                start_state=state,
+                stop_on_goal=False,
+                novel_hook=collector,
+            )
+            for node in collector.nodes:
+                transitions.append((idx, len(node.trace), node.state.index))
+        return transitions
+
+    def _build_mp(self):
+        start_time = datetime.fromtimestamp(time.time())
+        self.iw_fwd_transitions = {state: [] for state in self}
+        self.iw_bkwd_transitions = {state: [] for state in self}
+        num_states = len(self)
+        indices = list(range(num_states))
+
+        num_workers = self.n_cpus
+        chunks = list(
+            indices[i : i + self.chunk_size]
+            for i in range(0, len(indices), self.chunk_size)
+        )
+
+        # Prepare worker arguments for each small chunk.
+        worker_args = (
+            self.problem.domain.filepath,
+            self.problem.filepath,
+            self.space_options,
+            self.iw,
+            self.max_transitions,
+            self.max_time,
+        )
+        all_transitions = []
+        nr_transitions = 0
+        with mp.Pool(
+            processes=num_workers,
+            initializer=initialize_iw_state_space_worker,
+            initargs=worker_args,
+        ) as pool:
+            for result in tqdm(
+                pool.imap(IWStateSpace.worker_build_transitions, chunks),
+                total=len(chunks),
+            ):
+                all_transitions.extend(result)
+                nr_transitions += len(result)
+                _check_timeout(
+                    nr_transitions,
+                    start_time,
+                    self.max_transitions,
+                    self.max_time,
+                    self.problem.name,
+                )
+
+        self._process_transitions(all_transitions)
+        self._compute_iw_goal_distances()
+        self._compute_iw_initial_distances()
+
+    def _process_transitions(self, transitions: list[tuple[int, int, int]]):
+        for source_idx, nr_actions, target_idx in transitions:
+            source_state = self[source_idx]
+            target_state = self[target_idx]
+            transition = XTransition.make_hollow(
+                source_state, [None] * nr_actions, target_state
+            )
+            self.iw_fwd_transitions[source_state].append(transition)
+            self.iw_bkwd_transitions[target_state].append(transition)
 
     def _build(self):
         nr_transitions = 0
         start_time = datetime.fromtimestamp(time.time())
-        bkwd_transitions: list[XTransition] = [None] * len(self)
-        for i, state in enumerate(self):
-            state_fwd_transitions = []
-            state_bkwd_transitions = []
+        for i, state in tqdm(
+            enumerate(self), desc="Building IWStateSpace", total=len(self)
+        ):
+            state_transitions = []
 
             def novel_state_hook(node: ExpansionNode):
-                transition = XTransition.make_hollow(
-                    state, tuple(t.action for t in node.trace), node.state
+                state_transitions.append(
+                    XTransition.make_hollow(
+                        state, tuple(t.action for t in node.trace), node.state
+                    )
                 )
-                state_fwd_transitions.append(transition)
-                state_bkwd_transitions.append(transition)
 
             self.iw.solve(
                 self.successor_generator,
@@ -308,25 +433,17 @@ class IWStateSpace(XStateSpace):
                 novel_hook=novel_state_hook,
                 stop_on_goal=False,
             )
-            self.iw_fwd_transitions[state] = state_fwd_transitions
+            self.iw_fwd_transitions[state] = state_transitions
             self.iw_bkwd_transitions[state] = []  # to be filled afterwards
-            bkwd_transitions[i] = state_bkwd_transitions
-            nr_transitions += len(state_fwd_transitions)
-
-            elapsed: timedelta = datetime.fromtimestamp(time.time()) - start_time
-            if nr_transitions >= self.max_transitions or elapsed >= self.max_time:
-                hours = elapsed.total_seconds() / 3600
-                minutes = int((hours % 1) * 60)
-                logging.info(
-                    f"Stopping Criterion reached for instance {self.problem.name}. "
-                    f"Transition buffer size: {nr_transitions} / {self.max_transitions}, "
-                    f"time elapsed: {hours}h {minutes}m "
-                    f"(max {self.max_time.total_seconds() / 3600}h {self.max_time.total_seconds() / 60}m)"
-                )
-                raise TimeoutError(
-                    "IW State Space construction maxed out time or transition budget."
-                )
-        for bkwd_transition_list in bkwd_transitions:
+            nr_transitions += len(state_transitions)
+            _check_timeout(
+                nr_transitions,
+                start_time,
+                self.max_transitions,
+                self.max_time,
+                self.problem.name,
+            )
+        for bkwd_transition_list in self.iw_fwd_transitions.values():
             for transition in bkwd_transition_list:
                 self.iw_bkwd_transitions[transition.target].append(transition)
         self._compute_iw_goal_distances()
@@ -361,7 +478,6 @@ class IWStateSpace(XStateSpace):
             #     f"is initial: {self.successor_generator.initial_state == current_state}), "
             #     f"Number of predecessors: {self.backward_transition_count(current_state)}"
             # )
-            # For each predecessor (using backward transitions)
             for transition in self.backward_transitions(current_state):
                 predecessor_state = transition.source
                 # logging.debug(f"Predecessor state: {predecessor_state.index}")
@@ -458,3 +574,18 @@ class IWStateSpace(XStateSpace):
             return len(self.iw_fwd_transitions[state])
         else:
             return len(self.iw_bkwd_transitions[state])
+
+
+if __name__ == "__main__":
+    import os
+
+    source_dir = "" if os.getcwd().endswith("/test") else "test/"
+    domain_path = f"{source_dir}pddl_instances/blocks/domain.pddl"
+    problem_path = f"{source_dir}pddl_instances/blocks/large.pddl"
+    # problem_path = f"{source_dir}pddl_instances/blocks/iw/largish_unbound_goal.pddl"
+    space = XStateSpace(domain_path, problem_path)
+    iw_space = IWStateSpace(
+        IWSearch(2),
+        space.problem,
+        n_cpus=mp.cpu_count(),
+    )

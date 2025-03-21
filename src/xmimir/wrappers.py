@@ -221,6 +221,10 @@ class XAtom(MimirWrapper[GroundAtom]):
         return hash((self.predicate, self.objects))
 
     def __str__(self):
+        if not self.is_hollow:
+            return str(
+                self.base
+            )  # we assume that a XYZGroundAtom is represented as (predicate_name obj1 obj2 ...)
         obj_section = " ".join(obj.get_name() for obj in self.objects)
         return f"({self.predicate.name} {obj_section})"
 
