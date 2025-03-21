@@ -4,6 +4,7 @@ from enum import Enum, auto
 from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     Generator,
     Generic,
@@ -144,6 +145,8 @@ class MimirWrapper(Generic[T]):
 
 class XPredicate(MimirWrapper[Predicate]):
     category: XCategory
+    name: str
+    arity: int
 
     def __init__(self, predicate: Predicate):
         if isinstance(predicate, FluentPredicate):
@@ -154,14 +157,16 @@ class XPredicate(MimirWrapper[Predicate]):
             category = XCategory.static
         super().__init__(predicate)
         self.category = category
+        self.name = predicate.get_name()
+        self.arity = predicate.get_arity()
 
-    @property
-    def name(self):
-        return self.base.get_name()
-
-    @property
-    def arity(self):
-        return self.base.get_arity()
+    @classmethod
+    def make_hollow(cls, name: str, arity: int, category: XCategory):
+        obj = super().make_hollow()
+        obj.category = category
+        obj.name = name
+        obj.arity = arity
+        return obj
 
     def __str__(self):
         return f"{self.name}[{self.category.name[0].capitalize()}]/{self.arity}"
@@ -252,8 +257,11 @@ class XLiteral(MimirWrapper[GroundLiteral]):
 
 
 class XDomain(MimirWrapper[Domain]):
+    _predicate_dict: dict[str, XPredicate]
+
     def __init__(self, domain: Domain):
         super().__init__(domain)
+        self._predicate_dict = {p.name: p for p in self.predicates()}
 
     @property
     def name(self) -> str:
@@ -262,6 +270,9 @@ class XDomain(MimirWrapper[Domain]):
     @property
     def filepath(self) -> str:
         return self.base.get_filepath()
+
+    def predicate_dict(self) -> MappingProxyType:
+        return MappingProxyType(self._predicate_dict)
 
     @cache
     def predicates(self, *category: XCategory) -> tuple[XPredicate, ...]:
@@ -957,10 +968,6 @@ class XStateSpace(MimirWrapper[StateSpace]):
     list of atoms in a problem, and not for a certain emplacement order.
     We also rely on the state space to emplace states in a fixed, deterministic order that always produces the same
     state at the same index.
-
-    Should we want to switch this to a more flexible approach, we would need to start hashing atoms of a state to build
-    a mapping of atoms, i.e. a state signature, to a state index. This would allow us to compare states from different
-    repositories by their content, not by their index.
     """
 
     _vertices: list[StateVertex]
