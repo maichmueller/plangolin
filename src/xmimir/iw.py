@@ -133,7 +133,7 @@ class IWSearch:
         expansion_strategy: ExpansionStrategy = InOrderExpansion(),
     ):
         self.width = width
-        self.expansion_strat = expansion_strategy
+        self.expansion_strategy = expansion_strategy
         self.current_novelty_condition: Novelty | None = None
         self.current_successor_generator = None
 
@@ -147,6 +147,7 @@ class IWSearch:
         novelty_condition: Novelty | None = None,
         start_state: XState | None = None,
         stop_on_goal: bool = True,
+        goal: Sequence[XLiteral] | None = None,
         atom_tuples_to_avoid: Iterable[tuple[XAtom, ...]] | None = None,
         novel_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         goal_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
@@ -162,6 +163,14 @@ class IWSearch:
         novelty_condition.test(start_state)
         if atom_tuples_to_avoid is not None:
             novelty_condition.add_known_tuples(atom_tuples_to_avoid)
+
+        if goal is not None:
+
+            def goal_check(state: XState):
+                return not any(state.unsatisfied_literals(goal))
+
+        else:
+            goal_check = lambda state: state.is_goal
 
         visit_queue: deque[ExpansionNode] = deque(
             [ExpansionNode(start_state, [], [], 0)]
@@ -182,6 +191,7 @@ class IWSearch:
                     visit_queue,
                     novelty_condition,
                     successor_generator,
+                    goal_check=goal_check,
                     novel_hook=novel_hook,
                     goal_hook=goal_hook,
                 )
@@ -214,9 +224,10 @@ class IWSearch:
         successor_generator: XSuccessorGenerator,
         novel_hook: Callable[[ExpansionNode], None],
         goal_hook: Callable[[ExpansionNode], None],
+        goal_check: Callable[[XState], bool],
     ) -> list[ExpansionNode]:
         goal_nodes = []
-        for state, trace, novel_sets_trace, depth in self.expansion_strat.consume(
+        for state, trace, novel_sets_trace, depth in self.expansion_strategy.consume(
             nodes
         ):
             for action, child_state in successor_generator.successors(state):
@@ -232,7 +243,7 @@ class IWSearch:
                     )
                     novel_hook(child_node)
                     visit_queue.append(child_node)
-                    if child_state.is_goal:
+                    if goal_check(child_state):
                         goal_hook(child_node)
                         goal_nodes.append(child_node)
         return goal_nodes
@@ -246,7 +257,8 @@ def complete_atom_set(state_space: XStateSpace):
 
 
 class IWStateSpace(XStateSpace):
-    class StateInfo(NamedTuple):
+    @dataclass(slots=True)
+    class StateInfo:
         distance_to_goal: float
         distance_from_initial: float
 
@@ -273,23 +285,22 @@ class IWStateSpace(XStateSpace):
         )
         self.max_transitions = max_transitions
         self.max_time = max_time
+        self._build()
 
     def _build(self):
         nr_transitions = 0
         start_time = datetime.fromtimestamp(time.time())
-        for state in self:
+        bkwd_transitions: list[XTransition] = [None] * len(self)
+        for i, state in enumerate(self):
             state_fwd_transitions = []
             state_bkwd_transitions = []
 
             def novel_state_hook(node: ExpansionNode):
-                state_fwd_transitions.append(
-                    XTransition.make_hollow(
-                        state, tuple(t.action for t in node.trace), node.state
-                    )
+                transition = XTransition.make_hollow(
+                    state, tuple(t.action for t in node.trace), node.state
                 )
-                state_bkwd_transitions.append(
-                    XTransition.make_hollow(state, [None] * len(node.trace), node.state)
-                )
+                state_fwd_transitions.append(transition)
+                state_bkwd_transitions.append(transition)
 
             self.iw.solve(
                 self.successor_generator,
@@ -298,7 +309,8 @@ class IWStateSpace(XStateSpace):
                 stop_on_goal=False,
             )
             self.iw_fwd_transitions[state] = state_fwd_transitions
-            self.iw_bkwd_transitions[state] = state_bkwd_transitions
+            self.iw_bkwd_transitions[state] = []  # to be filled afterwards
+            bkwd_transitions[i] = state_bkwd_transitions
             nr_transitions += len(state_fwd_transitions)
 
             elapsed: timedelta = datetime.fromtimestamp(time.time()) - start_time
@@ -311,8 +323,12 @@ class IWStateSpace(XStateSpace):
                     f"time elapsed: {hours}h {minutes}m "
                     f"(max {self.max_time.total_seconds() / 3600}h {self.max_time.total_seconds() / 60}m)"
                 )
-                return None
-
+                raise TimeoutError(
+                    "IW State Space construction maxed out time or transition budget."
+                )
+        for bkwd_transition_list in bkwd_transitions:
+            for transition in bkwd_transition_list:
+                self.iw_bkwd_transitions[transition.target].append(transition)
         self._compute_iw_goal_distances()
         self._compute_iw_initial_distances()
 
@@ -347,17 +363,19 @@ class IWStateSpace(XStateSpace):
             # )
             # For each predecessor (using backward transitions)
             for transition in self.backward_transitions(current_state):
-                predecessor_state = transition.target
+                predecessor_state = transition.source
                 # logging.debug(f"Predecessor state: {predecessor_state.index}")
                 # If this predecessor hasn't been assigned a goal distance yet...
-                if (
-                    pred_state_info := self.state_info[predecessor_state]
-                ).distance_to_goal < 0:
+                pred_state_info = self.state_info[predecessor_state]
+                if pred_state_info.distance_to_goal < 0:
                     # Set its distance as current state's distance plus one.
                     pred_state_info.distance_to_goal = (
                         self.state_info[current_state].distance_to_goal + 1
                     )
                     visit_queue.append(predecessor_state)
+        assert sum(is_expanded) == len(
+            is_expanded
+        ), f"Not all states were expanded. Indices left unexpanded: {[i for i, v in enumerate(is_expanded) if not v]}"
 
     def _compute_iw_initial_distances(self):
         """
@@ -398,6 +416,7 @@ class IWStateSpace(XStateSpace):
                         self.state_info[current_state].distance_from_initial + 1
                     )
                     visit_queue.append(successor_state)
+        assert sum(is_expanded) == len(is_expanded), "Not all states were expanded."
 
     def __len__(self):
         return len(self._vertices)
@@ -407,15 +426,13 @@ class IWStateSpace(XStateSpace):
             f"IWStateSpace("
             f"width={self.iw.width}, "
             f"#states={len(self)}, "
-            f"#transitions={self.total_transition_count}), "
+            f"#transitions={self.total_transition_count}, "
             f"#deadends={self.deadend_count}, "
             f"#goals={self.goal_count}, "
             f"solvable={self.solvable}, "
             f"solution_cost={self.goal_distance(self.initial_state)}"
+            f")"
         )
-
-    def str(self):
-        return f"IW{self.iw.width}StateSpace({str(self.base)})"
 
     @cached_property
     def total_transition_count(self) -> int:
