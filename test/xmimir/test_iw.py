@@ -1,26 +1,31 @@
 from test.fixtures import *  # noqa: F403,F401
+from typing import Sequence
 
-import pytest
-
+from xmimir import XState, XSuccessorGenerator
 from xmimir.iw import *
 
 
 @pytest.mark.parametrize(
-    "space_fixture",
+    "problem",
     [
-        "small_blocks",
-        "medium_blocks",
-        "medium_blocks_width1_goal",
-        "largish_blocks_width2_goal",
-        "largish_blocks_unbound_goal",
+        "small",
+        "medium",
+        "iw/medium_width1_goal",
+        "iw/largish_width2_goal",
+        "iw/largish_unbound_goal",
     ],
 )
 @pytest.mark.parametrize("width", [1, 2])
-def test_iw_search(space_fixture, width, request):
-    space, domain, problem = request.getfixturevalue(space_fixture)
+def test_siw(problem, width):
+    source_dir = "" if os.getcwd().endswith("/test") else "test/"
+    domain_path = f"{source_dir}pddl_instances/blocks/domain.pddl"
+    problem_path = f"{source_dir}pddl_instances/blocks/{problem}.pddl"
+    domain, problem = xmi.parse(domain_path, problem_path)
+    assert problem.domain.name == "blocks"
     # these are the problem names in the pddl files of
     # small and medium blocks problems. This entire test is hardcoded to these files, so if they change this
     # test may need adaptation!!
+    # expectation: atoms represent themselves as a string of the form: "(predicate obj_1 obj_2 ... obj_N)"
     match problem.name:
         case "blocks-2-0":
             decomposition = [["(on a b)"]]
@@ -67,12 +72,24 @@ def test_iw_search(space_fixture, width, request):
                 case _:
                     raise ValueError(f"Width {width} not tested.")
         case "blocks-5-w1":
-            decomposition = [[str(next(problem.goal()).atom)]]
+            decomposition = [[str(tuple(problem.goal())[0].atom)]]
         case _:
             raise ValueError(f"Problem {problem.name} not tested.")
 
+    successor_gen = xmi.XSuccessorGenerator(problem)
+    state = siw(successor_gen.initial_state, decomposition, successor_gen, width)
+
+    assert state.is_goal
+
+
+def siw(
+    init_state: XState,
+    decomposition: Sequence[Sequence[str]],
+    successor_generator: XSuccessorGenerator,
+    width: int,
+):
     iw = IWSearch(width, expansion_strategy=InOrderExpansion())
-    prev_state = space.initial_state
+    prev_state = init_state
     state = prev_state
     # for each subgoal: run iw from the current state and check if the subgoal is in the novelty traces
     # of the found novel nodes. If so, jump to that state and repeat.
@@ -81,14 +98,13 @@ def test_iw_search(space_fixture, width, request):
         print("Subgoals:    ", subgoals)
         collector = CollectorHook()
         iw.solve(
-            space.successor_generator,
+            successor_generator,
             start_state=state,
             stop_on_goal=False,
             novel_hook=collector,
         )
         viable_nodes = []
         for node in collector.nodes:
-            # expectation: atoms represent themselves as a string of the form: "(predicate obj_1 obj_2 ... obj_N)"
             if all(
                 any(
                     str(atom) == subgoal
@@ -107,5 +123,37 @@ def test_iw_search(space_fixture, width, request):
         prev_state = state
         state = optimal_node.state
         assert prev_state != state
+    return state
 
-    assert any(state.semantic_eq(state) for state in space.goal_states_iter())
+
+@pytest.mark.parametrize(
+    "space_fixture, expected_solution_upper_bound_cost",
+    [
+        ("small_blocks", 1),
+        ("medium_blocks", 3),
+        ("largish_blocks_unbound_goal", 9),
+    ],
+)
+def test_iw1_state_space(space_fixture, expected_solution_upper_bound_cost, request):
+    space, domain, problem = request.getfixturevalue(space_fixture)
+    iw_space = IWStateSpace(IWSearch(1), space)
+    assert (
+        0
+        < iw_space.goal_distance(iw_space.initial_state)
+        <= expected_solution_upper_bound_cost
+    )
+
+
+#
+# @pytest.mark.parametrize(
+#     "space_fixture, expected_solution_upper_bound_cost",
+#     [
+#         ("small_blocks", 1),
+#         ("medium_blocks", 3),
+#         ("largish_blocks_unbound_goal", 6),
+#     ],
+# )
+# def test_iw2_state_space(space_fixture, expected_solution_upper_bound_cost, request):
+#     space, domain, problem = request.getfixturevalue(space_fixture)
+#     iw_space = IWStateSpace(IWSearch(2), space)
+#     assert iw_space.goal_distance(iw_space.initial_state) == expected_solution_upper_bound_cost
