@@ -6,26 +6,30 @@ from xmimir import StateLabel, XAction, XTransition
 from .base_reward import RewardFunction
 
 
-def _discounted_macro_reward(macro, gamma, primitive_reward):
+def _n_step_discounted_reward(steps: int, gamma: float, regular_reward: float):
     r"""
-    Computes the discounted reward for a macro action.
+    Computes the discounted reward for a sequence of actions (macro action).
+
+    Each action in the macro is discounted by a factor of :math:`\gamma` compared to the previous action and
+    rewarded with `regular_reward`. The reward for the macro is then the sum of the discounted rewards for each action.
+    The concise formula for the discounted reward of a sequence of actions is:
 
     ..math::
         \sum_{i=1}^{n} r \cdot \gamma^{i-1} = r \cdot \frac{1 - \gamma^n}{1 - \gamma}
     """
-    match length := len(macro):
+    match steps:
         case 0:
-            raise ValueError("Cannot compute cost for empty macro")
+            raise ValueError("Cannot compute cost for 0 steps.")
         case 1:
-            return primitive_reward
+            return regular_reward
         case 2:
-            return primitive_reward + gamma * primitive_reward
+            return regular_reward + gamma * regular_reward
         case _:
-            return primitive_reward * (1.0 - gamma**length) / (1.0 - gamma)
+            return regular_reward * (1.0 - gamma**steps) / (1.0 - gamma)
 
 
 class UnitReward(RewardFunction):
-    """
+    r"""
     A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
 
     The reward for macros is abstracted to primitive reward as well. This can be changed in child classes by
@@ -78,18 +82,22 @@ class UnitReward(RewardFunction):
         return rewards
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
-        return _discounted_macro_reward(
-            transition.action, self.gamma, self.regular_reward
+        return _n_step_discounted_reward(
+            len(transition.action), self.gamma, self.regular_reward
         )
 
 
-class MacroAgnosticReward(UnitReward):
+class FlatReward(UnitReward):
+    r"""
+    A reward function that returns the primitive action reward for every action taken, even entire macros.
+    """
+
     def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
         return self.regular_reward
 
 
 class FactoredMacroReward(UnitReward):
-    """
+    r"""
     A reward function that returns a reward of -(1 + len(actions) / factor) for a (macro) action taken.
     """
 
@@ -105,33 +113,28 @@ class FactoredMacroReward(UnitReward):
         return super().__eq__(other) and math.isclose(self.factor, other.factor)
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
-        return self.regular_reward - len(transition.action) / self.factor
+        if len(transition.action) == 0:
+            raise ValueError("Cannot compute reward for 0-length macro.")
+        return self.regular_reward - (len(transition.action) - 1) / self.factor
 
 
 class DiscountedMacroReward(UnitReward):
     r"""
     A reward function that returns a discounted reward for a macro action taken.
 
-    The difference to `DefaultUniformReward` is that the discount factor for macros is not forced to be the same
-    as for primitive actions. This allows to further discount the cost of macros to incentivize choosing longer macros
-    over shorter macros or mere chains of primitives.
+    The difference to `FactoredMacroReward` is that the factor is a fixed value based on the chosen gamma value, i.e.
+    the infinite plan length for that gamma, and thus is parameter-free.
+
+    We want to discount fractionally all steps after the first step of the macro (the first step is seen as a
+    regular action).
+    Our formula for the discounted reward of a sequence (a_0, a_1, ..., a_n) of actions is:
+
+    .. math:
+        r + \frac{\sum_{i=1}^{n} r \cdot \gamma^i}{\sum_{i=1}^{\infinity} r \cdot \gamma^i} = r \cdot (2 - \gamma^n)
     """
 
-    def __init__(
-        self,
-        *args,
-        gamma_macros: float | None = None,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.gamma_macros = gamma_macros if gamma_macros is not None else self.gamma
-
-    def __eq__(self, other):
-        return super().__eq__(other) and math.isclose(
-            self.gamma_macros, other.gamma_macros, rel_tol=1e-9
-        )
-
     def _reward_macro(self, transition: XTransition, label: StateLabel):
-        return _discounted_macro_reward(
-            transition.action, self.gamma_macros, self.regular_reward
-        )
+        n = len(transition.action) - 1
+        if n == 0:
+            raise ValueError("Cannot compute reward for 0-length macro.")
+        return self.regular_reward * (2 - self.gamma**n)
