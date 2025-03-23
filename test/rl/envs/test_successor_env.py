@@ -7,13 +7,16 @@ import torch
 import xmimir as xmi
 from rgnet.rl.envs import SuccessorEnvironment
 from rgnet.rl.non_tensor_data_utils import tolist
+from rgnet.rl.reward import UnitReward
 
 
 def create_successor_env(
     problem: xmi.XProblem, batch_size: int = 1
 ) -> SuccessorEnvironment:
     return SuccessorEnvironment(
-        [xmi.XSuccessorGenerator(problem)], batch_size=torch.Size((batch_size,))
+        [xmi.XSuccessorGenerator(problem)],
+        batch_size=torch.Size((batch_size,)),
+        reward_function=UnitReward(deadend_reward=-1000),
     )
 
 
@@ -23,7 +26,7 @@ def test_successor_env_init(medium_blocks):
         [xmi.XSuccessorGenerator(problem)],
         batch_size=torch.Size((1,)),
         device=torch.device("cpu"),
-        custom_dead_end_reward=-1000,
+        reward_function=UnitReward(deadend_reward=-1000),
         seed=42,
     )
 
@@ -40,9 +43,13 @@ def test_successor_env_initial_state(medium_blocks):
 
 def test_successor_env_is_goal(medium_blocks):
     space, _, problem = medium_blocks
-    successor_gen = xmi.XSuccessorGenerator(problem, space.base.get_state_repository())
+    successor_gen = space.successor_generator
     goal_state: xmi.XState = next(space.goal_states_iter())
-    env = SuccessorEnvironment([successor_gen], batch_size=torch.Size((1,)))
+    env = SuccessorEnvironment(
+        [successor_gen],
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(gamma=0.9),
+    )
     td = env.reset(states=[goal_state])
     assert env.is_goal(td[env.keys.instance][0], goal_state)
 
@@ -65,7 +72,11 @@ def test_dead_end(medium_blocks):
     successor_gen = xmi.XSuccessorGenerator(problem)
     successor_gen.action_generator = mocked_action_generator
 
-    env = SuccessorEnvironment([successor_gen], batch_size=torch.Size((1,)))
+    env = SuccessorEnvironment(
+        [successor_gen],
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(deadend_reward=-1000),
+    )
     td = env.reset()
     transitions: List[List[xmi.XTransition]] = tolist(td[env.keys.transitions])
     initial_state = successor_gen.initial_state

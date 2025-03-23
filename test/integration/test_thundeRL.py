@@ -16,6 +16,7 @@ import rgnet
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
@@ -35,7 +36,6 @@ def cli_main():
 
 
 class PolicyGradientLitModuleMock:
-
     def __init__(self):
         super().__init__()
         self.batched_list: List[Batch] = []
@@ -226,7 +226,7 @@ def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
         FlashDrive(
             domain_path=domain_path,
             problem_path=problem,
-            custom_dead_end_reward=-(1.0 / 1.0 - 0.9),
+            reward_function=UnitReward(gamma=0.9),
             root_dir=str(dataset_dir),
             encoder_factory=EncoderFactory(HeteroGraphEncoder),
         )

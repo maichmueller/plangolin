@@ -72,12 +72,12 @@ exclude = '''
 profile = "black"
 
 [tool.ruff]
-ignore = ["F403", "F405"]
+ignore = ["F403", "F405", "F541"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src/"]
 testpaths = ["test/"]
-norecursedirs = ["experiments"]
+norecursedirs = ["experiments", ".git", "venv", "build"," dist"]
 log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"

@@ -1,5 +1,5 @@
 from pathlib import Path
-from test.fixtures import fresh_drive, medium_blocks
+from test.fixtures import fresh_drive, medium_blocks  # noqa: F401
 from test.supervised.test_data import hetero_data_equal
 
 import mockito
@@ -7,6 +7,7 @@ from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
@@ -42,7 +43,7 @@ def test_save_and_load(fresh_drive, medium_blocks):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_end_reward=-100.0,
+        reward_function=UnitReward(deadend_reward=-100.0),
         root_dir=fresh_drive.root,
         force_reload=False,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),

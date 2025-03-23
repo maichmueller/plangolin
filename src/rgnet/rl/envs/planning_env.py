@@ -2,24 +2,19 @@ from __future__ import annotations
 
 import abc
 import dataclasses
-import warnings
 from itertools import cycle
-from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar
+from typing import Generic, List, Optional, Sequence, Tuple, Type, TypeVar
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
 from torch.nn import Parameter
-from torchrl.data import (
-    BoundedTensorSpec,
-    CompositeSpec,
-    DiscreteTensorSpec,
-    NonTensorSpec,
-)
+from torchrl.data import Bounded, Categorical, Composite, NonTensor
 from torchrl.envs import EnvBase
 
 import xmimir as xmi
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
+from rgnet.rl.reward import RewardFunction
 
 InstanceType = TypeVar("InstanceType")
 
@@ -39,7 +34,6 @@ class InstanceReplacementStrategy(metaclass=abc.ABCMeta):
 
 
 class RoundRobinReplacement(InstanceReplacementStrategy):
-
     def __init__(self, all_instances: List[InstanceType]):
         super().__init__(all_instances)
         self._next_active_iterator = cycle(all_instances)
@@ -92,11 +86,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def __init__(
         self,
         all_instances: List[InstanceType],
+        reward_function: RewardFunction,
         batch_size: torch.Size,
         seed: Optional[int] = None,
         device: str = "cpu",
         keys: AcceptedKeys = default_keys,
-        custom_dead_end_reward: Optional[float] = None,
     ):
         PlanningEnvironment.assert_1D_batch(batch_size)
         super().__init__(device=device, batch_size=batch_size)
@@ -125,14 +119,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             ),
             requires_grad=False,
         )
-        if custom_dead_end_reward is not None and custom_dead_end_reward > 0:
-            warnings.warn("Custom dead-end reward should be negative. Auto correcting.")
-            custom_dead_end_reward = -custom_dead_end_reward
-        self._dead_end_reward: float = (
-            custom_dead_end_reward or self.default_dead_end_reward
-        )
-        self._custom_dead_end_reward_was_set: bool = custom_dead_end_reward is not None
-        self._goal_reward: float = self.default_goal_reward
+        self.reward_function = reward_function
         self._make_spec()
 
     @property
@@ -149,41 +136,41 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         """Configure environment specification."""
 
         batch_size = self.batch_size
-        self.observation_spec = CompositeSpec(
+        self.observation_spec = Composite(
             **{
                 # a pymimir.State object
-                self._keys.state: NonTensorSpec(shape=batch_size),
+                self._keys.state: NonTensor(shape=batch_size),
                 # a List[pymimir.Transition] might be empty
-                self._keys.transitions: NonTensorSpec(shape=batch_size),
+                self._keys.transitions: NonTensor(shape=batch_size),
                 # a pymimir.LiteralList object
-                self._keys.goals: NonTensorSpec(shape=batch_size),
+                self._keys.goals: NonTensor(shape=batch_size),
                 # an instance object, e.g. a StateSpace or a SuccessorGenerator
                 # The state, transitions and goals are all related to this instance.
-                self._keys.instance: NonTensorSpec(shape=batch_size),
+                self._keys.instance: NonTensor(shape=batch_size),
             },
             shape=batch_size,
         )
         # Defines what else the step function requires beside the "action" entry
-        self.state_spec = CompositeSpec(shape=batch_size)  # a.k.a. void
+        self.state_spec = Composite(shape=batch_size)  # a.k.a. void
         # For states without outgoing transitions the action will be None
-        self.action_spec = NonTensorSpec(shape=batch_size)  # Optional[pymimir.State]
-        self.reward_spec: BoundedTensorSpec = BoundedTensorSpec(
+        self.action_spec = NonTensor(shape=batch_size)  # Optional[pymimir.State]
+        self.reward_spec: Bounded = Bounded(
             low=-1.0,
             high=1.0,
             dtype=torch.float32,
             shape=torch.Size((*batch_size, 1)),
         )
-        self.done_spec = CompositeSpec(
+        self.done_spec = Composite(
             **{
                 # a boolean tensor indicating whether the episode is done
-                self.keys.done: DiscreteTensorSpec(
+                self.keys.done: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
-                self.keys.terminated: DiscreteTensorSpec(
+                self.keys.terminated: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
                 # We don't set truncated, but can be set in rollout
-                self.keys.truncated: DiscreteTensorSpec(
+                self.keys.truncated: Categorical(
                     n=2, dtype=torch.bool, shape=torch.Size((*batch_size, 1))
                 ),
             },
@@ -232,9 +219,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
     def get_reward_and_done(
         self,
-        transitions: Iterable[xmi.XTransition],
-        *,
-        current_states: Sequence[xmi.XState] | None = None,
+        transitions: Sequence[xmi.XTransition],
         instances: Sequence[InstanceType] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -243,57 +228,40 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         before the actions are taken.
         The batch dimension can be over the environment batch size or the time.
         :param transitions: The actions taken by the agent.
-        :param current_states: the states before the actions are taken. If None the states are taken from transitions.
         :param instances the instances from which actions and current states stem from.
+            Requires len(instances) == len(transitions).
             This parameter can be used to get the rewards and done signals after a rollout was already finished.
             Defaults to self._active_instances.
+
         :return A tuple containing the rewards and done signal for the actions
         """
-        if current_states is None:
-            current_states = [transition.source for transition in transitions]
-
         instances = instances or self._active_instances
-        is_goal: torch.Tensor = torch.tensor(
-            [
-                self.is_goal(instances[idx], current_states[idx])
-                for idx in range(len(current_states))
-            ],
-            dtype=torch.bool,
+        if len(transitions) != len(instances):
+            if len(instances) != 1:
+                raise ValueError(
+                    f"The batch dimension of transitions and instances must be compatible.\n"
+                    f"Got {[len(transitions)]} and {[len(instances)]}."
+                )
+            else:
+                instances = instances * len(transitions)
+        done = []
+        labels = []
+        for transition, active_instance in zip(transitions, instances):
+            if self.is_goal(active_instance, transition.source):
+                done.append(True)
+                labels.append(xmi.StateLabel.goal)
+            elif self.is_dead_end_transition(transition):
+                done.append(True)
+                labels.append(xmi.StateLabel.deadend)
+            else:
+                done.append(False)
+                labels.append(xmi.StateLabel.default)
+        rewards = torch.tensor(
+            self.reward_function(transitions, labels),
+            dtype=torch.float,
             device=self.device,
         )
-
-        is_dead_end: torch.Tensor = torch.tensor(
-            [self.is_dead_end_transition(a) for a in transitions],
-            dtype=torch.bool,
-            device=self.device,
-        )
-        default_reward = self._default_reward_tensor
-        if len(current_states) != self.batch_size[0]:
-            default_reward = torch.full(
-                size=(len(current_states),),
-                fill_value=self.default_reward,
-                dtype=torch.float,
-                device=self.device,
-            )
-        # Its important that we first compute dead end rewards and then the goal reward
-        # as a goal state that is a dead end should primarily count as goal state.
-        dead_end_rewards = torch.where(
-            condition=~is_dead_end,
-            input=default_reward,
-            other=self._dead_end_reward,
-        )
-        rewards = torch.where(
-            condition=~is_goal,
-            input=dead_end_rewards,
-            other=self._goal_reward,
-        )
-
-        if is_dead_end.any() and not self._custom_dead_end_reward_was_set:
-            warnings.warn(
-                "Encountered dead-end state but no custom reward was set. "
-                f"Using default reward of {self._dead_end_reward}."
-            )
-        return rewards, is_goal | is_dead_end
+        return rewards, torch.tensor(done, dtype=torch.bool, device=self.device)
 
     def get_applicable_transitions(
         self, states: List[xmi.XState]
@@ -302,7 +270,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # whenever we encounter dead-end states.
         return [
             self.transitions_for(instance, state)
-            or [xmi.XTransition.make_hollow(state, state, None)]
+            or [xmi.XTransition.make_hollow(state, None, state)]
             for (instance, state) in zip(self._active_instances, states)
         ]
 
@@ -349,7 +317,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             state = current_states[idx]
             assert (
                 len(self.transitions_for(self._active_instances[idx], state)) == 0
-            ), "Got None transition for state with available transitions."
+            ), "No transitions were given for state with available transitions."
         return state
 
     def _step(self, tensordict: TensorDict) -> TensorDict:
@@ -374,7 +342,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
 
         applicable_transitions = self.get_applicable_transitions(next_states)
         # We terminate if either we came from a goal or from a dead end.
-        reward, done = self.get_reward_and_done(actions, current_states=current_states)
+        reward, done = self.get_reward_and_done(actions)
         assert reward.shape == done.shape
 
         return self.create_td(
@@ -404,7 +372,6 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         states: List[xmi.State] | NonTensorWrapper | None = None,
         **kwargs,
     ) -> TensorDict:
-
         batch_size = self.batch_size[0]
 
         if (
@@ -418,11 +385,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 partial_reset = partial_reset.squeeze(
                     -1
                 )  # unpack torch.tensor([[True]])
-            to_be_reset_indices: List = partial_reset.nonzero().squeeze(-1).tolist()
+            indices_to_reset: List = partial_reset.nonzero().squeeze(-1).tolist()
         else:
-            to_be_reset_indices = list(range(batch_size))
+            indices_to_reset = list(range(batch_size))
 
-        for index in to_be_reset_indices:
+        for index in indices_to_reset:
             self._active_instances[index] = self._instance_replacement_strategy(index)
 
         initial_states, initial_goals = zip(

@@ -1,4 +1,4 @@
-from test.fixtures import fresh_drive, medium_blocks
+from test.fixtures import fresh_drive, medium_blocks  # noqa: F401
 
 import mockito
 import torch.optim

@@ -1,4 +1,6 @@
 import logging
+import os.path
+import pickle
 from pathlib import Path
 from typing import Any, List, Mapping, Optional, Tuple, Union
 
@@ -12,6 +14,7 @@ from rgnet.encoding import GraphEncoderBase
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
+from rgnet.rl.reward import RewardFunction, UnitReward
 from xmimir import XStateSpace, XTransition
 
 
@@ -20,7 +23,7 @@ class FlashDrive(InMemoryDataset):
         self,
         domain_path: Path,
         problem_path: Path,
-        custom_dead_end_reward: float,
+        reward_function: RewardFunction = UnitReward(gamma=0.9),
         encoder_factory: Optional[EncoderFactory] = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
@@ -34,10 +37,22 @@ class FlashDrive(InMemoryDataset):
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
         self.encoder_factory = encoder_factory
-        self.custom_dead_end_reward = custom_dead_end_reward
+        self.reward_function = reward_function
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process()
+        self.metadata_path = Path(root_dir) / (
+            str(self.processed_file_names[0]) + ".meta"
+        )
+        # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
+        # data will align with our expectations.
+        if not os.path.exists(self.metadata_path) or not self._metadata_matches(
+            pickle.load(open(self.metadata_path, "rb"))
+        ):
+            logging.getLogger("root").info(
+                f"Metadata mismatch for problem {self.problem_path}, forcing reload."
+            )
+            force_reload = True
         super().__init__(
             root=root_dir,
             transform=self.target_idx_to_data_transform,
@@ -47,6 +62,38 @@ class FlashDrive(InMemoryDataset):
             force_reload=force_reload,
         )
         self.load(self.processed_paths[0])
+
+    def _metadata_matches(self, meta: Tuple) -> bool:
+        (
+            encoder_factory,
+            reward_function,
+            domain_content,
+            problem_content,
+            max_expanded,
+        ) = meta
+        if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
+            return False
+        if self.reward_function != reward_function:
+            return False
+        if self.domain_file.read_text() != domain_content:
+            return False
+        if self.problem_path.read_text() != problem_content:
+            return False
+        if self.max_expanded != max_expanded:
+            return False
+        return True
+
+    @property
+    def metadata(self):
+        domain_content = self.domain_file.read_text()
+        problem_content = self.problem_path.read_text()
+        return (
+            self.encoder_factory,
+            self.reward_function,
+            domain_content,
+            problem_content,
+            self.max_expanded,
+        )
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
@@ -74,12 +121,14 @@ class FlashDrive(InMemoryDataset):
             space,
             batch_size=torch.Size((1,)),
             reset_strategy=IteratingReset(),
-            custom_dead_end_reward=self.custom_dead_end_reward,
+            reward_function=self.reward_function,
         )
         data_list = self._build(
             env,
             self.encoder_factory(space.problem.domain),
         )
+        with open(self.metadata_path, "wb") as file:
+            pickle.dump(self.metadata, file)
         self.save(data_list, self.processed_paths[0])
 
     def _build(
@@ -99,10 +148,7 @@ class FlashDrive(InMemoryDataset):
         for state in space_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
             transitions: list[XTransition] = list(space.forward_transitions(state))
-            reward, done = env.get_reward_and_done(
-                transitions=transitions,
-                instances=[space] * len(transitions),
-            )
+            reward, done = env.get_reward_and_done(transitions)
             data.reward = reward
             # Save the index of the state
             # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
@@ -115,11 +161,7 @@ class FlashDrive(InMemoryDataset):
             # Same index concerns for transition.target.index
             data.targets = list(t.target.index for t in transitions)
             # pymimir returns -1 for states where to goal is not reachable
-            distance_to_goal = (
-                abs(self.custom_dead_end_reward)
-                if space.is_deadend(state)
-                else space.goal_distance(state)
-            )
+            distance_to_goal = space.goal_distance(state)
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[state.index] = data
         return batched_data

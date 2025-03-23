@@ -131,5 +131,10 @@ class EncoderFactory:
         self.encoder_class = encoder_class
         self.kwargs = kwargs or dict()
 
+    def __eq__(self, other):
+        if not isinstance(other, EncoderFactory):
+            return NotImplemented
+        return self.encoder_class == other.encoder_class and self.kwargs == other.kwargs
+
     def __call__(self, domain: XDomain) -> GraphEncoderBase:
         return self.encoder_class(domain, **self.kwargs)

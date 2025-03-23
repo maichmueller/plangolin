@@ -6,6 +6,7 @@ import torch
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
+from rgnet.rl.reward import UnitReward
 from xmimir import XLiteral, XState, XStateSpace
 
 
@@ -16,7 +17,7 @@ class DeadEndGoalEnv(PlanningEnvironment[XStateSpace]):
         self,
         space,
         batch_size,
-        custom_dead_end_reward,
+        reward_function,
         is_dead_end=True,
         seed=None,
         is_goal=True,
@@ -26,7 +27,7 @@ class DeadEndGoalEnv(PlanningEnvironment[XStateSpace]):
             batch_size=batch_size,
             seed=seed,
             device="cpu",
-            custom_dead_end_reward=custom_dead_end_reward,
+            reward_function=reward_function,
         )
         self.is_dead_end = is_dead_end
         self.is_goal_state = is_goal
@@ -54,14 +55,14 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
     """Tests the environment in regard of dead end states and goals states.
     The rollout should be done if any action was chosen from a dead end state or goal state.
     There should only be one action available from a dead end state which leads to itself.
-    The reward depends on both conditions, precedence: default < dead end < goal"""
+    The reward depends on both conditions, precedence: default < dead-end < goal"""
     space, _, _ = small_blocks
     custom_dead_end_reward = -100.0
     env = DeadEndGoalEnv(
         space=space,
         batch_size=torch.Size([batch_size]),
         seed=42,
-        custom_dead_end_reward=custom_dead_end_reward,
+        reward_function=UnitReward(deadend_reward=custom_dead_end_reward),
         is_dead_end=is_dead_end,
         is_goal=is_goal,
     )

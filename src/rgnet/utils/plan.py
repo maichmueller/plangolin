@@ -27,15 +27,12 @@ def parse_fd_plan(path: Path, problem: xmi.XProblem) -> Plan:
     """
     assert path.is_file(), path.absolute()
     lines = path.read_text().splitlines()
-    action_gen = xmi.XActionGenerator(problem)
-    succ_gen = xmi.XSuccessorGenerator(action_gen.grounder)
+    succ_gen = xmi.XSuccessorGenerator(problem)
     state = succ_gen.initial_state
 
     # fast-downward stores plans as (action-schema obj1 obj2)
-    def format_action(a: xmi.XAction):
-        schema_name = problem.domain.actions[a.base.get_action_index()].get_name()
-        obj = [o.get_index() for o in a.objects]
-        return "(" + schema_name + " " + " ".join(obj) + ")"
+    def format_action(action: xmi.XAction):
+        return f"({action.name} {' '.join(o.get_name() for o in action.objects)})"
 
     action_list = []
     transitions: List[xmi.XTransition] = []
@@ -45,7 +42,7 @@ def parse_fd_plan(path: Path, problem: xmi.XProblem) -> Plan:
         action: xmi.XAction = next(
             (
                 a
-                for a in action_gen.generate_actions(state)
+                for a in succ_gen.action_generator.generate_actions(state)
                 if format_action(a) == action_name
             ),
             None,
@@ -54,13 +51,11 @@ def parse_fd_plan(path: Path, problem: xmi.XProblem) -> Plan:
             raise ValueError(
                 "Could not find applicable action for "
                 f"{action_name}. Applicable actions are"
-                f"{[format_action(a) for a in action_gen.generate_actions(state)]}."
+                f"{[format_action(a) for a in succ_gen.action_generator.generate_actions(state)]}."
             )
         action_list.append(action)
         next_state = succ_gen.successor(state, action)
-        transitions.append(
-            xmi.XTransition(source=state, action=action, target=next_state)
-        )
+        transitions.append(xmi.XTransition.make_hollow(state, action, next_state))
         state = next_state
     cost = re.search(r"cost = (\d+)", lines[-1])
     if cost is None:

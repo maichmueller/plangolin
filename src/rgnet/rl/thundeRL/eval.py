@@ -1,6 +1,7 @@
 import copy
 import csv
 import dataclasses
+import functools
 import itertools
 import logging
 import re
@@ -16,7 +17,6 @@ import torch_geometric as pyg
 import torchrl
 from lightning.pytorch.cli import LightningArgumentParser
 from lightning.pytorch.loggers import Logger, WandbLogger
-from pymimir import Problem, State
 from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import InteractionType, TensorDictModule
 from torch import Tensor
@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.models import HeteroGNN
+from rgnet.models import PyGHeteroModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.embedding import (
@@ -45,7 +45,6 @@ from rgnet.rl.thundeRL.policy_evaluation import (
     mdp_graph_as_pyg_data,
 )
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
-from rgnet.utils.manual_transition import MTransition
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
 
@@ -77,7 +76,7 @@ def resolve_checkpoints(
     if len(checkpoint_paths) == 0:
         raise RuntimeError(f"Could not find any checkpoints in {checkpoint_dir}")
     for checkpoint_path in checkpoint_paths:
-        if checkpoint_path.name == "last":
+        if checkpoint_path.stem == "last":
             last_checkpoint = checkpoint_path
         else:
             try:
@@ -142,17 +141,13 @@ class ProbabilisticPlanResult(Plan):
     # cant use dataclasses.asdict(...) because pymimir problems can't be pickled
     def serialize_as_dict(self):
         def transform(k, v):
-            if isinstance(v, mi.Problem):
+            if isinstance(v, xmi.XProblem):
                 return v.name
             elif k == "transitions":
                 assert isinstance(v, List) and (
-                    len(v) == 0
-                    or (
-                        isinstance(v[0], mi.Transition) or isinstance(v[0], MTransition)
-                    )
+                    len(v) == 0 or (isinstance(v[0], xmi.XTransition))
                 )
-                return pretty_print_transitions(v)
-
+                return v.to_string(detailed=True)
             return v
 
         return {
@@ -161,7 +156,7 @@ class ProbabilisticPlanResult(Plan):
         }
 
 
-class RlExperimentAnalyzer:
+class RLExperimentAnalyzer:
     env_keys = PlanningEnvironment.default_keys
 
     def __init__(
@@ -179,7 +174,7 @@ class RlExperimentAnalyzer:
         self.agent_keys = lightning_agent.actor_critic.keys
         self.device: torch.device = device
 
-        self._model_for_checkpoint: Dict[Path, RlExperimentAnalyzer.ModelResults] = (
+        self._model_for_checkpoint: Dict[Path, RLExperimentAnalyzer.ModelResults] = (
             dict()
         )
         self._policy_gradient_lit_module = lightning_agent
@@ -196,27 +191,36 @@ class RlExperimentAnalyzer:
                 for ckpt in checkpoints_paths
             )
 
-        self._current_model: RlExperimentAnalyzer.ModelResults
+        self._current_model: RLExperimentAnalyzer.ModelResults
         self._current_checkpoint: Path
         self.load_checkpoint(
             last_checkpoint if last_checkpoint is not None else checkpoints_paths[-1]
         )
         self._checkpoints: List[Path] = checkpoints_paths
 
-        self._successor_env_for_problem: Dict[mi.Problem, SuccessorEnvironment] = dict()
-        self._expanded_env_for_problem: Dict[mi.Problem, ExpandedStateSpaceEnv] = dict()
+        self._successor_env_for_problem: Dict[xmi.XProblem, SuccessorEnvironment] = (
+            dict()
+        )
+        self._expanded_env_for_problem: Dict[xmi.XProblem, ExpandedStateSpaceEnv] = (
+            dict()
+        )
         # Paths will be resolved on demand, but the list itself is consistent.
         # Can be None if no probs were saved (:class: `ProbsStoreCallback` not used).
         # The lists are sorted by epoch.
         self._stored_probs_for_problem: (
-            Dict[Problem, List[Tuple[int, Path]] | List[Tuple[int, List[torch.Tensor]]]]
+            Dict[
+                xmi.XProblem,
+                List[Tuple[int, Path]] | List[Tuple[int, List[torch.Tensor]]],
+            ]
             | None
         ) = self._load_stored_probs()
-        self._successor_indices: Dict[mi.StateSpace, Dict[mi.State, List[int]]] = dict()
+        self._successor_indices: Dict[xmi.XStateSpace, Dict[xmi.XState, List[int]]] = (
+            dict()
+        )
 
         # State Space as nx.Graph and pyg.data.Data
-        self._mdp_graph_for_space: Dict[mi.StateSpace, nx.DiGraph] = dict()
-        self._pyg_graph_for_space: Dict[mi.StateSpace, pyg.data.Data] = dict()
+        self._mdp_graph_for_space: Dict[xmi.XStateSpace, nx.DiGraph] = dict()
+        self._pyg_graph_for_space: Dict[xmi.XStateSpace, pyg.data.Data] = dict()
 
     class ModelResults:
         """
@@ -229,10 +233,12 @@ class RlExperimentAnalyzer:
             checkpoint_path: Path,
             experiment_analyzer,
         ):
-            self._parent: RlExperimentAnalyzer = experiment_analyzer
+            self._parent: RLExperimentAnalyzer = experiment_analyzer
 
             adapter = copy.deepcopy(policy_gradient_lit_module)
-            checkpoint = torch.load(checkpoint_path, map_location=self._parent.device)
+            checkpoint = torch.load(
+                checkpoint_path, map_location=self._parent.device, weights_only=False
+            )
             adapter.load_state_dict(checkpoint["state_dict"])
             embedding = EmbeddingModule(
                 encoder=HeteroGraphEncoder(self._parent.in_data.domain),
@@ -243,7 +249,7 @@ class RlExperimentAnalyzer:
             # TODO fix embedding from agent, can't mix properties and torch.nn.Module
             self.agent._embedding_module = embedding
             self.adapter: PolicyGradientLitModule = adapter
-            self.gnn: HeteroGNN = self.adapter.gnn
+            self.gnn: PyGHeteroModule = self.adapter.gnn
             self.policy: TensorDictModule = self.agent.as_td_module(
                 self._parent.env_keys.state,
                 self._parent.env_keys.transitions,
@@ -255,26 +261,28 @@ class RlExperimentAnalyzer:
             # All states over a single space have the same number of objects.
             # We can simply save the dense embeddings without the mask.
             # Shape [space.num_states(), num_objects, hidden_size]
-            self._embedding_for_space: Dict[mi.StateSpace, torch.Tensor] = dict()
+            self._embedding_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
 
             # Computed probs for space
             self._computed_probs_list_for_space: Dict[
-                mi.StateSpace, List[torch.Tensor]
+                xmi.XStateSpace, List[torch.Tensor]
             ] = dict()
-            self._action_indices_for_space: Dict[mi.StateSpace, torch.Tensor] = dict()
-            self._log_probs_for_space: Dict[mi.StateSpace, torch.Tensor] = dict()
+            self._action_indices_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
+            self._log_probs_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
 
             # Computed values for space
-            self._computed_values_for_space: Dict[mi.StateSpace, torch.Tensor] = dict()
+            self._computed_values_for_space: Dict[xmi.XStateSpace, torch.Tensor] = (
+                dict()
+            )
 
-        def _compute_probs_for_space(self, space: mi.StateSpace):
+        def _compute_probs_for_space(self, space: xmi.XStateSpace):
             with set_exploration_type(InteractionType.MODE):
                 embeddings: Tensor = self.embedding_for_space(space)
-                successor_indices: dict[State, list[int]] = (
+                successor_indices: dict[xmi.XState, list[int]] = (
                     self._parent.successor_indices(space)
                 )
                 successor_indices_list: List[torch.Tensor] = [
-                    torch.tensor(successor_indices[s]) for s in space.get_states()
+                    torch.tensor(successor_indices[s]) for s in space
                 ]
                 num_successors: torch.Tensor = torch.tensor(
                     [len(ls) for ls in successor_indices_list],
@@ -310,36 +318,36 @@ class RlExperimentAnalyzer:
                 self._action_indices_for_space[space] = action_indices
                 self._log_probs_for_space[space] = log_probs
 
-        def computed_probs_list_for_space(self, space: mi.StateSpace):
+        def computed_probs_list_for_space(self, space: xmi.XStateSpace):
             if space not in self._computed_probs_list_for_space:
                 self._compute_probs_for_space(space)
             return self._computed_probs_list_for_space[space]
 
-        def action_indices_for_space(self, space: mi.StateSpace):
+        def action_indices_for_space(self, space: xmi.XStateSpace):
             if space not in self._action_indices_for_space:
                 self._compute_probs_for_space(space)
             return self._action_indices_for_space[space]
 
-        def log_probs_for_space(self, space: mi.StateSpace):
+        def log_probs_for_space(self, space: xmi.XStateSpace):
             if space not in self._log_probs_for_space:
                 self._compute_probs_for_space(space)
             return self._log_probs_for_space[space]
 
-        def computed_values_for_space(self, space: mi.StateSpace):
+        def computed_values_for_space(self, space: xmi.XStateSpace):
             if space not in self._computed_values_for_space:
                 embeddings = self.embedding_for_space(space)
                 values = self.agent.value_operator.module(embeddings)
                 self._computed_values_for_space[space] = values
             return self._computed_values_for_space[space]
 
-        def embedding_for_space(self, space: mi.StateSpace):
+        def embedding_for_space(self, space: xmi.XStateSpace):
             if space not in self._embedding_for_space:
                 logging.info(
-                    f"Computing embedding for whole state space {space} with {space.num_states()} states."
+                    f"Computing embedding for whole state space {space} with {len(space)} states."
                     f" This might take a while."
                 )
                 self._embedding_for_space[space] = self.agent.embedding_module(
-                    space.get_states()
+                    list(space)
                 ).dense_embedding
             return self._embedding_for_space[space]
 
@@ -357,7 +365,7 @@ class RlExperimentAnalyzer:
 
     def load_checkpoint(self, checkpoint_path: Path):
         if checkpoint_path not in self._model_for_checkpoint:
-            model = RlExperimentAnalyzer.ModelResults(
+            model = RLExperimentAnalyzer.ModelResults(
                 self._policy_gradient_lit_module, checkpoint_path, self
             )
             self._model_for_checkpoint[checkpoint_path] = model
@@ -382,25 +390,20 @@ class RlExperimentAnalyzer:
         return self._current_model
 
     # Shortcut for simplicity
-    def space(self, problem: mi.Problem):
+    def space(self, problem: xmi.XProblem):
         return self.in_data.get_or_load_space(problem)
 
-    def successor_indices(self, space: mi.StateSpace):
+    def successor_indices(self, space: xmi.XStateSpace):
         if space not in self._successor_indices:
             self._successor_indices[space] = {
-                s: [
-                    space.get_unique_id(t.target)
-                    for t in space.get_forward_transitions(s)
-                ]
-                for s in space.get_states()
+                s: [t.target.index for t in space.forward_transitions(s)] for s in space
             }
         return self._successor_indices[space]
 
-    def mdp_graph_for_space(self, space: mi.StateSpace):
+    def mdp_graph_for_space(self, space: xmi.XStateSpace):
         if space not in self._mdp_graph_for_space:
             placeholder_probs = [
-                torch.ones((len(space.get_forward_transitions(state)),))
-                for state in space.get_states()
+                torch.ones((space.forward_transition_count(state),)) for state in space
             ]
             nx_graph = build_mdp_graph_with_prob(space, placeholder_probs)
             pyg_graph = mdp_graph_as_pyg_data(nx_graph)
@@ -409,22 +412,23 @@ class RlExperimentAnalyzer:
             self._pyg_graph_for_space[space] = pyg_graph
         return self._mdp_graph_for_space[space]
 
-    def pyg_graph_for_space(self, space: mi.StateSpace):
+    def pyg_graph_for_space(self, space: xmi.XStateSpace):
         if space not in self._pyg_graph_for_space:
             self.mdp_graph_for_space(space)
         return self._pyg_graph_for_space[space]
 
-    def successor_env_for_problem(self, problem: mi.Problem) -> SuccessorEnvironment:
+    @functools.cache
+    def successor_env_for_problem(self, problem: xmi.XProblem) -> SuccessorEnvironment:
         if problem not in self._successor_env_for_problem:
             base_env = SuccessorEnvironment(
-                generators=[mi.GroundedSuccessorGenerator(problem)],
+                generators=[xmi.XSuccessorGenerator(problem)],
                 problems=[problem],
                 batch_size=torch.Size((1,)),
             )
             self._successor_env_for_problem[problem] = base_env
         return self._successor_env_for_problem[problem]
 
-    def expanded_env_for_problem(self, problem: mi.Problem) -> ExpandedStateSpaceEnv:
+    def expanded_env_for_problem(self, problem: xmi.XProblem) -> ExpandedStateSpaceEnv:
         space = self.in_data.get_or_load_space(problem)
         if space is None:
             raise ValueError(
@@ -442,7 +446,7 @@ class RlExperimentAnalyzer:
     def rollout_on_env(
         self,
         base_env: PlanningEnvironment,
-        initial_state: mi.State | None = None,
+        initial_state: xmi.XState | None = None,
         avoid_cycle: bool = False,
         exploration_type: InteractionType | None = None,
         max_steps: int | None = None,
@@ -466,14 +470,16 @@ class RlExperimentAnalyzer:
                 tensordict=initial,
             )
 
-    def rollout_on_problem(self, problem: mi.Problem, **kwargs):
+    def rollout_on_problem(self, problem: xmi.XProblem, **kwargs):
         base_env = self.successor_env_for_problem(problem)
         return self.rollout_on_env(base_env, **kwargs)
 
-    def _load_stored_probs(self) -> Optional[Dict[mi.Problem, List[Tuple[int, Path]]]]:
+    def _load_stored_probs(
+        self,
+    ) -> Optional[Dict[xmi.XProblem, List[Tuple[int, Path]]]]:
         probs_store_callback_default_name = "actor_probs"
 
-        def problem_matching_name(name: str, problems: Iterable[mi.Problem] | None):
+        def problem_matching_name(name: str, problems: Iterable[xmi.XProblem] | None):
             return (
                 next(
                     (p for p in problems if name in p.name),
@@ -511,18 +517,18 @@ class RlExperimentAnalyzer:
             )
             return None
         probs_paths = list(probs_dir.iterdir())
-        by_problem: Dict[mi.Problem, List[Tuple[int, Path]]] = defaultdict(list)
+        by_problem: Dict[xmi.XProblem, List[Tuple[int, Path]]] = defaultdict(list)
         for path in probs_paths:
             stem = path.stem.removeprefix(f"{probs_store_callback_default_name}_")
             epoch: str = stem.split("_")[-1]
             dataloader_name = stem.removesuffix(f"_{epoch}")
-            problem: mi.Problem = find_problem_for_name(dataloader_name)
+            problem: xmi.XProblem = find_problem_for_name(dataloader_name)
             by_problem[problem].append((int(epoch), path))
         by_problem = {p: sorted(paths) for (p, paths) in by_problem.items()}
         return by_problem
 
     def stored_probs_for_problem(
-        self, problem: mi.Problem
+        self, problem: xmi.XProblem
     ) -> List[Tuple[int, List[torch.Tensor]]]:
         if (
             self._stored_probs_for_problem is None
@@ -543,10 +549,9 @@ class RlExperimentAnalyzer:
         return self._stored_probs_for_problem[problem]
 
     def map_to_probabilistic_plan(
-        self, problem: mi.Problem, rollout: TensorDict
+        self, problem: xmi.XProblem, rollout: TensorDict
     ) -> ProbabilisticPlanResult:
-
-        problem: mi.Problem
+        problem: xmi.XProblem
         # Assert we only have one batch entry and the time dimension is the last
         assert rollout.batch_size[0] == 1
         assert rollout.names[-1] == "time"
@@ -578,7 +583,9 @@ class RlExperimentAnalyzer:
 
         return plan_result
 
-    def use_stored_probs_as_policy(self, problem: mi.Problem, epoch: int | None = None):
+    def use_stored_probs_as_policy(
+        self, problem: xmi.XProblem, epoch: int | None = None
+    ):
         epoch_list = self.stored_probs_for_problem(problem)
         if len(epoch_list) == 0:
             raise ValueError(f"No probabilities were saved for problem {problem}.")
@@ -596,7 +603,7 @@ class RlExperimentAnalyzer:
         )
 
     @staticmethod
-    def detect_cycle(transitions: List[mi.Transition]):
+    def detect_cycle(transitions: List[xmi.XTransition]):
         visited = dict()
         for i, t in enumerate(transitions):
             if t.source in visited:
@@ -605,13 +612,12 @@ class RlExperimentAnalyzer:
 
 
 class ProbsBasedPolicy(torch.nn.Module, Callable[[TensorDictBase], TensorDictBase]):
-
     def __init__(
         self,
         probs_list: List[torch.Tensor],
-        problem: mi.Problem,
+        problem: xmi.XProblem,
         env_keys: PlanningEnvironment.AcceptedKeys,
-        idx_of_state: Callable[[TensorDictBase], List[int]] | mi.StateSpace | str,
+        idx_of_state: Callable[[TensorDictBase], List[int]] | xmi.XStateSpace | str,
     ):
         super().__init__()
         self.probs_list = probs_list
@@ -620,19 +626,16 @@ class ProbsBasedPolicy(torch.nn.Module, Callable[[TensorDictBase], TensorDictBas
         if isinstance(idx_of_state, str):
             td_key = idx_of_state
             self.idx_of_state = lambda td: td[td_key]
-        elif isinstance(idx_of_state, mi.StateSpace):
-            space = idx_of_state
-            self.idx_of_state = lambda td: [
-                space.get_unique_id(s) for s in td[self.env_keys.state]
-            ]
+        elif isinstance(idx_of_state, xmi.XStateSpace):
+            self.idx_of_state = lambda td: [s.index for s in td[self.env_keys.state]]
         else:
             self.idx_of_state = idx_of_state
 
     def verify_instance(self, instance):
         if isinstance(instance, Tuple):
-            assert isinstance(instance[1], mi.Problem)
+            assert isinstance(instance[1], xmi.XProblem)
             return instance[1] == self.problem
-        elif isinstance(instance, mi.StateSpace):
+        elif isinstance(instance, xmi.XStateSpace):
             return instance.problem == self.problem
         raise RuntimeError(
             f"Got instance {instance} which was neither of type "
@@ -671,10 +674,10 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
     def __init__(self, transitions_key: NestedKey):
         super().__init__(in_keys=[transitions_key], out_keys=[transitions_key])
         self.transition_key = transitions_key
-        self.visited: Dict[int, Set[mi.State]] = defaultdict(set)
+        self.visited: Dict[int, Set[xmi.XState]] = defaultdict(set)
 
     def _apply_transform(
-        self, batched_transitions: List[List[mi.Transition]] | NonTensorStack
+        self, batched_transitions: List[List[xmi.XTransition]] | NonTensorStack
     ) -> NonTensorStack:
         batched_transitions = tolist(batched_transitions)
         filtered_transitions = []
@@ -684,7 +687,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
             ), "Environment returned state without outgoing transitions."
             # all transitions should have the same source state
             self.visited[batch_idx].add(transitions[0].source)
-            filtered: List[mi.Transition] = [
+            filtered: List[xmi.XTransition] = [
                 t for t in transitions if t.target not in self.visited[batch_idx]
             ]
             if len(filtered) == 0:
@@ -705,8 +708,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
         return self._call(tensordict_reset)
 
 
-class TestThundeRLCLI(ThundeRLCLI):
-
+class EvalThundeRLCLI(ThundeRLCLI):
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         super().add_arguments_to_parser(parser)
         # fit subcommand adds this value to the config
@@ -719,7 +721,7 @@ class TestThundeRLCLI(ThundeRLCLI):
         )
 
 
-def test_lightning_agent(
+def eval_lightning_agent(
     policy_gradient_lit_module: PolicyGradientLitModule,
     logger: Logger,
     input_data: InputData,
@@ -747,7 +749,7 @@ def test_lightning_agent(
     if not input_data.test_problems:
         raise ValueError("No test instances provided")
 
-    analyzer = RlExperimentAnalyzer(
+    analyzer = RLExperimentAnalyzer(
         policy_gradient_lit_module,
         in_data=input_data,
         out_data=output_data,
@@ -769,7 +771,7 @@ def test_lightning_agent(
             analyzer.map_to_probabilistic_plan(problem, rollout)
             for problem, rollout in zip(test_instances, test_results)
         ]
-        solved = sum(1 for p in analyzed_data if p.solved)
+        solved = sum(p.solved for p in analyzed_data)
         logging.info(f"Solved {solved} out of {len(analyzed_data)}")
 
         results_name = f"results_epoch={epoch}-step={step}"
@@ -801,7 +803,7 @@ def test_lightning_agent(
             logger.finalize(status="success")
 
 
-def test_lightning_agent_cli():
+def eval_lightning_agent_cli():
     # overwrite this because it might be set in the config.yaml.
     sys.argv.append("--data_layout.output_data.ensure_new_out_dir")
     sys.argv.append("false")
@@ -809,12 +811,12 @@ def test_lightning_agent_cli():
     # Should be set to avoid overwriting the previous run with the same id
     sys.argv.append("--trainer.logger.init_args.resume")
     sys.argv.append("true")
-    cli = TestThundeRLCLI(run=False)
+    cli = EvalThundeRLCLI(run=False)
     policy_gradient_lit_module: PolicyGradientLitModule = cli.model
     in_data: InputData = cli.datamodule.data
     out_data = cli.config_init["data_layout.output_data"]
     test_setup: TestSetup = cli.config_init["test_setup"]
-    test_lightning_agent(
+    eval_lightning_agent(
         policy_gradient_lit_module=policy_gradient_lit_module,
         logger=cli.trainer.logger,
         input_data=in_data,
@@ -825,6 +827,5 @@ def test_lightning_agent_cli():
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
-    torch.set_float32_matmul_precision("medium")
     torch.multiprocessing.set_sharing_strategy("file_system")
-    test_lightning_agent_cli()
+    eval_lightning_agent_cli()

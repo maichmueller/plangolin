@@ -1,10 +1,13 @@
-from typing import Dict, Mapping, Set
+from typing import Dict, List, Set
 
 import torch
+from tensordict import NestedKey
 from torch import Tensor
+from torchrl.modules import ValueOperator
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from xmimir import XState, XStateSpace
+import xmimir as xmi
+from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from xmimir import XStateSpace
 
 
 def optimal_policy(space: XStateSpace) -> Dict[int, Set[int]]:
@@ -52,3 +55,34 @@ def optimal_discounted_values(space: XStateSpace, gamma: float):
         [discounted_value(space.goal_distance(s), gamma=gamma) for s in space],
         dtype=torch.float,
     )
+
+
+class OptimalValueFunction(torch.nn.Module):
+    """Don't predict the value target just use the discounted distance to goal"""
+
+    def __init__(self, optimal_values: Dict[xmi.XState, float], device: torch.device):
+        super().__init__()
+        self.optimal_values = optimal_values
+        self.device = device
+
+    def __call__(
+        self, batched_states: List[xmi.XState] | NonTensorWrapper
+    ) -> torch.Tensor:
+        batched_states = tolist(batched_states)
+        return torch.stack(
+            [
+                torch.tensor(
+                    [self.optimal_values[state] for state in states],
+                    dtype=torch.float,
+                    device=self.device,
+                ).view(-1, 1)
+                for states in batched_states
+            ]
+        )
+
+    def as_td_module(
+        self, state_key: NestedKey, state_value_key: NestedKey
+    ) -> ValueOperator:
+        return ValueOperator(
+            module=self, in_keys=[state_key], out_keys=[state_value_key]
+        )

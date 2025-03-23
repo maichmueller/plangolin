@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, auto
 from functools import cache, cached_property
 from itertools import chain
 from pathlib import Path
 from typing import (
-    Any,
     Generator,
     Generic,
     Iterable,
@@ -177,7 +176,6 @@ class XLiteral(MimirWrapper[GroundLiteral]):
 
 
 class XDomain(MimirWrapper[Domain]):
-
     def __init__(self, domain: Domain):
         super().__init__(domain)
 
@@ -392,6 +390,12 @@ class XAction(MimirWrapper[GroundAction]):
         return [objs[i] for i in self.base.get_object_indices()]
 
 
+class StateLabel(Enum):
+    goal = auto()
+    deadend = auto()
+    default = auto()
+
+
 class XState(MimirWrapper[State]):
     problem: XProblem
 
@@ -410,7 +414,11 @@ class XState(MimirWrapper[State]):
     """
 
     @multimethod
-    def __init__(self, state: State, problem: XProblem):
+    def __init__(
+        self,
+        state: State,
+        problem: XProblem,
+    ):
         super().__init__(state)
         self.problem = problem
 
@@ -472,14 +480,19 @@ class XState(MimirWrapper[State]):
         """
         return self.base.get_index()
 
+    @cached_property
     def is_goal(self) -> bool:
-        for _ in self.unsatisfied_literals(
-            self.problem.goal(XCategory.fluent, XCategory.derived)
-        ):
-            return False
-        return True
+        return not any(self.unsatisfied_literals(self.problem.goal()))
 
-    def atoms(self, with_statics: bool = False) -> Iterable[XAtom]:
+    @cached_property
+    def is_initial(self) -> bool:
+        initials = tuple(self.problem.initial_atoms())
+        my_atoms = tuple(self.atoms(with_statics=False))
+        return all(atom in initials for atom in my_atoms) and len(initials) == len(
+            my_atoms
+        )
+
+    def atoms(self, with_statics: bool = True) -> Iterable[XAtom]:
         return chain(
             (self.problem.static_atoms() if with_statics else tuple()),
             self.fluent_atoms,
@@ -531,8 +544,8 @@ class XTransition(MimirWrapper[GroundActionEdge]):
     def make_hollow(
         cls,
         source: XState,
-        target: XState,
         action: XAction | Iterable[XAction] | None,
+        target: XState,
     ):
         obj = super().make_hollow()
         obj.source = source
@@ -557,6 +570,22 @@ class XTransition(MimirWrapper[GroundActionEdge]):
 
     def __str__(self):
         return f"Transition({self.source.index} -> {self.target.index})"
+
+    def to_string(self, detailed: bool = False):
+        if not detailed:
+            return str(self)
+        if isinstance(self.action, XAction):
+            action_string = str(self.action)
+        elif isinstance(self.action, Sequence):
+            action_string = list(map(str, self.action))
+        else:
+            action_string = "None"
+        return (
+            f"Transition(\n"
+            f"from: {self.source.fluent_atoms + self.source.derived_atoms}\n"
+            f"action: {action_string}\n"
+            f"to: {self.target.fluent_atoms + self.target.derived_atoms})"
+        )
 
     def explain(self) -> str:
         fluents_before = set(self.source.fluent_atoms)
@@ -609,7 +638,7 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
         self.__init__(Grounder(problem.base, problem.repositories))
 
     @property
-    def grounder(self):
+    def action_grounder(self):
         return self.base.get_action_grounder()
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
@@ -650,10 +679,7 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
 
     @property
     def initial_state(self) -> XState:
-        return XState(
-            self.base.get_or_create_initial_state(),
-            self.problem,
-        )
+        return XState(self.base.get_or_create_initial_state(), self.problem)
 
     def successor(self, state: XState, action: XAction) -> XState:
         return XState(
@@ -744,15 +770,13 @@ class XStateSpace(MimirWrapper[StateSpace]):
         self._vertices = space.get_vertices()
 
     @multimethod
-    def __init__(  # noqa: F811
-        self, domain_path, problem_path, **options: dict[str, Any]
-    ):
+    def __init__(self, domain_path, problem_path, **options):  # noqa: F811
         self.__init__(
             StateSpace.create(domain_path, problem_path, StateSpaceOptions(**options)),
         )
 
     @multimethod
-    def __init__(self, problem: XProblem, **options: dict[str, Any]):  # noqa: F811
+    def __init__(self, problem: XProblem, **options):  # noqa: F811
         self.__init__(
             problem.domain.filepath,
             problem.filepath,
@@ -930,6 +954,7 @@ __all__ = [
     "XProblem",
     "XDomain",
     "XState",
+    "StateLabel",
     "XLiteral",
     "XAtom",
     "XPredicate",

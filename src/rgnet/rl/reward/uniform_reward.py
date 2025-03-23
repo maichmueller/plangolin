@@ -1,0 +1,137 @@
+import math
+from typing import Sequence
+
+from xmimir import StateLabel, XAction, XTransition
+
+from .base_reward import RewardFunction
+
+
+def _discounted_macro_reward(macro, gamma, primitive_reward):
+    r"""
+    Computes the discounted reward for a macro action.
+
+    ..math::
+        \sum_{i=1}^{n} r \cdot \gamma^{i-1} = r \cdot \frac{1 - \gamma^n}{1 - \gamma}
+    """
+    match length := len(macro):
+        case 0:
+            raise ValueError("Cannot compute cost for empty macro")
+        case 1:
+            return primitive_reward
+        case 2:
+            return primitive_reward + gamma * primitive_reward
+        case _:
+            return primitive_reward * (1.0 - gamma**length) / (1.0 - gamma)
+
+
+class UnitReward(RewardFunction):
+    """
+    A reward function that returns a reward (cost) of -1.0 for every primitive action taken.
+
+    The reward for macros is abstracted to primitive reward as well. This can be changed in child classes by
+    overriding the _reward_macro method.
+    """
+
+    def __init__(
+        self,
+        gamma: float | None = None,
+        deadend_reward: float | None = None,
+        goal_reward: float = 0.0,
+        regular_reward: float = -1.0,
+    ):
+        self.regular_reward = regular_reward
+        self.goal_reward = goal_reward
+        if deadend_reward is None and gamma is None:
+            raise ValueError("Either deadend_reward or gamma has to be set.")
+        if deadend_reward is not None:
+            self.deadend_reward = deadend_reward
+            self.gamma = 1.0 / deadend_reward + 1.0
+        else:
+            self.deadend_reward = 1.0 / (gamma - 1.0)
+            self.gamma = gamma
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            math.isclose(self.regular_reward, other.regular_reward, rel_tol=1e-9)
+            and math.isclose(self.goal_reward, other.goal_reward, rel_tol=1e-9)
+            and math.isclose(self.deadend_reward, other.deadend_reward, rel_tol=1e-9)
+            and math.isclose(self.gamma, other.gamma, rel_tol=1e-9)
+        )
+
+    def __call__(
+        self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
+    ) -> list[float]:
+        rewards = []
+        for transition, label in zip(transitions, labels):
+            match label:
+                case StateLabel.deadend:
+                    rewards.append(self.deadend_reward)
+                case StateLabel.goal:
+                    rewards.append(self.goal_reward)
+                case _:
+                    if isinstance(transition.action, Sequence):
+                        rewards.append(self._reward_macro(transition, label))
+                    else:
+                        rewards.append(self.regular_reward)
+        return rewards
+
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return _discounted_macro_reward(
+            transition.action, self.gamma, self.regular_reward
+        )
+
+
+class MacroAgnosticReward(UnitReward):
+    def _reward_macro(self, macro: Sequence[XAction], label: StateLabel):
+        return self.regular_reward
+
+
+class FactoredMacroReward(UnitReward):
+    """
+    A reward function that returns a reward of -(1 + len(actions) / factor) for a (macro) action taken.
+    """
+
+    def __init__(
+        self,
+        factor: float,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.factor = factor
+
+    def __eq__(self, other):
+        return super().__eq__(other) and math.isclose(self.factor, other.factor)
+
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return self.regular_reward - len(transition.action) / self.factor
+
+
+class DiscountedMacroReward(UnitReward):
+    r"""
+    A reward function that returns a discounted reward for a macro action taken.
+
+    The difference to `DefaultUniformReward` is that the discount factor for macros is not forced to be the same
+    as for primitive actions. This allows to further discount the cost of macros to incentivize choosing longer macros
+    over shorter macros or mere chains of primitives.
+    """
+
+    def __init__(
+        self,
+        *args,
+        gamma_macros: float | None = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.gamma_macros = gamma_macros if gamma_macros is not None else self.gamma
+
+    def __eq__(self, other):
+        return super().__eq__(other) and math.isclose(
+            self.gamma_macros, other.gamma_macros, rel_tol=1e-9
+        )
+
+    def _reward_macro(self, transition: XTransition, label: StateLabel):
+        return _discounted_macro_reward(
+            transition.action, self.gamma_macros, self.regular_reward
+        )

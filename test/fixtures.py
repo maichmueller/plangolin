@@ -16,6 +16,7 @@ from rgnet.rl.agents import ActorCritic
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
@@ -143,7 +144,6 @@ def random_object_embeddings(batch_size, num_object, hidden_size):
 
 @pytest.fixture
 def embedding_mock(hidden_size):
-
     def random_embeddings(states: List | NonTensorWrapper):
         states = tolist(states)
         batch_size = len(states)
@@ -207,7 +207,7 @@ def fresh_drive(tmp_path, force_reload=True):
     drive = FlashDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        custom_dead_end_reward=-100.0,
+        reward_function=UnitReward(gamma=0.99),
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),

@@ -24,7 +24,7 @@ class Parameter(StrEnum):
 
 def from_parser_args(parser_args, exp_id: str):
     kwargs = {p.value: getattr(parser_args, p.value) for p in Parameter}
-    output_dir = kwargs.pop(Parameter.output_dir)
+    output_dir = kwargs.pop(Parameter.output_dir.value)
     return InputData(**kwargs), OutputData(
         out_dir=output_dir,
         experiment_name=exp_id,

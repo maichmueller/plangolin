@@ -112,8 +112,6 @@ class EnvironmentBasedRewardProvider(RewardDoneProvider):
                     time_transitions[
                         time_step
                     ],  # all possible transitions for one single state
-                    current_states=[time_states[time_step]]
-                    * num_transitions,  # copy state for num_transitions
                     instances=[time_instances[time_step]]
                     * num_transitions,  # copy instance for num_transitions
                 )
