@@ -341,7 +341,6 @@ class IWStateSpace(XStateSpace):
         state_space = globals()["state_space"]
         iw = globals()["iw"]
         transitions = []
-        # print("Worker started. Processing states:", state_indices)
         for idx in state_indices:
             state = state_space[idx]
             collector = CollectorHook()
@@ -377,7 +376,6 @@ class IWStateSpace(XStateSpace):
             self.max_transitions,
             self.max_time,
         )
-        all_transitions = []
         nr_transitions = 0
         with mp.Pool(
             processes=num_workers,
@@ -388,7 +386,7 @@ class IWStateSpace(XStateSpace):
                 pool.imap(IWStateSpace.worker_build_transitions, chunks),
                 total=len(chunks),
             ):
-                all_transitions.extend(result)
+                self._process_transitions(result)
                 nr_transitions += len(result)
                 _check_timeout(
                     nr_transitions,
@@ -397,8 +395,6 @@ class IWStateSpace(XStateSpace):
                     self.max_time,
                     self.problem.name,
                 )
-
-        self._process_transitions(all_transitions)
         self._compute_iw_goal_distances()
         self._compute_iw_initial_distances()
 
@@ -583,9 +579,16 @@ if __name__ == "__main__":
     domain_path = f"{source_dir}pddl_instances/blocks/domain.pddl"
     problem_path = f"{source_dir}pddl_instances/blocks/large.pddl"
     # problem_path = f"{source_dir}pddl_instances/blocks/iw/largish_unbound_goal.pddl"
+    start = datetime.fromtimestamp(time.time())
     space = XStateSpace(domain_path, problem_path)
     iw_space = IWStateSpace(
         IWSearch(2),
+        # IWSearch(1),
         space.problem,
         n_cpus=mp.cpu_count(),
+        chunk_size=50,
     )
+    elapsed = datetime.fromtimestamp(time.time()) - start
+    hours = elapsed.total_seconds() / 3600
+    minutes, seconds = divmod(elapsed.total_seconds(), 60)
+    print(f"Elapsed time: {hours:.0f}h {minutes:.0f}m {seconds:.0f}s")
