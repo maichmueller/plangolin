@@ -115,7 +115,7 @@ class FactoredMacroReward(UnitReward):
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         if len(transition.action) == 0:
             raise ValueError("Cannot compute reward for 0-length macro.")
-        return self.regular_reward - (len(transition.action) - 1) / self.factor
+        return self.regular_reward * (1 + (len(transition.action) - 1) / self.factor)
 
 
 class DiscountedMacroReward(UnitReward):
@@ -130,7 +130,7 @@ class DiscountedMacroReward(UnitReward):
     Our formula for the discounted reward of a sequence (a_0, a_1, ..., a_n) of actions is:
 
     .. math:
-        r + \frac{\sum_{i=1}^{n} r \cdot \gamma^i}{\sum_{i=1}^{\infinity} r \cdot \gamma^i} = r \cdot (2 - \gamma^n)
+        r + r \cdot \frac{\sum_{i=1}^{n} \gamma^i}{\sum_{i=1}^{\infinity} \gamma^i} = r \cdot (2 - \gamma^n)
     """
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
