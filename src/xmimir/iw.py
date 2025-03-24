@@ -311,6 +311,7 @@ class IWStateSpace(XStateSpace):
         max_transitions: int = float("inf"),
         max_time: timedelta = timedelta(hours=6),
         chunk_size: int = 100,
+        pbar: bool = True,
         **space_options,
     ):
         super().__init__(
@@ -330,6 +331,7 @@ class IWStateSpace(XStateSpace):
         self.max_transitions = max_transitions
         self.max_time = max_time
         self.chunk_size = chunk_size
+        self.pbar = pbar
         self.n_cpus = min(n_cpus, mp.cpu_count())
         if self.n_cpus > 1:
             self._build_mp()
@@ -382,10 +384,8 @@ class IWStateSpace(XStateSpace):
             initializer=initialize_iw_state_space_worker,
             initargs=worker_args,
         ) as pool:
-            for result in tqdm(
-                pool.imap(IWStateSpace.worker_build_transitions, chunks),
-                total=len(chunks),
-            ):
+            iterable = pool.imap(IWStateSpace.worker_build_transitions, chunks)
+            for result in tqdm(iterable, total=len(chunks)) if self.pbar else iterable:
                 self._process_transitions(result)
                 nr_transitions += len(result)
                 _check_timeout(
@@ -411,8 +411,11 @@ class IWStateSpace(XStateSpace):
     def _build(self):
         nr_transitions = 0
         start_time = datetime.fromtimestamp(time.time())
-        for i, state in tqdm(
-            enumerate(self), desc="Building IWStateSpace", total=len(self)
+        iterable = enumerate(self)
+        for i, state in (
+            tqdm(iterable, desc="Building IWStateSpace", total=len(self))
+            if self.pbar
+            else iterable
         ):
             state_transitions = []
 
