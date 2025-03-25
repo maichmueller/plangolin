@@ -14,7 +14,6 @@ from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 from rgnet.rl.reward import RewardFunction, UnitReward
-from xmimir import XStateSpace, XTransition
 
 
 class FlashDrive(InMemoryDataset):
@@ -47,7 +46,7 @@ class FlashDrive(InMemoryDataset):
             # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
             # data will align with our expectations.
             if not self._metadata_matches(pickle.load(open(self.metadata_path, "rb"))):
-                logging.getLogger("root").info(
+                logging.info(
                     f"Metadata mismatch for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
@@ -117,7 +116,7 @@ class FlashDrive(InMemoryDataset):
         )
         env = ExpandedStateSpaceEnv(
             space,
-            batch_size=torch.Size((1,)),
+            batch_size=torch.Size((len(space),)),
             reset_strategy=IteratingReset(),
             reward_function=self.reward_function,
         )
@@ -127,6 +126,11 @@ class FlashDrive(InMemoryDataset):
         )
         with open(self.metadata_path, "wb") as file:
             pickle.dump(self.metadata, file)
+        self._get_logger().info(
+            f"Saving {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
+        del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
 
     def _build(
@@ -134,19 +138,24 @@ class FlashDrive(InMemoryDataset):
         env: ExpandedStateSpaceEnv,
         encoder: GraphEncoderBase,
     ) -> List[HeteroData]:
-        out = env.reset()
+        out = env.reset(autoreset=False)
         space: xmi.XStateSpace = out[env.keys.instance][0]
         nr_states: int = len(space)
-        self._log_build_start(space)
+        logger = self._get_logger()
+        logger.info(
+            f"Building {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
         # Each data object represents one state
         batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
-        space_iter = space.states_iter()
+        space_iter = zip(out["state"], out["transitions"], out["instance"])
         if self.show_progress:
             space_iter = tqdm(space_iter, total=nr_states, desc="Encoding states")
-        for state in space_iter:
+        for state, transitions, instance in space_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
-            transitions: list[XTransition] = list(space.forward_transitions(state))
-            reward, done = env.get_reward_and_done(transitions)
+            reward, done = env.get_reward_and_done(
+                transitions, instances=[instance] * len(transitions)
+            )
             data.reward = reward
             # Save the index of the state
             # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
@@ -158,34 +167,25 @@ class FlashDrive(InMemoryDataset):
             data.done = done
             # Same index concerns for transition.target.index
             data.targets = list(t.target.index for t in transitions)
-            # pymimir returns -1 for states where to goal is not reachable
             distance_to_goal = space.goal_distance(state)
+            if distance_to_goal == float("inf"):
+                # deadend states receive label -1
+                distance_to_goal = -1
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[state.index] = data
-        # self._log_build_end(space)
-        del self.logging_kwargs
+        logger.info(
+            f"Finished {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
         return batched_data
 
-    def _log_build_start(self, space: XStateSpace) -> None:
+    def _get_logger(self):
         if self.logging_kwargs is not None:
             logger = logging.getLogger(f"FD-{self.logging_kwargs['task_id']}")
             logger.setLevel(self.logging_kwargs["log_level"])
         else:
-            logger = logging.getLogger("root")
-        logger.info(
-            f"Building {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #space: {space})"
-        )
-
-    def _log_build_end(self, space: XStateSpace) -> None:
-        if self.logging_kwargs is not None:
-            logger = logging.getLogger(f"thread-{self.logging_kwargs['task_id']}")
-        else:
-            logger = logging.getLogger("root")
-        logger.info(
-            f"Finished {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #space: {space})"
-        )
+            logger = logging.root
+        return logger
 
     def target_idx_to_data_transform(
         self, data: Union[HeteroData, Data]

@@ -22,6 +22,10 @@ from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from xmimir import Domain
 
 
+def set_sharing_strategy():
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+
 class ThundeRLDataModule(LightningDataModule):
     def __init__(
         self,
@@ -35,6 +39,8 @@ class ThundeRLDataModule(LightningDataModule):
         num_workers_validation: int = 2,
         parallel: bool = True,
         balance_by_distance_to_goal: bool = True,
+        max_cpu_count: Optional[int] = None,
+        exit_after_processing: bool = False,
     ) -> None:
         super().__init__()
 
@@ -47,6 +53,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.num_workers_val = num_workers_validation
         self.encoder_factory = encoder_factory
         self.balance_by_distance_to_goal = balance_by_distance_to_goal
+        self.max_cpu_count = max_cpu_count
+        self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
 
@@ -58,7 +66,7 @@ class ThundeRLDataModule(LightningDataModule):
             nonlocal completed
             completed += 1
             logging.info(
-                f"Finished loading problem {completed}/{nr_total} - {dataset.problem_path.stem} "
+                f"Finished loading {completed}/{nr_total} problems - Most recent loaded: {dataset.problem_path.stem} "
                 f"(#{len(dataset)} states)."
             )
 
@@ -81,14 +89,18 @@ class ThundeRLDataModule(LightningDataModule):
                         root_dir=str(self.data.dataset_dir / problem_path.stem),
                         show_progress=False,
                         logging_kwargs=dict(
-                            log_level=logging.getLogger().level, task_id=task_id
+                            log_level=logging.root.level, task_id=task_id
                         ),
                     ),
                     callback=update,
                 )
 
-            pool_size = min(cpu_count(), len(problem_paths))
-            with Pool(pool_size) as pool:
+            pool_size = min(
+                int(os.getenv("SLURM_CPUS_PER_TASK", cpu_count())),
+                len(problem_paths),
+                self.max_cpu_count or float("inf"),
+            )
+            with Pool(pool_size, initializer=set_sharing_strategy) as pool:
                 logging.info(
                     f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
                 )
@@ -102,6 +114,7 @@ class ThundeRLDataModule(LightningDataModule):
             for problem_path in problem_paths:
                 drive = FlashDrive(
                     problem_path=problem_path,
+                    root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
                     **flashdrive_kwargs,
                 )
@@ -116,6 +129,9 @@ class ThundeRLDataModule(LightningDataModule):
         logging.info(
             f"Loading problems took {hours:.0f} hours, {minutes:.0f} minutes, {seconds:.0f} seconds."
         )
+        if self.exit_after_processing:
+            logging.info("Stopping after data processing desired. Exiting now.")
+            exit(0)
         return datasets
 
     def prepare_data(self) -> None:
