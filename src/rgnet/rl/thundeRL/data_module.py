@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import time
 import warnings
 from multiprocessing import Pool, cpu_count
@@ -175,6 +176,9 @@ class ThundeRLDataModule(LightningDataModule):
         class_tensor = torch.cat(
             [dataset.distance_to_goal for dataset in self.dataset.datasets]
         )
+        # Account for deadend state labels being -1 (not working with bincount usage inside `ImbalancedSampler`)
+        # Adding +1 to each distance (label) doesnt change the relative class counts, so does not change the sampling
+        class_tensor = class_tensor + 1
         return ImbalancedSampler(dataset=class_tensor)
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
