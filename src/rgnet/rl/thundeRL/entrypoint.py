@@ -30,5 +30,5 @@ def cli_main():
 
 
 if __name__ == "__main__":
-    # increase_resource_limit()
+    increase_resource_limit()
     cli_main()
