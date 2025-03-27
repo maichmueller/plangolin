@@ -32,6 +32,7 @@ class FlashDrive(InMemoryDataset):
     ) -> None:
         assert domain_path.exists() and domain_path.is_file()
         assert problem_path.exists() and problem_path.is_file()
+        self.desc: Optional[str] = None
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
         self.encoder_factory = encoder_factory
@@ -45,11 +46,15 @@ class FlashDrive(InMemoryDataset):
         if self.metadata_path.exists():
             # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
             # data will align with our expectations.
-            if not self._metadata_matches(pickle.load(open(self.metadata_path, "rb"))):
+            with open(self.metadata_path, "rb") as file:
+                loaded_metadata = pickle.load(file)
+            if mismatch_desc := self._metadata_misaligned(loaded_metadata):
                 logging.info(
-                    f"Metadata mismatch for problem {self.problem_path}, forcing reload."
+                    f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
+            else:
+                self.desc = loaded_metadata[0]
         super().__init__(
             root=root_dir,
             transform=self.target_idx_to_data_transform,
@@ -60,8 +65,12 @@ class FlashDrive(InMemoryDataset):
         )
         self.load(self.processed_paths[0])
 
-    def _metadata_matches(self, meta: Tuple) -> bool:
+    def __str__(self):
+        return self.desc
+
+    def _metadata_misaligned(self, meta: Tuple) -> str:
         (
+            _,
             encoder_factory,
             reward_function,
             domain_content,
@@ -69,22 +78,23 @@ class FlashDrive(InMemoryDataset):
             max_expanded,
         ) = meta
         if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
-            return False
+            return f"encoder_factory: given={self.encoder_factory} != loaded={encoder_factory}"
         if self.reward_function != reward_function:
-            return False
-        if self.domain_file.read_text() != domain_content:
-            return False
-        if self.problem_path.read_text() != problem_content:
-            return False
+            return f"reward_function: given={self.reward_function} != loaded={reward_function}"
+        if (our_file := self.domain_file.read_text()) != domain_content:
+            return f"domain: given={our_file} != loaded={domain_content}"
+        if (our_file := self.problem_path.read_text()) != problem_content:
+            return f"problem: given={our_file} != loaded={problem_content}"
         if self.max_expanded != max_expanded:
-            return False
-        return True
+            return f"max_expanded: given={self.max_expanded} != loaded={max_expanded}"
+        return ""
 
     @property
     def metadata(self):
         domain_content = self.domain_file.read_text()
         problem_content = self.problem_path.read_text()
         return (
+            self.desc,
             self.encoder_factory,
             self.reward_function,
             domain_content,
@@ -140,6 +150,7 @@ class FlashDrive(InMemoryDataset):
     ) -> List[HeteroData]:
         out = env.reset(autoreset=False)
         space: xmi.XStateSpace = out[env.keys.instance][0]
+        self.desc = f"FlashDrive({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
         nr_states: int = len(space)
         logger = self._get_logger()
         logger.info(

@@ -130,9 +130,6 @@ class ThundeRLDataModule(LightningDataModule):
         logging.info(
             f"Loading problems took {hours:.0f} hours, {minutes:.0f} minutes, {seconds:.0f} seconds."
         )
-        if self.exit_after_processing:
-            logging.info("Stopping after data processing desired. Exiting now.")
-            exit(0)
         return datasets
 
     def prepare_data(self) -> None:
@@ -156,13 +153,22 @@ class ThundeRLDataModule(LightningDataModule):
         logging.info(f"Using #{len(problem_paths)} problems in total.")
         logging.info(
             f"Problems used for TRAINING:\n"
-            + "\n".join(p.stem for p in self.data.problem_paths)
+            + "\n".join(p.stem for p in train_prob_paths)
         )
         validation_string = "-NONE-"
         if validation_prob_paths:
             validation_string = "\n".join(p.stem for p in validation_prob_paths)
         logging.info(f"Problems used for VALIDATION:\n{validation_string}")
         datasets: Dict[Path, Dataset] = self.load_datasets(problem_paths)
+        train_desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
+        logging.info(f"Loaded TRAINING datasets:\n" f"{train_desc}")
+        if validation_prob_paths:
+            val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
+            logging.info(f"Loaded VALIDATION datasets:\n" f"{val_desc}")
+
+        if self.exit_after_processing:
+            logging.info("Stopping after data processing desired. Exiting now.")
+            exit(0)
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
