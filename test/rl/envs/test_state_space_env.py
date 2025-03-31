@@ -1,4 +1,4 @@
-from test.fixtures import small_blocks
+from test.fixtures import *  # noqa: F401, F403
 from typing import Iterable, List
 
 import pytest
@@ -62,7 +62,6 @@ def _test_rollout_soundness(
     expected_root_keys: Iterable[NestedKey] = None,
     set_truncated: bool = False,
 ):
-
     assert "next" in rollout.keys()
     expected_root_keys = sorted(expected_root_keys)
 
@@ -146,7 +145,7 @@ def test_rollout_random(batch_size, small_blocks, seed, set_truncated):
         rollout,
         batch_size,
         rollout_length,
-        environment._initial_state,
+        space.initial_state,
         expected_root_keys=get_expected_root_keys(environment, with_action=True),
         set_truncated=set_truncated,
     )

@@ -1,6 +1,6 @@
 import itertools
 import warnings
-from test.fixtures import fresh_drive, medium_blocks
+from test.fixtures import fresh_drive, medium_blocks  # noqa: F401, F403
 from typing import List
 
 import networkx as nx
@@ -8,12 +8,14 @@ import torch
 from matplotlib import pyplot as plt
 
 import xmimir as xmi
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
-from rgnet.rl.thundeRL.policy_evaluation import (
+from rgnet.rl.policy_evaluation import (
     PolicyEvaluationMessagePassing,
-    build_mdp_graph_with_prob,
+    build_mdp_graph,
     mdp_graph_as_pyg_data,
 )
+from rgnet.rl.reward import UnitReward
 
 
 def _placeholder_probs(space: xmi.XStateSpace):
@@ -29,7 +31,16 @@ def _placeholder_probs(space: xmi.XStateSpace):
 
 def test_build_mdp_graph(medium_blocks):
     space: xmi.XStateSpace = medium_blocks[0]
-    nx_graph = build_mdp_graph_with_prob(space, _placeholder_probs(space))
+    env = ExpandedStateSpaceEnv(
+        space,
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(gamma=0.9),
+    )
+    env.reset()
+    nx_graph = build_mdp_graph(
+        env,
+        _placeholder_probs(space),
+    )
     assert all(
         all(
             out_edge[0] == s.index and out_edge[1] == out_transition.target.index
@@ -44,7 +55,13 @@ def test_build_mdp_graph(medium_blocks):
 def test_mdp_graph_as_pyg_data(medium_blocks):
     space: xmi.XStateSpace = medium_blocks[0]
     probs_list = _placeholder_probs(space)
-    pyg_graph = mdp_graph_as_pyg_data(build_mdp_graph_with_prob(space, probs_list))
+    env = ExpandedStateSpaceEnv(
+        space,
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(gamma=0.9),
+    )
+    env.reset()
+    pyg_graph = mdp_graph_as_pyg_data(build_mdp_graph(env, probs_list))
     # Check that the probabilities are stored in the edge_attr
     # Note that we cannot use positional comparison of probabilities stored, as the edges order is not guaranteed, i.e.
     # this is not a valid test:
@@ -58,8 +75,13 @@ def test_mdp_graph_as_pyg_data(medium_blocks):
 
 def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
     space, _, _ = medium_blocks
-
     gamma = 0.9
+    env = ExpandedStateSpaceEnv(
+        space,
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(gamma=gamma),
+    )
+    env.reset()
 
     value_iteration_mp = PolicyEvaluationMessagePassing(
         gamma, num_iterations=100, difference_threshold=0.001
@@ -79,7 +101,7 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
     optimal_policy_probabilities: List[torch.Tensor] = [
         optimal_probs(i, s) for (i, s) in enumerate(space)
     ]
-    graph = build_mdp_graph_with_prob(space, optimal_policy_probabilities)
+    graph = build_mdp_graph(env, optimal_policy_probabilities)
     graph = mdp_graph_as_pyg_data(graph)
 
     values = value_iteration_mp(graph)
@@ -97,7 +119,12 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
     space, _, _ = medium_blocks
 
     gamma = 0.9
-
+    env = ExpandedStateSpaceEnv(
+        space,
+        batch_size=torch.Size((1,)),
+        reward_function=UnitReward(gamma=gamma),
+    )
+    env.reset()
     value_iteration_mp = PolicyEvaluationMessagePassing(
         gamma, num_iterations=100, difference_threshold=0.01
     )
@@ -127,7 +154,7 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
 
     probs_list = [faulty_probs(i, s) for (i, s) in enumerate(space)]
 
-    graph = build_mdp_graph_with_prob(space, probs_list)
+    graph = build_mdp_graph(env, probs_list)
     graph_data = mdp_graph_as_pyg_data(graph)
 
     _debug_policy_per_state = {

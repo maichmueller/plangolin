@@ -34,6 +34,7 @@ from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
     AllActionsLoss,
@@ -417,8 +418,12 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source="data_layout.input_data.validation_spaces",
-            target="model.validation_hooks.init_args.spaces",
+            source=("data_layout.input_data.validation_spaces", "reward"),
+            target="model.validation_hooks.init_args.envs",
+            compute_fn=lambda validation_spaces, reward_func: [
+                ExpandedStateSpaceEnv(space, reward_function=reward_func, reset=True)
+                for space in validation_spaces
+            ],
             apply_on="instantiate",
         )
         parser.link_arguments(
