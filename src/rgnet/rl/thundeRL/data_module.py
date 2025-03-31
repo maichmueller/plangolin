@@ -211,7 +211,7 @@ class ThundeRLDataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers_val,
             # as we have multiple loader each individually should get fewer workers
-            persistent_workers=self.num_workers_val > 0,
+            persistent_workers=False,  # when True validation memory usage increases a lot with every dataloader.
         )
         defaults.update(kwargs)
         return [
