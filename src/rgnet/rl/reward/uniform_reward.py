@@ -43,16 +43,9 @@ class UnitReward(RewardFunction):
         goal_reward: float = 0.0,
         regular_reward: float = -1.0,
     ):
+        super().__init__(gamma, deadend_reward)
         self.regular_reward = regular_reward
         self.goal_reward = goal_reward
-        if deadend_reward is None and gamma is None:
-            raise ValueError("Either deadend_reward or gamma has to be set.")
-        if deadend_reward is not None:
-            self.deadend_reward = deadend_reward
-            self.gamma = 1.0 / deadend_reward + 1.0
-        else:
-            self.deadend_reward = 1.0 / (gamma - 1.0)
-            self.gamma = gamma
 
     def __eq__(self, other):
         if not isinstance(other, type(self)):
@@ -104,9 +97,10 @@ class FactoredMacroReward(UnitReward):
     def __init__(
         self,
         factor: float,
+        *args,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(*args, **kwargs)
         self.factor = factor
 
     def __eq__(self, other):

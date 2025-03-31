@@ -14,6 +14,23 @@ class RewardFunction:
     A reward function has to be able to calculate the reward with only this information.
     """
 
+    def __init__(
+        self,
+        gamma: float | None = None,
+        deadend_reward: float | None = None,
+    ):
+        """
+        Initialize the reward function.
+        """
+        if deadend_reward is None and gamma is None:
+            raise ValueError("Either deadend_reward or gamma has to be set.")
+        if deadend_reward is not None:
+            self.deadend_reward = deadend_reward
+            self.gamma = 1.0 / deadend_reward + 1.0
+        else:
+            self.deadend_reward = 1.0 / (gamma - 1.0)
+            self.gamma = gamma
+
     @abc.abstractmethod
     def __call__(
         self, transitions: Sequence[XTransition], labels: Sequence[StateLabel]
