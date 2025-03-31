@@ -1,12 +1,22 @@
+from functools import singledispatch
 from typing import Dict, List, Set
 
+import networkx as nx
 import torch
+import torch_geometric as pyg
 from tensordict import NestedKey
 from torch import Tensor
 from torchrl.modules import ValueOperator
 
 import xmimir as xmi
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from rgnet.rl.policy_evaluation import (
+    ValueIterationMessagePassing,
+    build_mdp_graph,
+    mdp_graph_as_pyg_data,
+)
+from rgnet.rl.reward import UnitReward
 from xmimir import XStateSpace
 
 
@@ -55,6 +65,30 @@ def optimal_discounted_values(space: XStateSpace, gamma: float):
         [discounted_value(space.goal_distance(s), gamma=gamma) for s in space],
         dtype=torch.float,
     )
+
+
+@singledispatch
+def bellman_optimal_values(env: pyg.data.Data, **kwargs) -> torch.Tensor:
+    """
+    Computes the Bellman optimal values for the given environment using value iteration.
+    """
+    if hasattr(env, "gamma"):
+        kwargs["gamma"] = kwargs.get("gamma", env.gamma)
+    return ValueIterationMessagePassing(**kwargs)(env)
+
+
+@bellman_optimal_values.register
+def _(env: nx.DiGraph, **kwargs) -> torch.Tensor:
+    return bellman_optimal_values(mdp_graph_as_pyg_data(env), **kwargs)
+
+
+@bellman_optimal_values.register
+def _(env: ExpandedStateSpaceEnv, **kwargs) -> torch.Tensor:
+    if type(env.reward_function) is UnitReward:
+        kwargs["gamma"] = env.reward_function.gamma
+    graph = build_mdp_graph(env)
+    data = mdp_graph_as_pyg_data(graph)
+    return bellman_optimal_values(data, **kwargs)
 
 
 class OptimalValueFunction(torch.nn.Module):
