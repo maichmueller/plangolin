@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 
 import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
+from rgnet.rl.optimality_utils import bellman_optimal_values, optimal_policy
 from rgnet.rl.policy_evaluation import (
     PolicyEvaluationMessagePassing,
     build_mdp_graph,
@@ -106,7 +106,7 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
 
     values = value_iteration_mp(graph)
 
-    optimal_values = optimal_discounted_values(space, gamma)
+    optimal_values = bellman_optimal_values(space, gamma)
 
     assert torch.allclose(values, optimal_values, 0.01)
 

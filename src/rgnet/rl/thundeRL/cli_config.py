@@ -42,7 +42,7 @@ from rgnet.rl.losses import (  # noqa: F401
     CriticLoss,
 )
 from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
-from rgnet.rl.optimality_utils import optimal_discounted_values, optimal_policy
+from rgnet.rl.optimality_utils import bellman_optimal_values, optimal_policy
 from rgnet.rl.reward import RewardFunction, UnitReward
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
@@ -117,10 +117,12 @@ def optimal_policy_dict(input_data: InputData):
 
 @cache
 def discounted_optimal_values_dict(
-    input_data: InputData, gamma: float
+    input_data: InputData, reward_func: RewardFunction
 ) -> Dict[int, torch.Tensor]:
     return {
-        i: optimal_discounted_values(space, gamma)
+        i: bellman_optimal_values(
+            ExpandedStateSpaceEnv(space, reward_function=reward_func, reset=True)
+        )
         for i, space in enumerate(input_data.validation_spaces)
     }
 
@@ -391,7 +393,7 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source=("data_layout.input_data", "estimator_config.gamma"),
+            source=("data_layout.input_data", "reward"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
@@ -412,7 +414,7 @@ class ThundeRLCLI(LightningCLI):
 
         # PolicyEvaluationValidation
         parser.link_arguments(
-            source=("data_layout.input_data", "estimator_config.gamma"),
+            source=("data_layout.input_data", "reward"),
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=discounted_optimal_values_dict,
             apply_on="instantiate",
