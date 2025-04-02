@@ -282,10 +282,20 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def get_applicable_transitions(
         self, states: List[xmi.XState]
     ) -> List[List[xmi.XTransition]]:
-        # We don't want empty transitions, therefore we add an artificial transition,
-        # whenever we encounter dead-end states.
+        """
+        For dead-end states or goal-states we add an artificial self-transition without real action (None).
+
+        Note: we can never have empty transitions, since value-learning would not work for terminating-states
+        (goal/deadend) otherwise (since these states would never appear as decision state in a typical rollout of the
+        environment.
+        Hence, our environment will always add a self-transition from terminating states (goal/deadends) to themselves
+        with a None action to mark the termination.
+        """
         return [
-            self.transitions_for(instance, state)
+            (
+                not self.is_goal(instance, state)
+                and self.transitions_for(instance, state)
+            )
             or [xmi.XTransition.make_hollow(state, None, state)]
             for (instance, state) in zip(self._active_instances, states)
         ]
