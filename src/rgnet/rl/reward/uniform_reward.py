@@ -79,6 +79,11 @@ class UnitReward(RewardFunction):
             len(transition.action), self.gamma, self.regular_reward
         )
 
+    def __hash__(self):
+        return hash(
+            f"{self.__class__.__name__}({self.gamma:.9f}, {self.regular_reward:.9f}, {self.goal_reward:.9f})"
+        )
+
 
 class FlatReward(UnitReward):
     r"""
@@ -104,7 +109,19 @@ class FactoredMacroReward(UnitReward):
         self.factor = factor
 
     def __eq__(self, other):
-        return super().__eq__(other) and math.isclose(self.factor, other.factor)
+        return super().__eq__(other) and math.isclose(
+            self.factor, other.factor, rel_tol=1e-9
+        )
+
+    def __hash__(self):
+        return hash(
+            f"{self.__class__.__name__}("
+            f"{self.gamma:.9f}, "
+            f"{self.regular_reward:.9f}, "
+            f"{self.goal_reward:.9f}, "
+            f"{self.factor:.9f}"
+            f")"
+        )
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         if len(transition.action) == 0:
