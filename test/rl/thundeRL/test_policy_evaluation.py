@@ -125,8 +125,8 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
         reward_function=UnitReward(gamma=gamma),
     )
     env.reset()
-    value_iteration_mp = PolicyEvaluationMessagePassing(
-        gamma, num_iterations=100, difference_threshold=0.01
+    policy_eval_mp = PolicyEvaluationMessagePassing(
+        gamma, num_iterations=100, difference_threshold=0.001
     )
     goal_state = next(space.goal_states_iter())
     one_before_goal = list(space.backward_transitions(goal_state))
@@ -168,7 +168,7 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
 
     # _debug_plotit(graph_data, goal_state)
 
-    values = value_iteration_mp(graph_data)
+    values = policy_eval_mp(graph_data)
 
     # The goal is never reached; therefore, the values for all states should go towards
     # the discounted infinite trajectory length, which is -1 / (1-gamma).

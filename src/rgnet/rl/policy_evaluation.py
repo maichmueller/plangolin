@@ -1,3 +1,4 @@
+import itertools
 from typing import Callable, Sequence
 
 import networkx as nx
@@ -29,9 +30,9 @@ def build_mdp_graph(
      - the reward for each edge/transition which is -1 for each transition from each non-goal state
         (edge attribute "reward"),
      - the transition probabilities (edge attribute "probs"),
-     - the action schema name (edge attribute "action")
+     - the action (edge attribute "action")
     """
-    mdp_graph = nx.DiGraph()
+    mdp_graph = nx.MultiDiGraph()
 
     traversal_td = env.traverse()[0]
     states = traversal_td["state"]
@@ -43,7 +44,8 @@ def build_mdp_graph(
             n_trans = len(ts)
             if n_trans == 0:
                 raise ValueError(
-                    "Given state has no transitions. At least a self-loop transition (for e.g. dead-ends) is expected."
+                    "Given state has no transitions. "
+                    "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
                 )
             return torch.ones((n_trans,), dtype=torch.float) / n_trans
 
@@ -66,6 +68,7 @@ def build_mdp_graph(
             ntype=node_type,
             dist=instance.goal_distance(state),
         )
+    running_transition_idx = itertools.count(0)
     for state, instance in zip(states, instances):
         state_transitions = env.get_applicable_transitions([state])[0]
         t_probs: Sequence[float] = transition_probs(state, state_transitions)
@@ -76,9 +79,10 @@ def build_mdp_graph(
             mdp_graph.add_edge(
                 t.source,
                 t.target,
-                action=t.action.name if t.action is not None else "DEADEND",
+                action=t.action,
                 reward=reward[t_idx],
                 probs=t_probs[t_idx],
+                idx=next(running_transition_idx),
             )
     mdp_graph.graph["gamma"] = env.reward_function.gamma
     return mdp_graph
@@ -94,15 +98,38 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     The second node feature dimension is one, if the node is a goal state.
     """
     pyg_graph = torch_geometric.utils.from_networkx(
-        nx_state_space_graph, group_edge_attrs=["probs", "reward"]
+        nx_state_space_graph, group_edge_attrs=["probs", "reward", "idx"]
     )
-    pyg_graph.x = torch.zeros((pyg_graph.num_nodes,))  # start with values of zero
+    transition_indices = pyg_graph.edge_attr[:, 2]
+    expected_transition_indices = torch.arange(transition_indices.max().item() + 1)
+    if (transition_indices.int() != expected_transition_indices).any():
+        # we have to maintain the order of the edges as they are returned by a traversal of the state space.
+        graph_clone = pyg_graph.clone()
+        sorted_transition_indices = torch.argsort(graph_clone.edge_attr[:, 2])
+        pyg_graph.edge_index = graph_clone.edge_index[:, sorted_transition_indices]
+        pyg_graph.edge_attr = graph_clone.edge_attr[sorted_transition_indices, :]
+    transition_indices = pyg_graph.edge_attr[:, 2]
+    assert (transition_indices.int() == expected_transition_indices).all()
     is_goal_state = [False] * pyg_graph.num_nodes
+    # inf as default to trigger errors if logic did not hold
+    goal_reward = [float("inf")] * pyg_graph.num_nodes
     for i, (node, attr) in enumerate(nx_state_space_graph.nodes.data()):
-        is_goal_state[i] = True if attr["ntype"] == "goal" else False
+        if attr["ntype"] == "goal":
+            is_goal_state[i] = True
+            _, _, goal_reward[i] = next(
+                iter(nx_state_space_graph.out_edges(node, data="reward"))
+            )
+
     pyg_graph.goals = torch.tensor(
         is_goal_state,
         dtype=torch.bool,
+    )
+    # goal states have the value of their reward (typically 0, but could be arbitrary),
+    # rest is initialized to 0.
+    pyg_graph.x = torch.where(
+        pyg_graph.goals,
+        torch.tensor(goal_reward, dtype=torch.float),
+        torch.zeros((pyg_graph.num_nodes,)),
     )
     if hasattr(nx_state_space_graph.graph, "gamma"):
         pyg_graph.gamma = nx_state_space_graph.graph["gamma"]
@@ -216,4 +243,4 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
 
     def forward(self, data: torch_geometric.data.Data) -> Tensor:
         data.edge_attr[:, 0] = 1.0
-        return super()(data)
+        return super().__call__(data)
