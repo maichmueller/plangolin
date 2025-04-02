@@ -138,12 +138,12 @@ class ValueEstimatorConfig:
     def __init__(
         self,
         gamma: float,
-        value_type: (
+        estimator_type: (
             ValueEstimators | Literal["AllActionsValueEstimator"]
         ) = ValueEstimators.TD0,
     ):
         self.gamma = gamma
-        self.estimator_type = value_type
+        self.estimator_type = estimator_type
 
 
 def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):

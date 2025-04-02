@@ -24,7 +24,6 @@ def _get_time_step_of(batched_data: Sequence, time_step: int):
 
 
 class RewardDoneProvider:
-
     @abc.abstractmethod
     def __call__(
         self, tensordict: TensorDict
@@ -125,7 +124,6 @@ class EnvironmentBasedRewardProvider(RewardDoneProvider):
 
 
 class KeyBasedProvider(RewardDoneProvider):
-
     def __init__(self, reward_key: NestedKey, done_key: NestedKey):
         self.reward_key = reward_key
         self.done_key = done_key
@@ -316,7 +314,7 @@ class AllActionsValueEstimator(TD0Estimator):
         # We expect a batch_size x time x feature_dim layout
         assert (
             tensordict.names[1] == "time"
-        ), "Required time dimension to be the second."
+        ), f"Required time dimension to be the second. Got {tensordict.names=}"
 
         batched_rewards: List[List[torch.Tensor]]
         batched_dones: List[List[torch.Tensor]]

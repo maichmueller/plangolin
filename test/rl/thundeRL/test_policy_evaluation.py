@@ -106,7 +106,7 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
 
     values = value_iteration_mp(graph)
 
-    optimal_values = bellman_optimal_values(space, gamma)
+    optimal_values = bellman_optimal_values(space, gamma=gamma)
 
     assert torch.allclose(values, optimal_values, 0.01)
 
