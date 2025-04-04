@@ -14,7 +14,6 @@ from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 from rgnet.rl.reward import RewardFunction, UnitReward
-from xmimir import XStateSpace, XTransition
 
 
 class FlashDrive(InMemoryDataset):
@@ -33,6 +32,7 @@ class FlashDrive(InMemoryDataset):
     ) -> None:
         assert domain_path.exists() and domain_path.is_file()
         assert problem_path.exists() and problem_path.is_file()
+        self.desc: Optional[str] = None
         self.domain_file: Path = domain_path
         self.problem_path: Path = problem_path
         self.encoder_factory = encoder_factory
@@ -46,11 +46,15 @@ class FlashDrive(InMemoryDataset):
         if self.metadata_path.exists():
             # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
             # data will align with our expectations.
-            if not self._metadata_matches(pickle.load(open(self.metadata_path, "rb"))):
-                logging.getLogger("root").info(
-                    f"Metadata mismatch for problem {self.problem_path}, forcing reload."
+            with open(self.metadata_path, "rb") as file:
+                loaded_metadata = pickle.load(file)
+            if mismatch_desc := self._metadata_misaligned(loaded_metadata):
+                logging.info(
+                    f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
+            else:
+                self.desc = loaded_metadata[0]
         super().__init__(
             root=root_dir,
             transform=self.target_idx_to_data_transform,
@@ -61,8 +65,12 @@ class FlashDrive(InMemoryDataset):
         )
         self.load(self.processed_paths[0])
 
-    def _metadata_matches(self, meta: Tuple) -> bool:
+    def __str__(self):
+        return self.desc
+
+    def _metadata_misaligned(self, meta: Tuple) -> str:
         (
+            _,
             encoder_factory,
             reward_function,
             domain_content,
@@ -70,22 +78,23 @@ class FlashDrive(InMemoryDataset):
             max_expanded,
         ) = meta
         if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
-            return False
+            return f"encoder_factory: given={self.encoder_factory} != loaded={encoder_factory}"
         if self.reward_function != reward_function:
-            return False
-        if self.domain_file.read_text() != domain_content:
-            return False
-        if self.problem_path.read_text() != problem_content:
-            return False
+            return f"reward_function: given={self.reward_function} != loaded={reward_function}"
+        if (our_file := self.domain_file.read_text()) != domain_content:
+            return f"domain: given={our_file} != loaded={domain_content}"
+        if (our_file := self.problem_path.read_text()) != problem_content:
+            return f"problem: given={our_file} != loaded={problem_content}"
         if self.max_expanded != max_expanded:
-            return False
-        return True
+            return f"max_expanded: given={self.max_expanded} != loaded={max_expanded}"
+        return ""
 
     @property
     def metadata(self):
         domain_content = self.domain_file.read_text()
         problem_content = self.problem_path.read_text()
         return (
+            self.desc,
             self.encoder_factory,
             self.reward_function,
             domain_content,
@@ -117,7 +126,7 @@ class FlashDrive(InMemoryDataset):
         )
         env = ExpandedStateSpaceEnv(
             space,
-            batch_size=torch.Size((1,)),
+            batch_size=torch.Size((len(space),)),
             reset_strategy=IteratingReset(),
             reward_function=self.reward_function,
         )
@@ -127,6 +136,11 @@ class FlashDrive(InMemoryDataset):
         )
         with open(self.metadata_path, "wb") as file:
             pickle.dump(self.metadata, file)
+        self._get_logger().info(
+            f"Saving {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
+        del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
 
     def _build(
@@ -134,19 +148,25 @@ class FlashDrive(InMemoryDataset):
         env: ExpandedStateSpaceEnv,
         encoder: GraphEncoderBase,
     ) -> List[HeteroData]:
-        out = env.reset()
+        out = env.reset(autoreset=False)
         space: xmi.XStateSpace = out[env.keys.instance][0]
+        self.desc = f"FlashDrive({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
         nr_states: int = len(space)
-        self._log_build_start(space)
+        logger = self._get_logger()
+        logger.info(
+            f"Building {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
         # Each data object represents one state
         batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
-        space_iter = space.states_iter()
+        space_iter = zip(out["state"], out["transitions"], out["instance"])
         if self.show_progress:
             space_iter = tqdm(space_iter, total=nr_states, desc="Encoding states")
-        for state in space_iter:
+        for state, transitions, instance in space_iter:
             data = encoder.to_pyg_data(encoder.encode(state))
-            transitions: list[XTransition] = list(space.forward_transitions(state))
-            reward, done = env.get_reward_and_done(transitions)
+            reward, done = env.get_reward_and_done(
+                transitions, instances=[instance] * len(transitions)
+            )
             data.reward = reward
             # Save the index of the state
             # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
@@ -158,34 +178,25 @@ class FlashDrive(InMemoryDataset):
             data.done = done
             # Same index concerns for transition.target.index
             data.targets = list(t.target.index for t in transitions)
-            # pymimir returns -1 for states where to goal is not reachable
             distance_to_goal = space.goal_distance(state)
+            if distance_to_goal == float("inf"):
+                # deadend states receive label -1
+                distance_to_goal = -1
             data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
             batched_data[state.index] = data
-        # self._log_build_end(space)
-        del self.logging_kwargs
+        logger.info(
+            f"Finished {self.__class__.__name__} "
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
         return batched_data
 
-    def _log_build_start(self, space: XStateSpace) -> None:
+    def _get_logger(self):
         if self.logging_kwargs is not None:
             logger = logging.getLogger(f"FD-{self.logging_kwargs['task_id']}")
             logger.setLevel(self.logging_kwargs["log_level"])
         else:
-            logger = logging.getLogger("root")
-        logger.info(
-            f"Building {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #space: {space})"
-        )
-
-    def _log_build_end(self, space: XStateSpace) -> None:
-        if self.logging_kwargs is not None:
-            logger = logging.getLogger(f"thread-{self.logging_kwargs['task_id']}")
-        else:
-            logger = logging.getLogger("root")
-        logger.info(
-            f"Finished {self.__class__.__name__} "
-            f"(problem: {space.problem.name}, #space: {space})"
-        )
+            logger = logging.root
+        return logger
 
     def target_idx_to_data_transform(
         self, data: Union[HeteroData, Data]

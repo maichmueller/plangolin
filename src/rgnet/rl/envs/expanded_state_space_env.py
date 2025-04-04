@@ -1,8 +1,9 @@
 import abc
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
+from tensordict import tensordict
 from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
@@ -74,11 +75,12 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         self,
         spaces: List[xmi.XStateSpace],
         reset_strategy: ResetStrategy = InitialStateReset(),
-        batch_size: torch.Size = torch.Size((1,)),
+        batch_size: torch.Size | int | Iterable[int] = 1,
         seed: Optional[int] = None,
         device: DEVICE_TYPING = "cpu",
         keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
         reward_function: RewardFunction = UnitReward(gamma=0.9),
+        **kwargs,
     ):
         self.reset_strategy = reset_strategy
         super().__init__(
@@ -88,6 +90,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             device=device,
             keys=keys,
             reward_function=reward_function,
+            **kwargs,
         )
 
     def transitions_for(
@@ -106,6 +109,17 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
     def is_goal(self, active_instance: xmi.XStateSpace, state: XState) -> bool:
         return active_instance.is_goal(state)
 
+    def traverse(self, *spaces: xmi.XStateSpace) -> list[tensordict]:
+        return [
+            ExpandedStateSpaceEnv(
+                active_instance,
+                batch_size=torch.Size((len(active_instance),)),
+                reset_strategy=IteratingReset(),
+                reward_function=self.reward_function,
+            ).reset(autoreset=False)
+            for active_instance in (spaces or self._all_instances)
+        ]
+
 
 class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
     """
@@ -116,12 +130,9 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
     def __init__(
         self,
         space: xmi.XStateSpace,
-        batch_size: torch.Size,
+        batch_size: torch.Size | int | Iterable[int] = 1,
         **kwargs,
     ):
-        PlanningEnvironment.assert_1D_batch(batch_size)
+        batch_size = PlanningEnvironment.assert_1d_batch(batch_size)
         batch_size_ = batch_size[0]
-        self._initial_state = space.initial_state
-        self.problem = space.problem
-
         super().__init__(spaces=[space] * batch_size_, batch_size=batch_size, **kwargs)

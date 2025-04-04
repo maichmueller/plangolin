@@ -1,12 +1,25 @@
 #!/usr/bin/env python
 
 import logging
-import sys
 
 import torch
 import torch.nn
 
 from .cli_config import ThundeRLCLI
+
+
+def increase_resource_limit():
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft < 3e4:
+        new_soft = int(3e4)  # arbitrary, increase if necessary
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+        logging.info(
+            logging.info(f"Setting resource limits to: [{soft = }, {hard = }]")
+        )
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    logging.info(f"Resource limits: [{soft = }, {hard = }]")
 
 
 def cli_main():
@@ -17,7 +30,5 @@ def cli_main():
 
 
 if __name__ == "__main__":
-    # https://discuss.pytorch.org/t/training-fails-due-to-memory-exhaustion-when-running-in-a-python-multiprocessing-process/202773/2
-    if sys.platform == "linux":
-        torch.multiprocessing.set_start_method("fork", force=True)
+    increase_resource_limit()
     cli_main()

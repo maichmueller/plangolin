@@ -9,24 +9,24 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
 import torch
 import torch_geometric as pyg
-import tqdm
 from lightning import Callback
 from tensordict import NestedKey, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
+from tqdm import tqdm
 
-import xmimir as xmi
 from rgnet.rl.agents import ActorCritic
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.thundeRL.policy_evaluation import (
+from rgnet.rl.policy_evaluation import (
     PolicyEvaluationMessagePassing,
-    build_mdp_graph_with_prob,
+    build_mdp_graph,
     mdp_graph_as_pyg_data,
 )
+from rgnet.utils.utils import KeyAwareDefaultDict
 
 
 class ValidationCallback(torch.nn.Module, Callback):
-
     def __init__(
         self,
         log_name: str,
@@ -96,7 +96,6 @@ class ValidationCallback(torch.nn.Module, Callback):
 
 
 class CriticValidation(ValidationCallback):
-
     def __init__(
         self,
         discounted_optimal_values: Dict[int, torch.Tensor],
@@ -168,7 +167,6 @@ class CriticValidation(ValidationCallback):
 
 
 class PolicyValidation(ValidationCallback):
-
     def __init__(
         self,
         optimal_policy_dict: Dict[int, Dict[int, Set[int]]],
@@ -294,8 +292,7 @@ class ProbsCollector(torch.nn.Module):
         the k-th successor of this state.
 
     Multiple validation-callbacks can share a common collector.
-    For this use case, the batch_idx has to ba passed,
-     which will be used to identify multiple calls with the same data.
+    For this use case, the batch_idx has to be passed, which will be used to identify multiple calls with the same data.
     The collector will hold the probability tensor on the same device, as received in forward.
     """
 
@@ -358,6 +355,20 @@ class ProbsCollector(torch.nn.Module):
         self._seen_batch_indices.clear()
         self._sorted_probs = None
 
+    def sort_probs(self, dataloader_idx: int):
+        probs_in_epoch: List[List[Tensor]] = self._probs_in_epoch[dataloader_idx]
+        flattened_indices: torch.Tensor = torch.cat(
+            self._state_id_in_epoch[dataloader_idx]
+        )
+        sorted_ids, new_indices = torch.sort(flattened_indices)
+        flattened_probs: List[torch.Tensor] = list(chain.from_iterable(probs_in_epoch))
+        sorted_probs: List[torch.Tensor] = [
+            flattened_probs[i] for i in new_indices.tolist()
+        ]
+        if self._sorted_probs is None:
+            self._sorted_probs = {dataloader_idx: sorted_probs}
+        return sorted_probs
+
     def sort_probs_on_epoch_end(self) -> Dict[int, List[Tensor]]:
         """
         This method should be called inside on_validation_epoch_end.
@@ -368,27 +379,17 @@ class ProbsCollector(torch.nn.Module):
          while iterating over the values.
 
         """
-        if self._sorted_probs is not None:
+        if self._sorted_probs:
             return self._sorted_probs
 
-        self._sorted_probs = dict()
-        for dataloader_idx, state_id_in_epoch in self._state_id_in_epoch.items():
-            probs_in_epoch: List[List[Tensor]] = self._probs_in_epoch[dataloader_idx]
-            flattened_indices: torch.Tensor = torch.cat(state_id_in_epoch)
-            sorted_ids, new_indices = torch.sort(flattened_indices)
-            flattened_probs: List[torch.Tensor] = list(
-                chain.from_iterable(probs_in_epoch)
-            )
-            sorted_probs: List[torch.Tensor] = [
-                flattened_probs[i] for i in new_indices.tolist()
-            ]
-            self._sorted_probs[dataloader_idx] = sorted_probs
-
+        self._sorted_probs = {
+            dataloader_idx: self.sort_probs(dataloader_idx)
+            for dataloader_idx in self._state_id_in_epoch.keys()
+        }
         return self._sorted_probs
 
 
 class ProbsStoreCallback(ValidationCallback):
-
     def __init__(
         self,
         save_dir: Path,
@@ -470,10 +471,9 @@ class PolicyEvaluationValidation(ValidationCallback):
 
     def __init__(
         self,
-        spaces: List[xmi.XStateSpace],
+        envs: List[ExpandedStateSpaceEnv],
         discounted_optimal_values: Dict[int, torch.Tensor],
         probs_collector: ProbsCollector,
-        gamma: float,
         log_name: str = "policy_evaluation",
         num_iterations: Optional[int] = 1_000,
         difference_threshold: Optional[float] = 0.001,
@@ -498,39 +498,42 @@ class PolicyEvaluationValidation(ValidationCallback):
         Both num_iterations and difference_threshold can be used simultaneously, but at least one
         has to be specified.
         """
-        super().__init__(log_name, dataloader_names, only_run_for_dataloader)
+        super().__init__(
+            log_name, dataloader_names, only_run_for_dataloader, epoch_reduction="mean"
+        )
         if num_iterations is None and difference_threshold is None:
             raise ValueError(
                 "Neither num_iterations nor difference_threshold was given."
                 "At least one is required to determine value-iteration limit."
             )
+        gamma = envs[0].reward_function.gamma
+        assert all(
+            env.reward_function.gamma == gamma
+            for i, env in enumerate(envs)
+            if not self.skip_dataloader(i)
+        ), "Gamma has to be the same for all validation spaces."
+
         self.log_aggregated_metric = log_aggregated_metric
         self.probs_collector = probs_collector
         for space_idx, optimal_values in discounted_optimal_values.items():
             self.register_buffer(str(space_idx), optimal_values)
 
+        self._last_seen_dataloader_idx: int = 0
+        self._losses = KeyAwareDefaultDict(
+            lambda dataloader_idx: self._compute_loss(dataloader_idx)
+        )
         self._graphs: Dict[int, pyg.data.Data] = dict()
         logging.info("Building state space graphs for validation problem.")
-        for idx, state_space in tqdm.tqdm(enumerate(spaces), total=len(spaces)):
-            if (
-                only_run_for_dataloader is not None
-                and idx not in only_run_for_dataloader
-            ):
+        for idx, env in tqdm(enumerate(envs), total=len(envs)):
+            if self.skip_dataloader(idx):
                 continue
-            placeholder_probs = [
-                torch.ones((state_space.forward_transition_count(state),))
-                for state in state_space
-            ]
-            nx_graph = build_mdp_graph_with_prob(state_space, placeholder_probs)
-
+            nx_graph = build_mdp_graph(env)
             self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
 
-        self.message_passing: PolicyEvaluationMessagePassing = (
-            PolicyEvaluationMessagePassing(
-                gamma=gamma,
-                num_iterations=num_iterations,
-                difference_threshold=difference_threshold,
-            )
+        self.message_passing = PolicyEvaluationMessagePassing(
+            gamma=gamma,
+            num_iterations=num_iterations,
+            difference_threshold=difference_threshold,
         )
 
     def _apply(self, fn, recurse=True):
@@ -567,8 +570,8 @@ class PolicyEvaluationValidation(ValidationCallback):
         assert (
             flat_probs.device == graph.edge_attr.device
         ), f"Found mismatching devices {flat_probs.device=} and {graph.edge_attr.device=}"
-        self._graphs[dataloader_idx].edge_attr[:, 0] = flat_probs
-        return self.message_passing(self._graphs[dataloader_idx])
+        graph.edge_attr[:, 0] = flat_probs
+        return self.message_passing(graph)
 
     def forward(
         self,
@@ -578,32 +581,48 @@ class PolicyEvaluationValidation(ValidationCallback):
     ):
         if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
+
+        prev_dataloader_idx = self._last_seen_dataloader_idx
+        if dataloader_idx != prev_dataloader_idx:
+            assert dataloader_idx > prev_dataloader_idx
+            loss = self._compute_loss(prev_dataloader_idx).cpu().detach()
+            self._losses[prev_dataloader_idx] = loss
+            self._last_seen_dataloader_idx = dataloader_idx
+            self.probs_collector.reset()
+
         self.probs_collector(
             tensordict, batch_idx=batch_idx, dataloader_idx=dataloader_idx
         )
 
+    def _compute_loss(self, dataloader_idx) -> Optional[torch.Tensor]:
+        epoch_probs = self.probs_collector.sort_probs(dataloader_idx)
+        values = self.compute_values(epoch_probs, dataloader_idx)
+        if self.skip_dataloader(dataloader_idx):  # collector can be shared
+            return None
+        try:
+            optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
+        except AttributeError:
+            warnings.warn(
+                f"No optimal values found for dataloader_idx {dataloader_idx}"
+            )
+            return None
+        assert values.shape == optimal_values.shape
+        assert values.device == optimal_values.device
+        loss = torch.nn.functional.l1_loss(values, optimal_values)
+        return loss
+
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
         self.probs_collector.reset()
+        self._losses.clear()
+        self._last_seen_dataloader_idx = 0
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         losses: List[torch.Tensor] = []
-        for (
-            dataloader_idx,
-            epoch_probs,
-        ) in self.probs_collector.sort_probs_on_epoch_end().items():
-            if self.skip_dataloader(dataloader_idx):  # collector can be shared
-                continue
-            try:
-                optimal_values: torch.Tensor = self.get_buffer(str(dataloader_idx))
-            except AttributeError:
-                warnings.warn(
-                    f"No optimal values found for dataloader_idx {dataloader_idx}"
-                )
-                continue
-            values: torch.Tensor = self.compute_values(epoch_probs, dataloader_idx)
-            assert values.shape == optimal_values.shape
-            assert values.device == optimal_values.device
-            loss = torch.nn.functional.l1_loss(values, optimal_values)
+        sorted_probs = self.probs_collector.sort_probs_on_epoch_end()
+        for dataloader_idx in filter(
+            lambda i: not self.skip_dataloader(i), sorted_probs.keys()
+        ):
+            loss = self._losses[dataloader_idx]
             pl_module.log(
                 self.log_key(dataloader_idx),
                 loss,

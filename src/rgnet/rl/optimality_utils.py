@@ -1,12 +1,23 @@
+import math
+from functools import singledispatch
 from typing import Dict, List, Set
 
+import networkx as nx
 import torch
+import torch_geometric as pyg
 from tensordict import NestedKey
 from torch import Tensor
 from torchrl.modules import ValueOperator
 
 import xmimir as xmi
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from rgnet.rl.policy_evaluation import (
+    ValueIterationMessagePassing,
+    build_mdp_graph,
+    mdp_graph_as_pyg_data,
+)
+from rgnet.rl.reward import UnitReward
 from xmimir import XStateSpace
 
 
@@ -50,11 +61,42 @@ def discounted_value(distance_to_goal, gamma):
     return -(1 - gamma**distance_to_goal) / (1 - gamma)
 
 
-def optimal_discounted_values(space: XStateSpace, gamma: float):
+@singledispatch
+def bellman_optimal_values(env: ExpandedStateSpaceEnv, **kwargs) -> torch.Tensor:
+    if type(env.reward_function) is UnitReward:  # 'is' to ensure no derived class
+        reward_func: UnitReward = env.reward_function
+        if type(env.active_instances[0]) is xmi.XStateSpace:
+            # the underlying state space is a pure state space (no macro transitions)
+            if math.isclose(reward_func.regular_reward, -1.0, abs_tol=1e-8):
+                return bellman_optimal_values(
+                    env.active_instances[0], gamma=reward_func.gamma
+                )
+        kwargs["gamma"] = reward_func.gamma
+    graph = build_mdp_graph(env)
+    return bellman_optimal_values(graph, **kwargs)
+
+
+@bellman_optimal_values.register
+def _(space: XStateSpace, gamma: float) -> torch.Tensor:
     return torch.tensor(
         [discounted_value(space.goal_distance(s), gamma=gamma) for s in space],
         dtype=torch.float,
     )
+
+
+@bellman_optimal_values.register
+def _(env: nx.DiGraph, **kwargs) -> torch.Tensor:
+    return bellman_optimal_values(mdp_graph_as_pyg_data(env), **kwargs)
+
+
+@bellman_optimal_values.register
+def _(env: pyg.data.Data, **kwargs) -> torch.Tensor:
+    """
+    Computes the Bellman optimal values for the given environment using value iteration.
+    """
+    if hasattr(env, "gamma"):
+        kwargs["gamma"] = kwargs.get("gamma", env.gamma)
+    return ValueIterationMessagePassing(**kwargs)(env)
 
 
 class OptimalValueFunction(torch.nn.Module):

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import abc
+import itertools
 import logging
 import operator
 from collections import defaultdict
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -116,10 +118,18 @@ class FanOutMP(HeteroRouting):
         self,
         update_modules: Dict[str, torch.nn.Module],
         src_type: str,
+        use_cuda_streams: bool = False,
     ) -> None:
         """ """
         super().__init__()
         self.update_modules = ModuleDict(update_modules)
+        self.use_cuda_streams = torch.cuda.is_available() and use_cuda_streams
+        if self.use_cuda_streams:
+            self.cuda_streams = [
+                torch.cuda.Stream() for _ in range(len(self.update_modules))
+            ]
+        else:
+            self.cuda_streams = None
         self.static_simple_conv = SimpleConv()
         self.src_type = src_type
 
@@ -132,12 +142,27 @@ class FanOutMP(HeteroRouting):
         out = self.static_simple_conv(x, edge_index)
         return position, out
 
+    def _on_cuda(self):
+        return torch.cuda.is_available() and next(self.parameters()).is_cuda
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         grouped = dict()
-        for predicate, value in out_dict.items():
+        on_cuda = self._on_cuda()
+        for (predicate, value), stream in zip(
+            out_dict.items(),
+            self.cuda_streams if self.use_cuda_streams else itertools.repeat(None),
+        ):
             sorted_out = sorted(value, key=operator.itemgetter(0))
             stacked = torch.cat(tuple(out for _, out in sorted_out), dim=1)
-            grouped[predicate] = self.update_modules[predicate](stacked)
+            update_module = self.update_modules[predicate]
+            with torch.cuda.stream(stream) if on_cuda and stream else nullcontext():
+                grouped[predicate] = update_module(stacked)
+        if on_cuda and self.cuda_streams:
+            torch.cuda.synchronize(self.device)
         return grouped
 
 
@@ -177,7 +202,6 @@ class FanInMP(HeteroRouting):
 
 
 class SelectMP(pyg.nn.MessagePassing):
-
     def __init__(
         self,
         hidden_size: int,

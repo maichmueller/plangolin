@@ -1,4 +1,7 @@
-from test.fixtures import medium_blocks, request_accelerator_for_test
+from test.fixtures import (  # noqa: F401, F403
+    medium_blocks,
+    request_accelerator_for_test,
+)
 
 import mockito
 import pytest
@@ -7,7 +10,8 @@ from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor
 
-import xmimir as xmi
+from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL.validation import PolicyEvaluationValidation
 
 
@@ -26,14 +30,19 @@ class TestPolicyEvaluationValidation:
         return {0: torch.tensor([-1.0, -0.8, -0.6])}
 
     def test_initialization(self, medium_blocks, mock_probs_collector, optimal_values):
-        space_that_not_be_used = mock(spec=xmi.StateSpace, strict=True)
+        env_that_not_be_used = mock(spec=ExpandedStateSpaceEnv, strict=True)
         medium_space = medium_blocks[0]
-        spaces = [medium_space, space_that_not_be_used]
+        envs = [
+            ExpandedStateSpaceEnv(
+                medium_space, 1, reward_function=UnitReward(gamma=0.99), reset=True
+            ),
+            env_that_not_be_used,
+        ]
+        envs[0].reset()  # we need only the first space
         validator = PolicyEvaluationValidation(
-            spaces=spaces,
+            envs=envs,
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
@@ -48,10 +57,15 @@ class TestPolicyEvaluationValidation:
     ):
         with pytest.raises(ValueError) as exc_info:
             PolicyEvaluationValidation(
-                spaces=medium_blocks[0],
+                envs=[
+                    ExpandedStateSpaceEnv(
+                        medium_blocks[0],
+                        reward_function=UnitReward(gamma=0.99),
+                        reset=True,
+                    )
+                ],
                 discounted_optimal_values=optimal_values,
                 probs_collector=mock_probs_collector,
-                gamma=0.99,
                 num_iterations=None,
                 log_aggregated_metric=False,
                 difference_threshold=None,
@@ -62,10 +76,13 @@ class TestPolicyEvaluationValidation:
 
     def test_forward(self, medium_blocks, mock_probs_collector, optimal_values):
         validator = PolicyEvaluationValidation(
-            spaces=[medium_blocks[0]],
+            envs=[
+                ExpandedStateSpaceEnv(
+                    medium_blocks[0], reward_function=UnitReward(gamma=0.99), reset=True
+                )
+            ],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
@@ -84,10 +101,14 @@ class TestPolicyEvaluationValidation:
     ):
         spaces = [medium_blocks[0]]
         validator = PolicyEvaluationValidation(
-            spaces=spaces,
+            envs=[
+                ExpandedStateSpaceEnv(
+                    space, reward_function=UnitReward(gamma=0.99), reset=True
+                )
+                for space in spaces
+            ],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=False,
         )
@@ -103,10 +124,13 @@ class TestPolicyEvaluationValidation:
     ):
         space = medium_blocks[0]
         validator = PolicyEvaluationValidation(
-            spaces=[space],
+            envs=[
+                ExpandedStateSpaceEnv(
+                    space, reward_function=UnitReward(gamma=0.99), reset=True
+                )
+            ],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
@@ -139,12 +163,14 @@ class TestPolicyEvaluationValidation:
         We assert that the message passing module is called with the correct parameters.
         """
         space = medium_blocks[0]
-        spaces = [space]
         validator = PolicyEvaluationValidation(
-            spaces=spaces,
+            envs=[
+                ExpandedStateSpaceEnv(
+                    space, reward_function=UnitReward(gamma=0.99), reset=True
+                )
+            ],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
@@ -165,12 +191,15 @@ class TestPolicyEvaluationValidation:
         All other side effects are mocked:
             compute_values, ProbsCollector, Trainer and PolicyGradientModule.
         """
-        spaces = [medium_blocks[0]]
+        space = medium_blocks[0]
         validator = PolicyEvaluationValidation(
-            spaces=spaces,
+            envs=[
+                ExpandedStateSpaceEnv(
+                    space, reward_function=UnitReward(gamma=0.99), reset=True
+                )
+            ],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
-            gamma=0.99,
             num_iterations=10,
             log_aggregated_metric=True,
             only_run_for_dataloader={0},
@@ -180,7 +209,7 @@ class TestPolicyEvaluationValidation:
         mock_pl_module = mock(strict=True)
 
         # Mock the collected probabilities for the epoch
-        num_transitions = [spaces[0].forward_transition_count(s) for s in spaces[0]]
+        num_transitions = [space.total_transition_count]
         collected_probs = [
             torch.rand((num_trans,)).softmax(dim=-1) for num_trans in num_transitions
         ]
@@ -189,6 +218,7 @@ class TestPolicyEvaluationValidation:
             # ProbsCollector could be shared. PolicyEvaluationValidation has to filter!
             1: None,
         }
+        when(mock_probs_collector).sort_probs(...).thenReturn(collected_probs)
         when(mock_probs_collector).sort_probs_on_epoch_end(...).thenReturn(
             sorted_epoch_probs
         )
@@ -212,6 +242,7 @@ class TestPolicyEvaluationValidation:
             meta_device = self.device
             collected_probs = [t.to(meta_device) for t in collected_probs]
             sorted_epoch_probs[0] = collected_probs
+            validator._losses.clear()  # necessary or the cached loss will simply avoid our error setup
             when(validator).compute_values(...).thenReturn(
                 optimal_values[0].to(meta_device)
             )

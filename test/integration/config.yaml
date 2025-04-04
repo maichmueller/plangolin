@@ -40,7 +40,7 @@ loss:
   class_path: ActorCriticLoss
 
 estimator_config:
-  value_type: TD0
+  estimator_type: TD0
   gamma: 0.9
 
 model:

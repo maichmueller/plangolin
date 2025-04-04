@@ -1,9 +1,4 @@
-from test.fixtures import (
-    embedding_mock,
-    medium_blocks,
-    random_object_embeddings,
-    small_blocks,
-)
+from test.fixtures import *  # noqa: F401, F403
 from test.rl.envs.test_state_space_env import (
     _test_rollout_soundness,
     get_expected_root_keys,
@@ -82,7 +77,7 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
         rollout,
         batch_size,
         rollout_length,
-        environment._initial_state,
+        space.initial_state,
         expected_root_keys=expected_keys,
     )
 

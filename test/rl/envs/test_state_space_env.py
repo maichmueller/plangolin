@@ -1,4 +1,4 @@
-from test.fixtures import small_blocks
+from test.fixtures import *  # noqa: F401, F403
 from typing import Iterable, List
 
 import pytest
@@ -62,7 +62,6 @@ def _test_rollout_soundness(
     expected_root_keys: Iterable[NestedKey] = None,
     set_truncated: bool = False,
 ):
-
     assert "next" in rollout.keys()
     expected_root_keys = sorted(expected_root_keys)
 
@@ -93,8 +92,15 @@ def _test_rollout_soundness(
         for batch_idx in range(0, batch_size):
             current_state = batched_curr_state[batch_idx][time_step]
             transitions = list(space.forward_transitions(current_state))
-            assert batched_transitions[batch_idx][time_step] == transitions
-            assert batched_actions[batch_idx][time_step] in transitions
+            non_goal_transitions_filter = lambda t: not t.source.is_goal
+            assert list(
+                filter(
+                    non_goal_transitions_filter,
+                    batched_transitions[batch_idx][time_step],
+                )
+            ) == list(filter(non_goal_transitions_filter, transitions))
+            if not (transition := batched_actions[batch_idx][time_step]).source.is_goal:
+                assert transition in transitions
             if time_step == rollout_length - 1:
                 if set_truncated:
                     assert rollout["next", keys.done][batch_idx][time_step]
@@ -146,7 +152,7 @@ def test_rollout_random(batch_size, small_blocks, seed, set_truncated):
         rollout,
         batch_size,
         rollout_length,
-        environment._initial_state,
+        space.initial_state,
         expected_root_keys=get_expected_root_keys(environment, with_action=True),
         set_truncated=set_truncated,
     )

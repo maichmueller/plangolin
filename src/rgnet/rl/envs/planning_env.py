@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 import dataclasses
 from itertools import cycle
-from typing import Generic, List, Optional, Sequence, Tuple, Type, TypeVar
+from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar
 
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
@@ -65,7 +65,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     # The reward precedence is default reward < dead end reward < goal reward.
     # In order to avoid unnecessary dead-end trajectories we give a custom reward
     # instead which should be equal to an infinite trajectory.
-    default_dead_end_reward: float = -10.0  # this should be set to 1 / (1- gamma)
+    default_dead_end_reward: float = -10.0  # this should be set to 1 / (1 - gamma)
     default_goal_reward: float = 0.0
     default_reward: float = -1.0
 
@@ -87,13 +87,17 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         self,
         all_instances: List[InstanceType],
         reward_function: RewardFunction,
-        batch_size: torch.Size,
+        batch_size: torch.Size | int | Iterable[int],
         seed: Optional[int] = None,
         device: str = "cpu",
         keys: AcceptedKeys = default_keys,
+        reset: bool = False,
     ):
-        PlanningEnvironment.assert_1D_batch(batch_size)
-        super().__init__(device=device, batch_size=batch_size)
+        batch_size = PlanningEnvironment.assert_1d_batch(batch_size)
+        super().__init__(
+            device=device,
+            batch_size=batch_size,
+        )
 
         self._keys = keys
         self._rng: torch.Generator
@@ -121,16 +125,28 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         )
         self.reward_function = reward_function
         self._make_spec()
+        if reset:
+            self.reset()
 
     @property
     def keys(self):
         return self._keys
 
+    @property
+    def active_instances(self):
+        return self._active_instances
+
     @staticmethod
-    def assert_1D_batch(batch: torch.Size):
+    def assert_1d_batch(batch_size: torch.Size | int | Iterable[int]):
         # We allways require a batch of one which means you will need to access
         # tensordict['action'][0] to get the action even though the batch-size is 1.
-        assert len(batch) == 1, "Only 1D batches are implemented"
+        batch_size = (
+            torch.Size((batch_size,))
+            if isinstance(batch_size, int)
+            else torch.Size(batch_size)
+        )
+        assert len(batch_size) == 1, "Only 1D batches are implemented"
+        return batch_size
 
     def _make_spec(self):
         """Configure environment specification."""
@@ -266,10 +282,20 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def get_applicable_transitions(
         self, states: List[xmi.XState]
     ) -> List[List[xmi.XTransition]]:
-        # We don't want empty transitions, therefore we add an artificial transition,
-        # whenever we encounter dead-end states.
+        """
+        For dead-end states or goal-states we add an artificial self-transition without real action (None).
+
+        Note: we can never have empty transitions, since value-learning would not work for terminating-states
+        (goal/deadend) otherwise (since these states would never appear as decision state in a typical rollout of the
+        environment.
+        Hence, our environment will always add a self-transition from terminating states (goal/deadends) to themselves
+        with a None action to mark the termination.
+        """
         return [
-            self.transitions_for(instance, state)
+            (
+                not self.is_goal(instance, state)
+                and self.transitions_for(instance, state)
+            )
             or [xmi.XTransition.make_hollow(state, None, state)]
             for (instance, state) in zip(self._active_instances, states)
         ]
@@ -288,7 +314,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         if tensordict is None:
             tensordict = self.reset()  # we need transitions to choose from
 
-        PlanningEnvironment.assert_1D_batch(tensordict.batch_size)
+        PlanningEnvironment.assert_1d_batch(tensordict.batch_size)
 
         # using [] should automatically trigger .tolist for NonTensorData/Stack
         batched_transitions = tensordict[self._keys.transitions]

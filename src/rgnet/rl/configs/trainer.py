@@ -18,7 +18,7 @@ import xmimir as xmi
 from rgnet.rl.configs.agent import Agent
 from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.optimality_utils import optimal_discounted_values
+from rgnet.rl.optimality_utils import bellman_optimal_values
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 
@@ -213,11 +213,10 @@ def from_parser_args(
     gamma = parser_args.gamma
 
     optimal_values_dict = {
-        space: optimal_discounted_values(space, gamma) for space in data_resolver.spaces
+        space: bellman_optimal_values(space, gamma) for space in data_resolver.spaces
     }
 
     class ValueModule(torch.nn.Module):
-
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.embedding = agent.embedding

@@ -75,6 +75,21 @@ def large_blocks():
     return problem_setup("blocks", "large")
 
 
+@pytest.fixture(scope="session")
+def largish_blocks_width2_goal():
+    return problem_setup("blocks", "iw/largish_width2_goal")
+
+
+@pytest.fixture(scope="session")
+def largish_blocks_unbound_goal():
+    return problem_setup("blocks", "iw/largish_unbound_goal")
+
+
+@pytest.fixture(scope="session")
+def medium_blocks_width1_goal():
+    return problem_setup("blocks", "iw/medium_width1_goal")
+
+
 def encoded_state(
     domain: str,
     problem: str,
