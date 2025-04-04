@@ -10,7 +10,6 @@ from functools import cached_property, singledispatchmethod
 from typing import Any, Callable, Iterable, Iterator, List, NamedTuple, Sequence
 
 import torch
-from pymimir import StateSpace
 from tqdm import tqdm
 
 from .wrappers import *
@@ -305,7 +304,8 @@ class IWStateSpace(XStateSpace):
     def __init__(
         self,
         iw: IWSearch,
-        problem: str | XProblem,
+        space: XStateSpace | None = None,
+        problem: XProblem | None = None,
         *,
         n_cpus: int = 1,
         max_transitions: int = float("inf"),
@@ -314,11 +314,12 @@ class IWStateSpace(XStateSpace):
         pbar: bool = True,
         **space_options,
     ):
-        super().__init__(
-            StateSpace.create(
-                problem.domain.filepath, problem.filepath, **space_options
-            )
-        )
+        if space is None and problem is None:
+            raise ValueError("Either space or problem must be provided.")
+        if space:
+            super().__init__(space.base)
+        else:
+            super().__init__(problem, **space_options)
         self.iw = iw
         self.iw_fwd_transitions: dict[XState, list[XTransition]] = dict()
         self.iw_bkwd_transitions: dict[XState, list[XTransition]] = dict()
@@ -583,11 +584,11 @@ if __name__ == "__main__":
     problem_path = f"{source_dir}pddl_instances/blocks/large.pddl"
     # problem_path = f"{source_dir}pddl_instances/blocks/iw/largish_unbound_goal.pddl"
     start = datetime.fromtimestamp(time.time())
-    space = XStateSpace(domain_path, problem_path)
+    state_space = XStateSpace(domain_path, problem_path)
     iw_space = IWStateSpace(
         IWSearch(2),
         # IWSearch(1),
-        space.problem,
+        state_space,
         n_cpus=mp.cpu_count(),
         chunk_size=50,
     )

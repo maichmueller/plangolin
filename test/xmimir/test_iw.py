@@ -136,9 +136,7 @@ def siw(
 )
 def test_iw1_state_space(space_fixture, expected_solution_upper_bound_cost, request):
     space, domain, problem = request.getfixturevalue(space_fixture)
-    iw_space = IWStateSpace(
-        IWSearch(1), space.problem, n_cpus=os.cpu_count(), chunk_size=100
-    )
+    iw_space = IWStateSpace(IWSearch(1), space, n_cpus=os.cpu_count(), chunk_size=100)
     assert (
         0
         < iw_space.goal_distance(iw_space.initial_state)
