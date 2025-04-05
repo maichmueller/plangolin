@@ -37,6 +37,7 @@ def build_mdp_graph(
     traversal_td = env.traverse()[0]
     states = traversal_td["state"]
     instances = traversal_td["instance"]
+    transitions = traversal_td["transitions"]
 
     if transition_probabilities is None:
 
@@ -69,8 +70,8 @@ def build_mdp_graph(
             dist=instance.goal_distance(state),
         )
     running_transition_idx = itertools.count(0)
-    for state, instance in zip(states, instances):
-        state_transitions = env.get_applicable_transitions([state])[0]
+    for state, instance, state_transitions in zip(states, instances, transitions):
+        # state_transitions = env.get_applicable_transitions((state,))[0]
         t_probs: Sequence[float] = transition_probs(state, state_transitions)
         reward, _ = env.get_reward_and_done(
             state_transitions, instances=[instance] * len(state_transitions)
