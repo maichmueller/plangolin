@@ -100,10 +100,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
     def initial_for(
         self, active_instances: xmi.XStateSpace
-    ) -> Tuple[xmi.XState, List[xmi.XLiteral]]:
+    ) -> Tuple[xmi.XState, tuple[xmi.XLiteral, ...]]:
         return (
             self.reset_strategy(active_instances),
-            list(active_instances.problem.goal()),
+            active_instances.problem.goal(),
         )
 
     def is_goal(self, active_instance: xmi.XStateSpace, state: XState) -> bool:

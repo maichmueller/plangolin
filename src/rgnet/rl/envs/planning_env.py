@@ -207,7 +207,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     @abc.abstractmethod
     def initial_for(
         self, active_instance: InstanceType
-    ) -> Tuple[xmi.XState, List[xmi.XLiteral]]:
+    ) -> Tuple[xmi.XState, Sequence[xmi.XLiteral]]:
         """
         :param active_instance: The instance after this batch entry was reset.
         :return: the new initial state and goals for the newly reset instance.
@@ -280,7 +280,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         return rewards, torch.tensor(done, dtype=torch.bool, device=self.device)
 
     def get_applicable_transitions(
-        self, states: List[xmi.XState]
+        self, states: Iterable[xmi.XState]
     ) -> List[List[xmi.XTransition]]:
         """
         For dead-end states or goal-states we add an artificial self-transition without real action (None).

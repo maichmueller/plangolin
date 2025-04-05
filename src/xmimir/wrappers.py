@@ -330,14 +330,13 @@ class XProblem(MimirWrapper[Problem]):
     Each XProblem holds its corresponding PDDLRepositories object to access the ground atoms and literals with.
     """
 
-    @multimethod
     def __init__(self, problem: Problem, repositories: PDDLRepositories):
         super().__init__(problem)
         self.repositories = repositories
 
-    @multimethod
-    def __init__(self, space: StateSpace):
-        self.__init__(
+    @staticmethod
+    def from_space(space: StateSpace):
+        return XProblem(
             space.get_problem(),
             space.get_pddl_repositories(),
         )
@@ -358,14 +357,15 @@ class XProblem(MimirWrapper[Problem]):
     def objects(self) -> ObjectList:
         return self.base.get_objects()
 
-    def goal(self, *category: XCategory) -> Iterable[XLiteral]:
+    @cache
+    def goal(self, *category: XCategory) -> tuple[XLiteral, ...]:
         if not category:
             category = XCategory.__members__.values()
 
         iterable = chain.from_iterable(
             getattr(self.base, f"get_{cat.name}_goal_condition")() for cat in category
         )
-        return (XLiteral(l) for l in iterable)
+        return tuple(XLiteral(l) for l in iterable)
 
     def static_atoms(self) -> Iterable[XAtom]:
         return (
@@ -427,9 +427,7 @@ class XProblem(MimirWrapper[Problem]):
             and self.semantic_eq_sequences(
                 tuple(self.initial_atoms()), tuple(other.initial_atoms()), ordered=False
             )
-            and self.semantic_eq_sequences(
-                tuple(self.goal()), tuple(other.goal()), ordered=False
-            )
+            and self.semantic_eq_sequences(self.goal(), other.goal(), ordered=False)
         )
 
 
@@ -591,7 +589,6 @@ class XState(MimirWrapper[State]):
     Guideline: Try to use only states from the same repository whenever possible, i.e. use only a single repository.
     """
 
-    @multimethod
     def __init__(
         self,
         state: State,
@@ -600,13 +597,10 @@ class XState(MimirWrapper[State]):
         super().__init__(state)
         self.problem = problem
 
-    @multimethod
-    def __init__(self, index: int, space: StateSpace):
-        self.__init__(space.get_vertex(index).get_state(), XProblem(space))
-
-    @multimethod
-    def __init__(self, index: int, space: XStateSpace):
-        self.__init__(space.base.get_vertex(index).get_state(), space.problem)
+    @staticmethod
+    def from_index(index: int, space: StateSpace | XStateSpace):
+        space = space.base if isinstance(space, XStateSpace) else space
+        return XState(space.get_vertex(index).get_state(), XProblem.from_space(space))
 
     def __iter__(self):
         return iter(self.atoms())
@@ -742,8 +736,8 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         space: XStateSpace,
     ):
         super().__init__(edge)
-        self.source = XState(edge.get_source(), space.base)
-        self.target = XState(edge.get_target(), space.base)
+        self.source = XState.from_index(edge.get_source(), space.base)
+        self.target = XState.from_index(edge.get_target(), space.base)
         self.action = XAction(edge.get_creating_action(), space.action_generator)
 
     @classmethod
@@ -931,9 +925,7 @@ class XSearchResult(MimirWrapper[SearchResult]):
         return self.base.status
 
     def goal(self):
-        return XState(
-            self.base.goal_state, self.action_generator.problem, StateLabel.goal
-        )
+        return XState(self.base.goal_state, self.action_generator.problem)
 
     @cached_property
     def plan(self) -> tuple[XAction, ...] | None:
@@ -1034,22 +1026,22 @@ class XStateSpace(MimirWrapper[StateSpace]):
 
     @property
     def problem(self) -> XProblem:
-        return XProblem(self.base)
+        return XProblem.from_space(self.base)
 
     @property
     def state_repository(self) -> StateRepository:
         return self.base.get_state_repository()
 
-    @property
+    @cached_property
     def action_generator(self) -> XActionGenerator:
         return XActionGenerator(self.base.get_applicable_action_generator())
 
-    @property
+    @cached_property
     def successor_generator(self) -> XSuccessorGenerator:
         return XSuccessorGenerator(
             self.problem,
             self.state_repository,
-            XActionGenerator(self.problem),
+            self.action_generator,
         )
 
     @property
@@ -1099,7 +1091,7 @@ class XStateSpace(MimirWrapper[StateSpace]):
         return self.base.get_goal_distance(state.index)
 
     def get_state(self, index: int) -> XState:
-        return XState(index, self.base)
+        return XState.from_index(index, self.base)
 
     @cached_property
     def initial_state(self) -> XState:
