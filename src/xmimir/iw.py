@@ -138,6 +138,14 @@ class IWSearch:
         self.current_novelty_condition: Novelty | None = None
         self.current_successor_generator = None
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return (
+            self.width == other.width
+            and self.expansion_strategy == other.expansion_strategy
+        )
+
     @property
     def current_problem(self):
         return self.current_successor_generator.problem
