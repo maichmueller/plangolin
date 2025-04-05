@@ -19,25 +19,50 @@ def build_mdp_graph(
         | Callable[[XState, Sequence[XTransition]], Sequence[float]]
         | None
     ) = None,
+    use_space_directly: bool = True,
 ) -> nx.DiGraph:
     """
     Encode the state space as networkx graph. Each state is a node and each transition
     corresponds to an edge. The states are encoded as unique integers.
     The rewards are analog as in PlanningEnvironment such that goal states have a value of 0.
     The graph also contains information about:
-     - whether a state is initial or goal state (node attribute "ntype"),
-     - the distance to the goal state (node attribute "dist"),
-     - the reward for each edge/transition which is -1 for each transition from each non-goal state
-        (edge attribute "reward"),
-     - the transition probabilities (edge attribute "probs"),
-     - the action (edge attribute "action")
+      - whether a state is initial or goal state (node attribute "ntype"),
+      - the distance to the goal state (node attribute "dist"),
+      - the reward for each edge/transition which is -1 for each transition from each non-goal state
+         (edge attribute "reward"),
+      - the transition probabilities (edge attribute "probs"),
+      - the action (edge attribute "action")
+
+    Parameters
+    ----------
+    env: ExpandedStateSpaceEnv
+        The environment to build the graph from.
+    transition_probabilities: (
+           Sequence[torch.FloatTensor | torch.Tensor]
+           | Callable[[XState, Sequence[XTransition]], Sequence[float]]
+           | None
+    )
+           The transition probabilities for each state. If None, uniform transition probabilities are used.
+    use_space_directly: bool
+           If True, the state space is used directly.
+           Otherwise, the environment is used to traverse the space and generate the graph.
+           This is significantly faster for large state spaces, since default .traverse() functions
+           merely replicate the state space as a tensordict.
     """
     mdp_graph = nx.MultiDiGraph()
 
-    traversal_td = env.traverse()[0]
-    states = traversal_td["state"]
-    instances = traversal_td["instance"]
-    transitions = traversal_td["transitions"]
+    # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
+    if use_space_directly:
+        env.reset()
+        space = env.active_instances[0]
+        states = space
+        instances = [space] * len(space)
+        transitions = (env.get_applicable_transitions((state,))[0] for state in space)
+    else:
+        traversal_td = env.traverse()[0]
+        states = traversal_td["state"]
+        instances = traversal_td["instance"]
+        transitions = traversal_td["transitions"]
 
     if transition_probabilities is None:
 
@@ -71,7 +96,6 @@ def build_mdp_graph(
         )
     running_transition_idx = itertools.count(0)
     for state, instance, state_transitions in zip(states, instances, transitions):
-        # state_transitions = env.get_applicable_transitions((state,))[0]
         t_probs: Sequence[float] = transition_probs(state, state_transitions)
         reward, _ = env.get_reward_and_done(
             state_transitions, instances=[instance] * len(state_transitions)
