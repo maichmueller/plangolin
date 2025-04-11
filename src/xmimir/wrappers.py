@@ -536,24 +536,20 @@ class XAction(MimirWrapper[GroundAction]):
                 conditions, f"get_{cat_name}_{qualifier}_condition"
             )
             condition_atoms = atom_callback(condition_indices)
-            yield from chain(map(XAtom, condition_atoms))
+            yield from map(XAtom, condition_atoms)
 
-    def effects(self, *category: XCategory, positive: bool = True) -> Generator[XAtom]:
+    def effects(self, positive: bool = True) -> Generator[XAtom]:
         effects = self.base.get_strips_effect()
-        if not category:
-            category = XCategory.__members__.values()
-
-        qualifier = "positive" if positive else "negative"
-
-        for category in category:
-            cat_name = category.name
-            atom_callback = getattr(
-                self.problem.repositories, f"get_{cat_name}_ground_atoms_from_indices"
-            )
-            effect_indices = getattr(effects, f"get_{qualifier}_effects")
-
-            effect_atoms = atom_callback(effect_indices)
-            yield from chain(map(XAtom, effect_atoms))
+        if positive:
+            effect_indices = effects.get_positive_effects()
+        else:
+            effect_indices = effects.get_negative_effects()
+        yield from map(
+            XAtom,
+            self.problem.repositories.get_fluent_ground_atoms_from_indices(
+                effect_indices
+            ),
+        )
 
     @property
     def objects(self):

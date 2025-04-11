@@ -47,20 +47,37 @@ class Novelty:
     def as_ordered_atom_tuple(atom_tuple: Iterable[XAtom]):
         return tuple(sorted(atom_tuple, key=str))
 
-    def _tuple_generator(self, atoms: Sequence[XAtom]):
+    def _tuple_generator(self, atoms: Sequence[XAtom], added_atoms: Sequence[XAtom]):
+        """
+        Generates ordered tuples of atoms of the given arity from the provided atom set.
+
+        Note: If added_atoms is not provided, the entire atom set is used.
+              We expect added_atoms to be a subset of atoms.
+        """
         for arity in range(1, self.arity + 1):
-            for atom_tuple in itertools.combinations(atoms, arity):
-                yield self.as_ordered_atom_tuple(atom_tuple)
+            match arity:
+                case 1:
+                    for atom in added_atoms or atoms:
+                        yield self.as_ordered_atom_tuple((atom,))
+                case 2:
+                    for a1 in added_atoms or atoms:
+                        for a2 in atoms:
+                            yield self.as_ordered_atom_tuple((a1, a2))
+                case _:
+                    for atom_tuple in itertools.combinations(atoms, arity):
+                        yield self.as_ordered_atom_tuple(atom_tuple)
 
     def add_known_tuples(self, atom_tuple_iter: Iterable[tuple[XAtom, ...]]):
         for atom_tuple in map(self.as_ordered_atom_tuple, atom_tuple_iter):
             self.known_tuples.add(atom_tuple)
 
     @singledispatchmethod
-    def test(self, atoms: Sequence[XAtom]) -> NoveltyCheck:
+    def test(
+        self, atoms: Sequence[XAtom], added_atoms: Sequence[XAtom] = tuple()
+    ) -> NoveltyCheck:
         novelty = -1
         novel_tuples = []
-        for atom_tuple in self._tuple_generator(atoms):
+        for atom_tuple in self._tuple_generator(atoms, added_atoms):
             if atom_tuple not in self.known_tuples:
                 self.known_tuples.add(atom_tuple)
                 novel_tuples.append(atom_tuple)
@@ -72,12 +89,15 @@ class Novelty:
         return NoveltyCheck(novelty, novel_tuples)
 
     @test.register
-    def _(self, state: XState):
+    def _(self, state: XState, added_atoms: Sequence[XAtom] = tuple()) -> NoveltyCheck:
         # logically we would like a Set datastruct here with stable iteration,
         # but `set`'s iteration order is not guaranteed.
         # Hence, we convert the atom-`iterable` to a `dict` which comes with necessary guarantees.
         # Its keys are also multipass with respect to iteration and behave like a `set`
-        return self.test(dict.fromkeys(state.atoms(with_statics=False)).keys())
+        return self.test(
+            dict.fromkeys(state.atoms(with_statics=False)).keys(),
+            added_atoms,
+        )
 
 
 class ExpansionNode(NamedTuple):
@@ -94,6 +114,9 @@ class ExpansionStrategy:
     def consume(self, options: List[ExpansionNode]):
         self.options = options
         return self
+
+    def __eq__(self, other):
+        return self.__class__ == other.__class__
 
     @abstractmethod
     def __iter__(self) -> Iterator[ExpansionNode]: ...
@@ -112,7 +135,13 @@ class ReverseOrderExpansion(ExpansionStrategy):
 class RandomizedExpansion(ExpansionStrategy):
     def __init__(self, seed: int):
         super().__init__()
+        self.seed = seed
         self.rng = torch.random.manual_seed(seed)
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.seed == other.seed
 
     def __iter__(self):
         for index in torch.randperm(len(self.options), generator=self.rng):
@@ -240,7 +269,10 @@ class IWSearch:
             nodes
         ):
             for action, child_state in successor_generator.successors(state):
-                if novel_check := novelty_condition.test(child_state):
+                pos_effect_atoms = tuple(action.effects(positive=True))
+                if not pos_effect_atoms:
+                    continue
+                if novel_check := novelty_condition.test(child_state, pos_effect_atoms):
                     child_trace = trace + [
                         XTransition.make_hollow(state, action, child_state)
                     ]
