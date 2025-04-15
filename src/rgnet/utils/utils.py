@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import time
 from datetime import timedelta
@@ -102,3 +103,15 @@ class KeyAwareDefaultDict(dict):
         value = self.default_factory(key)
         self[key] = value  # Store the value in the dictionary
         return value
+
+
+def env_aware_cpu_count(ignore_slurm: bool = False) -> int:
+    """
+    Returns the number of CPUs available on the machine.
+    :return: Number of CPUs
+    """
+    return int(
+        os.cpu_count()
+        if ignore_slurm
+        else os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())
+    )
