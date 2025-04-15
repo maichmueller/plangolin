@@ -213,7 +213,8 @@ def from_parser_args(
     gamma = parser_args.gamma
 
     optimal_values_dict = {
-        space: bellman_optimal_values(space, gamma) for space in data_resolver.spaces
+        space: bellman_optimal_values(space, gamma=gamma)
+        for space in data_resolver.spaces
     }
 
     class ValueModule(torch.nn.Module):

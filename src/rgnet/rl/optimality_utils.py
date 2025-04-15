@@ -14,30 +14,63 @@ from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.rl.policy_evaluation import (
     ValueIterationMessagePassing,
-    build_mdp_graph,
     mdp_graph_as_pyg_data,
 )
 from rgnet.rl.reward import UnitReward
-from xmimir import XStateSpace
+from xmimir import XState, XStateSpace
 
 
-def optimal_policy(space: XStateSpace) -> Dict[int, Set[int]]:
+@singledispatch
+def optimal_policy(
+    env: ExpandedStateSpaceEnv, optimal_values: list[Tensor] | None = None
+) -> Dict[int, Set[int]]:
+    if type(env.reward_function) is UnitReward:
+        reward_func: UnitReward = env.reward_function
+        if type(env.active_instances[0]) is xmi.XStateSpace:
+            # the underlying state space is a pure state space (no macro transitions)
+            if math.isclose(reward_func.regular_reward, -1.0, abs_tol=1e-8):
+                return optimal_policy(env.active_instances[0])
+    if optimal_values is not None:
+        return optimal_policy(env.active_instances[0], optimal_values=optimal_values)
+
+
+@optimal_policy.register
+def _(
+    space: XStateSpace, optimal_values: list[Tensor] | None = None
+) -> Dict[int, Set[int]]:
+    """
+    Computes the optimal policy for the given state space.
+
+    If `optimal_values` is provided, it is used to determine the optimal actions.
+    Assumptions:
+        - optimal_values[i] is the value of the state for which state.index == i
+        - optimal_values[i][j] is the value of the transition space.forward_transitions(state)[j]
+    """
+    if optimal_values is not None:
+
+        def optimal_successors(state: XState) -> Tensor:
+            return optimal_values[state.index].argmin()
+
+    else:
+
+        def optimal_successors(state: XState) -> Tensor:
+            return torch.tensor(
+                [
+                    space.goal_distance(t.target)
+                    for t in space.forward_transitions(state)
+                ],
+                dtype=torch.float,
+            ).argmin()
+
     # index of state to set of indices of optimal actions
-    # optimal[i] = {j},  0 <= j < len(space.iter_forward_transitions(space.get_states()[i]))
+    # optimal[i] = {j},  0 <= j < len(space.forward_transitions(space[i]))
     optimal: Dict[int, Set[int]] = dict()
-    for i, state in enumerate(space):
-        transitions = list(space.forward_transitions(state))
-        if not transitions:
-            optimal[i] = set()
+    for state in space:
+        if space.is_deadend(state):
+            optimal[state.index] = set()
             continue
-        best_distance = min(space.goal_distance(t.target) for t in transitions)
-        best_actions: Set[int] = set(
-            idx
-            for idx, t in enumerate(transitions)
-            if space.goal_distance(t.target) == best_distance
-        )
-
-        optimal[i] = best_actions
+        best_actions: Set[int] = set(optimal_successors(state).view(-1).tolist())
+        optimal[state.index] = best_actions
     return optimal
 
 
@@ -72,7 +105,7 @@ def bellman_optimal_values(env: ExpandedStateSpaceEnv, **kwargs) -> torch.Tensor
                     env.active_instances[0], gamma=reward_func.gamma
                 )
         kwargs["gamma"] = reward_func.gamma
-    graph = build_mdp_graph(env)
+    graph = env.to_mdp_graph()
     return bellman_optimal_values(graph, **kwargs)
 
 

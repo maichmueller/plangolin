@@ -1,5 +1,4 @@
-import itertools
-from typing import Callable, Sequence
+from functools import cache
 
 import networkx as nx
 import torch
@@ -8,111 +7,8 @@ from torch import Tensor
 from torch.nn.functional import l1_loss
 from torch_geometric.nn.conv import MessagePassing
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from xmimir import XState, XTransition
 
-
-def build_mdp_graph(
-    env: ExpandedStateSpaceEnv,
-    transition_probabilities: (
-        Sequence[torch.FloatTensor | torch.Tensor]
-        | Callable[[XState, Sequence[XTransition]], Sequence[float]]
-        | None
-    ) = None,
-    use_space_directly: bool = True,
-) -> nx.DiGraph:
-    """
-    Encode the state space as networkx graph. Each state is a node and each transition
-    corresponds to an edge. The states are encoded as unique integers.
-    The rewards are analog as in PlanningEnvironment such that goal states have a value of 0.
-    The graph also contains information about:
-      - whether a state is initial or goal state (node attribute "ntype"),
-      - the distance to the goal state (node attribute "dist"),
-      - the reward for each edge/transition which is -1 for each transition from each non-goal state
-         (edge attribute "reward"),
-      - the transition probabilities (edge attribute "probs"),
-      - the action (edge attribute "action")
-
-    Parameters
-    ----------
-    env: ExpandedStateSpaceEnv
-        The environment to build the graph from.
-    transition_probabilities: (
-           Sequence[torch.FloatTensor | torch.Tensor]
-           | Callable[[XState, Sequence[XTransition]], Sequence[float]]
-           | None
-    )
-           The transition probabilities for each state. If None, uniform transition probabilities are used.
-    use_space_directly: bool
-           If True, the state space is used directly.
-           Otherwise, the environment is used to traverse the space and generate the graph.
-           This is significantly faster for large state spaces, since default .traverse() functions
-           merely replicate the state space as a tensordict.
-    """
-    mdp_graph = nx.MultiDiGraph()
-
-    # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
-    if use_space_directly:
-        env.reset()
-        space = env.active_instances[0]
-        states = space
-        instances = [space] * len(space)
-        transitions = (env.get_applicable_transitions((state,))[0] for state in space)
-    else:
-        traversal_td = env.traverse()[0]
-        states = traversal_td["state"]
-        instances = traversal_td["instance"]
-        transitions = traversal_td["transitions"]
-
-    if transition_probabilities is None:
-
-        def transition_probs(s: XState, ts: Sequence[XTransition]):
-            n_trans = len(ts)
-            if n_trans == 0:
-                raise ValueError(
-                    "Given state has no transitions. "
-                    "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
-                )
-            return torch.ones((n_trans,), dtype=torch.float) / n_trans
-
-    elif isinstance(transition_probabilities, Sequence):
-        assert len(transition_probabilities) == len(states)
-
-        def transition_probs(s: XState, ts: Sequence[XTransition]):
-            return transition_probabilities[s.index]
-
-    else:
-        transition_probs = transition_probabilities
-    for state, instance in zip(states, instances):
-        node_type = (
-            "goal"
-            if env.is_goal(instance, state)
-            else ("initial" if instance.initial_state == state else "default")
-        )
-        mdp_graph.add_node(
-            state,
-            ntype=node_type,
-            dist=instance.goal_distance(state),
-        )
-    running_transition_idx = itertools.count(0)
-    for state, instance, state_transitions in zip(states, instances, transitions):
-        t_probs: Sequence[float] = transition_probs(state, state_transitions)
-        reward, _ = env.get_reward_and_done(
-            state_transitions, instances=[instance] * len(state_transitions)
-        )
-        for t_idx, t in enumerate(state_transitions):
-            mdp_graph.add_edge(
-                t.source,
-                t.target,
-                action=t.action,
-                reward=reward[t_idx],
-                probs=t_probs[t_idx],
-                idx=next(running_transition_idx),
-            )
-    mdp_graph.graph["gamma"] = env.reward_function.gamma
-    return mdp_graph
-
-
+@cache
 def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     """
     Convert the networkx graph into a directed pytorch_geometric graph.
@@ -165,7 +61,7 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
 # marked abstract but should only be overwritten if needed.
 # noinspection PyMethodOverriding, PyAbstractClass
 class PolicyEvaluationMessagePassing(MessagePassing):
-    """
+    r"""
     Implements Policy evaluation as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
 
@@ -229,7 +125,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
 
 # noinspection PyMethodOverriding, PyAbstractClass
 class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
-    """
+    r"""
     Implements Value Iteration as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
 
@@ -268,4 +164,4 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
 
     def forward(self, data: torch_geometric.data.Data) -> Tensor:
         data.edge_attr[:, 0] = 1.0
-        return super().__call__(data)
+        return super().forward(data)

@@ -13,6 +13,7 @@ from torch import Tensor
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL.validation import PolicyEvaluationValidation
+from xmimir.iw import IWSearch, IWStateSpace
 
 
 class TestPolicyEvaluationValidation:
@@ -49,8 +50,14 @@ class TestPolicyEvaluationValidation:
         )
 
         assert len(validator._graphs) == 1
-        assert validator.message_passing.gamma == 0.99
-        assert validator.message_passing.num_iterations == 10
+        assert all(
+            message_passer.gamma == 0.99
+            for message_passer in validator.message_passing.values()
+        )
+        assert all(
+            message_passer.num_iterations == 10
+            for message_passer in validator.message_passing.values()
+        )
 
     def test_initialization_validation_error(
         self, medium_blocks, mock_probs_collector, optimal_values
@@ -156,13 +163,18 @@ class TestPolicyEvaluationValidation:
             ]
             validator.compute_values(bad_probs, 0)
 
-    def test_compute_values(self, medium_blocks, mock_probs_collector, optimal_values):
+    @pytest.mark.parametrize("width", [0, 1])
+    def test_compute_values(
+        self, medium_blocks, width, mock_probs_collector, optimal_values
+    ):
         """
         Test compute_values e.g., the internal pass to the message passing module.
         The function should return the computed values und the provided policy.
         We assert that the message passing module is called with the correct parameters.
         """
         space = medium_blocks[0]
+        if width > 0:
+            space = IWStateSpace(IWSearch(width), space)
         validator = PolicyEvaluationValidation(
             envs=[
                 ExpandedStateSpaceEnv(
@@ -177,9 +189,9 @@ class TestPolicyEvaluationValidation:
         )
         num_transitions = [space.forward_transition_count(s) for s in space]
         probs = [torch.rand((num_t,)).softmax(dim=-1) for num_t in num_transitions]
-        spy2(validator.message_passing.forward)
+        spy2(validator.message_passing[0].forward)
         validator.compute_values(probs, 0)
-        verify(validator.message_passing).forward(
+        verify(validator.message_passing[0]).forward(
             arg_that(lambda data: (data.edge_attr[:, 0] == torch.cat(probs)).all())
         )
 

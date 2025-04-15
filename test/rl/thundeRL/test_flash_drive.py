@@ -14,8 +14,9 @@ from rgnet.rl.thundeRL.flash_drive import FlashDrive
 def validate_drive(drive, space):
     assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
-    for i, state in enumerate(space):
+    for state in space:
         num_transitions = space.forward_transition_count(state)
+        i = state.index
         data: HeteroData = drive[i]
         assert data.idx == i
         assert data.done.numel() == num_transitions

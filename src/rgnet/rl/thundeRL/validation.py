@@ -13,14 +13,13 @@ from lightning import Callback
 from tensordict import NestedKey, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
-from tqdm import tqdm
 
+from rgnet.logging_setup import tqdm
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.policy_evaluation import (
     PolicyEvaluationMessagePassing,
-    build_mdp_graph,
     mdp_graph_as_pyg_data,
 )
 from rgnet.utils.utils import KeyAwareDefaultDict
@@ -506,12 +505,6 @@ class PolicyEvaluationValidation(ValidationCallback):
                 "Neither num_iterations nor difference_threshold was given."
                 "At least one is required to determine value-iteration limit."
             )
-        gamma = envs[0].reward_function.gamma
-        assert all(
-            env.reward_function.gamma == gamma
-            for i, env in enumerate(envs)
-            if not self.skip_dataloader(i)
-        ), "Gamma has to be the same for all validation spaces."
 
         self.log_aggregated_metric = log_aggregated_metric
         self.probs_collector = probs_collector
@@ -523,18 +516,20 @@ class PolicyEvaluationValidation(ValidationCallback):
             lambda dataloader_idx: self._compute_loss(dataloader_idx)
         )
         self._graphs: Dict[int, pyg.data.Data] = dict()
+        self.message_passing: Dict[int, PolicyEvaluationMessagePassing] = dict()
         logging.info("Building state space graphs for validation problem.")
         for idx, env in tqdm(enumerate(envs), total=len(envs)):
             if self.skip_dataloader(idx):
                 continue
-            nx_graph = build_mdp_graph(env)
+            nx_graph = env.to_mdp_graph()
+            print(nx_graph)
             self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
 
-        self.message_passing = PolicyEvaluationMessagePassing(
-            gamma=gamma,
-            num_iterations=num_iterations,
-            difference_threshold=difference_threshold,
-        )
+            self.message_passing[idx] = PolicyEvaluationMessagePassing(
+                gamma=env.reward_function.gamma,
+                num_iterations=num_iterations,
+                difference_threshold=difference_threshold,
+            )
 
     def _apply(self, fn, recurse=True):
         """
@@ -571,7 +566,7 @@ class PolicyEvaluationValidation(ValidationCallback):
             flat_probs.device == graph.edge_attr.device
         ), f"Found mismatching devices {flat_probs.device=} and {graph.edge_attr.device=}"
         graph.edge_attr[:, 0] = flat_probs
-        return self.message_passing(graph)
+        return self.message_passing[dataloader_idx](graph)
 
     def forward(
         self,

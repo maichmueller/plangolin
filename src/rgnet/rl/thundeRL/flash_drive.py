@@ -6,14 +6,15 @@ from typing import Any, List, Mapping, Optional, Tuple, Union
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 from torch_geometric.data.separate import separate
-from tqdm import tqdm
 
 import xmimir as xmi
 from rgnet.encoding import GraphEncoderBase
 from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 from rgnet.rl.reward import RewardFunction, UnitReward
+from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 
 class FlashDrive(InMemoryDataset):
@@ -23,12 +24,15 @@ class FlashDrive(InMemoryDataset):
         problem_path: Path,
         reward_function: RewardFunction = UnitReward(gamma=0.9),
         encoder_factory: Optional[EncoderFactory] = None,
+        env_override: Optional[ExpandedStateSpaceEnv] = None,
+        iw_search: IWSearch | None = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
         log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
         logging_kwargs: Optional[Mapping[str, Any]] = None,
+        iw_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         assert domain_path.exists() and domain_path.is_file()
         assert problem_path.exists() and problem_path.is_file()
@@ -37,9 +41,20 @@ class FlashDrive(InMemoryDataset):
         self.problem_path: Path = problem_path
         self.encoder_factory = encoder_factory
         self.reward_function = reward_function
+        self.env_override = env_override
+        self.iw_search: IWSearch = iw_search
+        self.iw_options = iw_options or dict()
+        if iw_search is not None:
+            if isinstance(self.iw_search.expansion_strategy, RandomizedExpansion):
+                logging.warning(
+                    "Randomized expansion strategy in the IW search leads to a fixed expansion order in a stored FlashDrive."
+                )
+            if root_dir is not None:
+                root_dir = str(root_dir) + f"_iw{iw_search.width}"
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
+
         self.metadata_path = Path(root_dir) / (
             str(self.processed_file_names[0]) + ".meta"
         )
@@ -63,6 +78,7 @@ class FlashDrive(InMemoryDataset):
             log=log,
             force_reload=force_reload,
         )
+        del self.env_override  # avoid pickling the env object by simply removing it
         self.load(self.processed_paths[0])
 
     def __str__(self):
@@ -71,6 +87,7 @@ class FlashDrive(InMemoryDataset):
     def _metadata_misaligned(self, meta: Tuple) -> str:
         (
             _,
+            iw_search,
             encoder_factory,
             reward_function,
             domain_content,
@@ -79,6 +96,8 @@ class FlashDrive(InMemoryDataset):
         ) = meta
         if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
             return f"encoder_factory: given={self.encoder_factory} != loaded={encoder_factory}"
+        if self.iw_search is not None and self.iw_search != iw_search:
+            return f"iw_search: given={self.iw_search} != loaded={iw_search}"
         if self.reward_function != reward_function:
             return f"reward_function: given={self.reward_function} != loaded={reward_function}"
         if (our_file := self.domain_file.read_text()) != domain_content:
@@ -95,6 +114,7 @@ class FlashDrive(InMemoryDataset):
         problem_content = self.problem_path.read_text()
         return (
             self.desc,
+            self.iw_search,
             self.encoder_factory,
             self.reward_function,
             domain_content,
@@ -108,7 +128,7 @@ class FlashDrive(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
-        return [self.problem_path.stem + ".pt"]
+        return [f"{self.problem_path.stem}.pt"]
 
     def process(self) -> None:
         """
@@ -119,17 +139,27 @@ class FlashDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        space = xmi.XStateSpace(
-            str(self.domain_file.absolute()),
-            str(self.problem_path.absolute()),
-            max_num_states=self.max_expanded or 1_000_000,
-        )
-        env = ExpandedStateSpaceEnv(
-            space,
-            batch_size=torch.Size((len(space),)),
-            reset_strategy=IteratingReset(),
-            reward_function=self.reward_function,
-        )
+        if self.env_override is not None:
+            env = self.env_override
+            if not isinstance(env, ExpandedStateSpaceEnv):
+                raise ValueError(
+                    f"`env_override` must be an instance of ExpandedStateSpaceEnv. Given: {type(env)}"
+                )
+            space = env.active_instances[0]
+        else:
+            space = xmi.XStateSpace(
+                str(self.domain_file.absolute()),
+                str(self.problem_path.absolute()),
+                max_num_states=self.max_expanded or 1_000_000,
+            )
+            if self.iw_search is not None and self.iw_search.width > 0:
+                space = IWStateSpace(self.iw_search, space, **self.iw_options)
+            env = ExpandedStateSpaceEnv(
+                space,
+                batch_size=torch.Size((len(space),)),
+                reset_strategy=IteratingReset(),
+                reward_function=self.reward_function,
+            )
         data_list = self._build(
             env,
             self.encoder_factory(space.problem.domain),
@@ -148,7 +178,7 @@ class FlashDrive(InMemoryDataset):
         env: ExpandedStateSpaceEnv,
         encoder: GraphEncoderBase,
     ) -> List[HeteroData]:
-        out = env.reset(autoreset=False)
+        out = env.traverse()[0]
         space: xmi.XStateSpace = out[env.keys.instance][0]
         self.desc = f"FlashDrive({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
         nr_states: int = len(space)

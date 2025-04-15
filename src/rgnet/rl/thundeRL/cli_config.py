@@ -1,7 +1,6 @@
 import dataclasses
 import warnings
 from argparse import Namespace
-from functools import cache
 from itertools import chain
 from os import PathLike
 from pathlib import Path
@@ -34,7 +33,6 @@ from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
-from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
     AllActionsLoss,
@@ -56,6 +54,7 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
     ProbsCollector,
     ProbsStoreCallback,
 )
+from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
 
 class OptimizerSetup:
@@ -107,24 +106,6 @@ class WandbExtraParameter:
     watch_model: Optional[bool] = True  # whether to watch the model gradients
     log_frequency: int = 100  # the frequency for watch
     log_code: bool = False  # whether to save the code as wandb artifact
-
-
-def optimal_policy_dict(input_data: InputData):
-    return {
-        i: optimal_policy(space) for i, space in enumerate(input_data.validation_spaces)
-    }
-
-
-@cache
-def discounted_optimal_values_dict(
-    input_data: InputData, reward_func: RewardFunction
-) -> Dict[int, torch.Tensor]:
-    return {
-        i: bellman_optimal_values(
-            ExpandedStateSpaceEnv(space, reward_function=reward_func, reset=True)
-        )
-        for i, space in enumerate(input_data.validation_spaces)
-    }
 
 
 def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str]]:
@@ -221,6 +202,10 @@ class ThundeRLCLI(LightningCLI):
         parser.add_subclass_arguments(
             RewardFunction, "reward", default=lazy_instance(UnitReward)
         )
+        # parser.add_class_arguments(IWSearch, "data.flashdrive_kwargs.iw_search")
+        # parser.add_subclass_arguments(
+        #     ExpansionStrategy, "data.flashdrive_kwargs.iw_search.expansion_strategy"
+        # )
 
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
@@ -393,16 +378,22 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source=("data_layout.input_data", "reward"),
+            source="data",
             target="model.validation_hooks.init_args.discounted_optimal_values",
-            compute_fn=discounted_optimal_values_dict,
+            compute_fn=lambda data: {
+                i: bellman_optimal_values(data.envs[prob])
+                for i, prob in enumerate(data.data.validation_problem_paths)
+            },
             apply_on="instantiate",
         )
         # PolicyValidation
         parser.link_arguments(
-            source="data_layout.input_data",
+            source="data",
             target="model.validation_hooks.init_args.optimal_policy_dict",
-            compute_fn=optimal_policy_dict,
+            compute_fn=lambda data: {
+                i: optimal_policy(data.envs[prob])
+                for i, prob in enumerate(data.data.validation_problem_paths)
+            },
             apply_on="instantiate",
         )
         # ProbsStoreCallback
@@ -414,18 +405,11 @@ class ThundeRLCLI(LightningCLI):
 
         # PolicyEvaluationValidation
         parser.link_arguments(
-            source=("data_layout.input_data", "reward"),
-            target="model.validation_hooks.init_args.discounted_optimal_values",
-            compute_fn=discounted_optimal_values_dict,
-            apply_on="instantiate",
-        )
-        parser.link_arguments(
-            source=("data_layout.input_data.validation_spaces", "reward"),
+            source="data",
             target="model.validation_hooks.init_args.envs",
-            compute_fn=lambda validation_spaces, reward_func: [
-                ExpandedStateSpaceEnv(space, reward_function=reward_func, reset=True)
-                for space in validation_spaces
-            ],
+            compute_fn=lambda data: list(
+                data.envs[prob] for prob in data.data.validation_problem_paths
+            ),
             apply_on="instantiate",
         )
         parser.link_arguments(

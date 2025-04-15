@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import datetime
 import logging
-import os
 import time
 import warnings
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 import torch
 from lightning import LightningDataModule
@@ -17,14 +16,90 @@ from torch_geometric.loader import ImbalancedSampler
 
 from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data_layout import InputData
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import collate_fn
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
+from rgnet.utils.utils import env_aware_cpu_count
 from xmimir import Domain
+from xmimir.iw import IWStateSpace
 
 
 def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
+
+
+def ensure_loaded(func):
+    """
+    Decorator to ensure that the environment is loaded before calling the function.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if not self._all_loaded:
+            self._load_all()
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+class LazyEnvLookup:
+    """
+    A dictionary-like object that loads environments for a given problem path upon __getitem__
+
+    Expected to be instantiated with a list of problem paths and a callable that takes a path and returns an environment.
+    """
+
+    def __init__(
+        self,
+        problems: Iterable[Path],
+        env_callable: Callable[[Path], ExpandedStateSpaceEnv],
+        loaded_envs: Dict[Path, ExpandedStateSpaceEnv] | None = None,
+    ):
+        problems = tuple(problems)
+        self.problems = {problem: i for i, problem in enumerate(problems)}
+        self.envs: list[ExpandedStateSpaceEnv | None] = [None] * len(problems)
+        if loaded_envs is not None:
+            for problem in problems:
+                if problem in loaded_envs:
+                    self.envs[self.problems[problem]] = loaded_envs[problem]
+        self.env_callable = env_callable
+        self._all_loaded = False
+
+    def _load_all(self):
+        for problem in self.problems:
+            if self.envs[self.problems[problem]] is None:
+                self.envs[self.problems[problem]] = self.env_callable(problem)
+        self._all_loaded = True
+
+    @ensure_loaded
+    def keys(self):
+        return self.problems.keys()
+
+    @ensure_loaded
+    def values(self):
+        return self.envs
+
+    @ensure_loaded
+    def items(self):
+        return zip(self.problems.keys(), self.envs)
+
+    @ensure_loaded
+    def __iter__(self):
+        return self.keys()
+
+    def __getitem__(self, path: Path | str) -> ExpandedStateSpaceEnv:
+        path = Path(path)
+        if path not in self.problems:
+            raise KeyError(f"Problem {path} not member of the environments to load.")
+        env = self.envs[self.problems[path]]
+        if env is None:
+            env = self.env_callable(path)
+            self.envs[self.problems[path]] = env
+        self.all_loaded = all(env is not None for env in self.envs)
+        return env
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError("This dictionary is read-only.")
 
 
 class ThundeRLDataModule(LightningDataModule):
@@ -42,6 +117,7 @@ class ThundeRLDataModule(LightningDataModule):
         balance_by_distance_to_goal: bool = True,
         max_cpu_count: Optional[int] = None,
         exit_after_processing: bool = False,
+        flashdrive_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -58,6 +134,40 @@ class ThundeRLDataModule(LightningDataModule):
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
+        self.flashdrive_kwargs = flashdrive_kwargs or dict()
+        self.envs: Dict[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
+            input_data.problem_paths + input_data.validation_problem_paths, self.get_env
+        )
+
+    def get_env(self, problem: Path | int) -> ExpandedStateSpaceEnv:
+        try:
+            prob = self.data.problems[
+                (
+                    self.data.problem_paths.index(problem)
+                    if isinstance(problem, Path)
+                    else problem
+                )
+            ]
+        except ValueError:
+            prob = self.data.validation_problems[
+                (
+                    self.data.validation_problem_paths.index(problem)
+                    if isinstance(problem, Path)
+                    else problem
+                )
+            ]
+        space = self.data.get_or_load_space(prob)
+        if (iw_search := self.flashdrive_kwargs.get("iw_search")) is not None:
+            return ExpandedStateSpaceEnv(
+                IWStateSpace(
+                    iw_search,
+                    space,
+                    **self.flashdrive_kwargs.get("iw_options", dict()),
+                ),
+                reset=True,
+            )
+        else:
+            return ExpandedStateSpaceEnv(space, reset=True)
 
     def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
         nr_total = len(problem_paths)
@@ -72,7 +182,7 @@ class ThundeRLDataModule(LightningDataModule):
             )
 
         datasets: Dict[Path, FlashDrive] = dict()
-        flashdrive_kwargs = dict(
+        flashdrive_kwargs = self.flashdrive_kwargs | dict(
             domain_path=self.data.domain_path,
             reward_function=self.reward_function,
             logging_kwargs=None,
@@ -97,7 +207,7 @@ class ThundeRLDataModule(LightningDataModule):
                 )
 
             pool_size = min(
-                int(os.getenv("SLURM_CPUS_PER_TASK", cpu_count())),
+                env_aware_cpu_count(),
                 len(problem_paths),
                 self.max_cpu_count or float("inf"),
             )
@@ -117,6 +227,7 @@ class ThundeRLDataModule(LightningDataModule):
                     problem_path=problem_path,
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
+                    env_override=self.envs[problem_path],
                     **flashdrive_kwargs,
                 )
                 update(drive)

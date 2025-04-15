@@ -1,7 +1,6 @@
 import itertools
 import warnings
 from test.fixtures import fresh_drive, medium_blocks  # noqa: F401, F403
-from typing import List
 
 import networkx as nx
 import torch
@@ -12,7 +11,6 @@ from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.optimality_utils import bellman_optimal_values, optimal_policy
 from rgnet.rl.policy_evaluation import (
     PolicyEvaluationMessagePassing,
-    build_mdp_graph,
     mdp_graph_as_pyg_data,
 )
 from rgnet.rl.reward import UnitReward
@@ -21,12 +19,12 @@ from rgnet.rl.reward import UnitReward
 def _placeholder_probs(space: xmi.XStateSpace):
     # Contains 0...(|Edges| - 1) as probabilities
     it = itertools.count()
-    return [
+    return tuple(
         torch.Tensor(
             [next(it) for _ in range(space.forward_transition_count(state))],
         )
         for state in space
-    ]
+    )
 
 
 def test_build_mdp_graph(medium_blocks):
@@ -37,10 +35,7 @@ def test_build_mdp_graph(medium_blocks):
         reward_function=UnitReward(gamma=0.9),
     )
     env.reset()
-    nx_graph = build_mdp_graph(
-        env,
-        _placeholder_probs(space),
-    )
+    nx_graph = env.to_mdp_graph()
     assert all(
         all(
             out_edge[0] == s.index and out_edge[1] == out_transition.target.index
@@ -61,7 +56,7 @@ def test_mdp_graph_as_pyg_data(medium_blocks):
         reward_function=UnitReward(gamma=0.9),
     )
     env.reset()
-    pyg_graph = mdp_graph_as_pyg_data(build_mdp_graph(env, probs_list))
+    pyg_graph = mdp_graph_as_pyg_data(env.to_mdp_graph(probs_list))
     # Check that the probabilities are stored in the edge_attr
     # Note that we cannot use positional comparison of probabilities stored, as the edges order is not guaranteed, i.e.
     # this is not a valid test:
@@ -98,10 +93,10 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
         probs[optimal_action_idx] = 1.0
         return probs
 
-    optimal_policy_probabilities: List[torch.Tensor] = [
+    optimal_policy_probabilities: tuple[torch.Tensor, ...] = tuple(
         optimal_probs(i, s) for (i, s) in enumerate(space)
-    ]
-    graph = build_mdp_graph(env, optimal_policy_probabilities)
+    )
+    graph = env.to_mdp_graph(optimal_policy_probabilities)
     graph = mdp_graph_as_pyg_data(graph)
 
     values = value_iteration_mp(graph)
@@ -152,9 +147,9 @@ def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
                     probs[i] = 1.0 / nr_transitions
         return probs.abs() / probs.abs().sum()
 
-    probs_list = [faulty_probs(i, s) for (i, s) in enumerate(space)]
+    probs_list = tuple(faulty_probs(i, s) for (i, s) in enumerate(space))
 
-    graph = build_mdp_graph(env, probs_list)
+    graph = env.to_mdp_graph(probs_list)
     graph_data = mdp_graph_as_pyg_data(graph)
 
     _debug_policy_per_state = {

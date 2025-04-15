@@ -1,7 +1,10 @@
 import abc
+import itertools
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional, Tuple
+from functools import cache
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import networkx as nx
 import torch
 from tensordict import tensordict
 from torchrl.data.utils import DEVICE_TYPING
@@ -9,7 +12,7 @@ from torchrl.data.utils import DEVICE_TYPING
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
 from rgnet.rl.reward import RewardFunction, UnitReward
-from xmimir import XState
+from xmimir import XState, XTransition
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):
@@ -136,3 +139,104 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
         batch_size = PlanningEnvironment.assert_1d_batch(batch_size)
         batch_size_ = batch_size[0]
         super().__init__(spaces=[space] * batch_size_, batch_size=batch_size, **kwargs)
+
+    @cache
+    def to_mdp_graph(
+        self,
+        transition_probabilities: (
+            tuple[torch.FloatTensor | torch.Tensor]
+            | Callable[[XState, Sequence[XTransition]], Sequence[float]]
+            | None
+        ) = None,
+        use_space_directly: bool = True,
+    ) -> nx.DiGraph:
+        r"""
+        Encode the state space as networkx graph. Each state is a node and each transition
+        corresponds to an edge. The states are encoded as unique integers.
+        The rewards are analog as in PlanningEnvironment such that goal states have a value of 0.
+        The graph also contains information about:
+          - whether a state is initial or goal state (node attribute "ntype"),
+          - the distance to the goal state (node attribute "dist"),
+          - the reward for each edge/transition which is -1 for each transition from each non-goal state
+             (edge attribute "reward"),
+          - the transition probabilities (edge attribute "probs"),
+          - the action (edge attribute "action")
+
+        Parameters
+        ----------
+        transition_probabilities: (
+               Sequence[torch.FloatTensor | torch.Tensor]
+               | Callable[[XState, Sequence[XTransition]], Sequence[float]]
+               | None
+        )
+               The transition probabilities for each state. If None, uniform transition probabilities are used.
+        use_space_directly: bool
+               If True, the state space is used directly.
+               Otherwise, the environment is used to traverse the space and generate the graph.
+               This is significantly faster for large state spaces, since default .traverse() functions
+               merely replicate the state space as a tensordict.
+        """
+        mdp_graph = nx.MultiDiGraph()
+
+        # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
+        if use_space_directly:
+            self.reset()
+            space = self.active_instances[0]
+            states = space
+            instances = [space] * len(space)
+            transitions = (
+                self.get_applicable_transitions((state,))[0] for state in space
+            )
+        else:
+            traversal_td = self.traverse()[0]
+            states = traversal_td["state"]
+            instances = traversal_td["instance"]
+            transitions = traversal_td["transitions"]
+
+        if transition_probabilities is None:
+
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                n_trans = len(ts)
+                if n_trans == 0:
+                    raise ValueError(
+                        "Given state has no transitions. "
+                        "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
+                    )
+                return torch.ones((n_trans,), dtype=torch.float) / n_trans
+
+        elif isinstance(transition_probabilities, Sequence):
+            assert len(transition_probabilities) == len(states)
+
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                return transition_probabilities[s.index]
+
+        else:
+            transition_probs = transition_probabilities
+        for state, instance in zip(states, instances):
+            node_type = (
+                "goal"
+                if self.is_goal(instance, state)
+                else ("initial" if instance.initial_state == state else "default")
+            )
+            mdp_graph.add_node(
+                state,
+                ntype=node_type,
+                dist=instance.goal_distance(state),
+            )
+        running_transition_idx = itertools.count(0)
+        for state, instance, state_transitions in zip(states, instances, transitions):
+            t_probs: Sequence[float] = transition_probs(state, state_transitions)
+            reward, _ = self.get_reward_and_done(
+                state_transitions, instances=[instance] * len(state_transitions)
+            )
+            for t_idx, t in enumerate(state_transitions):
+                mdp_graph.add_edge(
+                    t.source,
+                    t.target,
+                    action=t.action,
+                    reward=reward[t_idx],
+                    probs=t_probs[t_idx],
+                    idx=next(running_transition_idx),
+                )
+        mdp_graph.graph["gamma"] = self.reward_function.gamma
+        return mdp_graph

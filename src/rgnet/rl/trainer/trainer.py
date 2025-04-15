@@ -8,8 +8,8 @@ from tensordict import TensorDictBase
 from torch import optim
 from torchrl.objectives import LossModule
 from torchrl.record.loggers import Logger
-from tqdm import tqdm
 
+from rgnet.logging_setup import tqdm
 from rgnet.rl.rollout_collector import RolloutCollector
 
 

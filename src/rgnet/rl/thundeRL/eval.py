@@ -21,10 +21,10 @@ from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
 from tensordict.nn import InteractionType, TensorDictModule
 from torch import Tensor
 from torchrl.envs.utils import set_exploration_type
-from tqdm import tqdm
 
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
+from rgnet.logging_setup import tqdm
 from rgnet.models import PyGHeteroModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
@@ -39,11 +39,8 @@ from rgnet.rl.envs import (
     SuccessorEnvironment,
 )
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
+from rgnet.rl.policy_evaluation import mdp_graph_as_pyg_data
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
-from rgnet.rl.thundeRL.policy_evaluation import (
-    build_mdp_graph_with_prob,
-    mdp_graph_as_pyg_data,
-)
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
@@ -402,10 +399,7 @@ class RLExperimentAnalyzer:
 
     def mdp_graph_for_space(self, space: xmi.XStateSpace):
         if space not in self._mdp_graph_for_space:
-            placeholder_probs = [
-                torch.ones((space.forward_transition_count(state),)) for state in space
-            ]
-            nx_graph = build_mdp_graph_with_prob(space, placeholder_probs)
+            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graph()
             pyg_graph = mdp_graph_as_pyg_data(nx_graph)
             pyg_graph.to(self.device)
             self._mdp_graph_for_space[space] = nx_graph
