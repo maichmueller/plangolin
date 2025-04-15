@@ -502,6 +502,10 @@ class XAction(MimirWrapper[GroundAction]):
             self.problem.repositories
         )
 
+    @property
+    def index(self):
+        return self.base.get_index()
+
     @cached_property
     def action_schema(self):
         return self.problem.domain.actions[self.base.get_action_index()]
@@ -842,6 +846,9 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
     def action_grounder(self):
         return self.base.get_action_grounder()
 
+    def get_action(self, index: int):
+        return self.action_grounder.get_ground_action(index)
+
     def generate_actions(self, state: XState) -> Iterator[XAction]:
         for action in self.base.generate_applicable_actions(state.base):
             yield XAction(action, self)
@@ -973,7 +980,8 @@ class XStateSpace(MimirWrapper[StateSpace]):
     def __init__(
         self, domain_path: str | Path, problem_path: str | Path, **options
     ):  # noqa: F811
-        self.__init__(
+        XStateSpace.__init__(
+            self,
             StateSpace.create(
                 str(domain_path), str(problem_path), StateSpaceOptions(**options)
             ),
@@ -981,7 +989,8 @@ class XStateSpace(MimirWrapper[StateSpace]):
 
     @multimethod
     def __init__(self, problem: XProblem, **options):  # noqa: F811
-        self.__init__(
+        XStateSpace.__init__(
+            self,
             problem.domain.filepath,
             problem.filepath,
             **options,

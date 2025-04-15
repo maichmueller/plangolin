@@ -7,12 +7,16 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
+from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, List, NamedTuple, Sequence
 
 import torch
-from tqdm import tqdm
+from multimethod import multimethod
 
-from .wrappers import *
+from rgnet.logging_setup import tqdm
+from rgnet.utils.utils import env_aware_cpu_count
+from xmimir.extensions import *
+from xmimir.wrappers import *
 
 __all__ = [
     "Novelty",
@@ -164,8 +168,6 @@ class IWSearch:
     ):
         self.width = width
         self.expansion_strategy = expansion_strategy
-        self.current_novelty_condition: Novelty | None = None
-        self.current_successor_generator = None
 
     def __eq__(self, other):
         if not isinstance(other, type(self)):
@@ -174,10 +176,6 @@ class IWSearch:
             self.width == other.width
             and self.expansion_strategy == other.expansion_strategy
         )
-
-    @property
-    def current_problem(self):
-        return self.current_successor_generator.problem
 
     def solve(
         self,
@@ -191,10 +189,8 @@ class IWSearch:
         goal_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         expansion_budget: int = float("inf"),
     ) -> List[XTransition] | None:
-        self.current_successor_generator = successor_generator
         if novelty_condition is None:
-            novelty_condition = Novelty(self.width, self.current_problem)
-        self.current_novelty_condition = novelty_condition
+            novelty_condition = Novelty(self.width, successor_generator.problem)
 
         if start_state is None:
             start_state = successor_generator.initial_state
@@ -252,6 +248,7 @@ class IWSearch:
                 nodes.append(elem)
 
             iteration += 1
+        self.expansion_strategy.options.clear()
         return goal_traces
 
     def _process_nodes(
@@ -341,12 +338,29 @@ class IWStateSpace(XStateSpace):
         distance_to_goal: float
         distance_from_initial: float
 
+    @multimethod
+    def __init__(self, iw: IWSearch, space: XStateSpace, **kwargs):
+        super().__init__(space.base)
+        self._init(iw, **kwargs)
+
+    @multimethod
+    def __init__(self, iw: IWSearch, problem: XProblem, **kwargs):
+        super().__init__(problem)
+        self._init(iw, **kwargs)
+
+    @multimethod
     def __init__(
+        self, iw: IWSearch, domain_path: Path | str, problem_path: Path | str, **kwargs
+    ):
+        super().__init__(domain_path, problem_path)
+        self._init(iw, **kwargs)
+
+    def _init(
         self,
         iw: IWSearch,
-        space: XStateSpace | None = None,
-        problem: XProblem | None = None,
         *,
+        serialized_transitions: list[tuple[int, tuple[int, ...], int]] | None = None,
+        serialized_state_infos: list[StateInfo] | None = None,
         n_cpus: int = 1,
         max_transitions: int = float("inf"),
         max_time: timedelta = timedelta(hours=6),
@@ -354,30 +368,47 @@ class IWStateSpace(XStateSpace):
         pbar: bool = True,
         **space_options,
     ):
-        if space is None and problem is None:
-            raise ValueError("Either space or problem must be provided.")
-        if space:
-            super().__init__(space.base)
-        else:
-            super().__init__(problem, **space_options)
         self.iw = iw
         self.iw_fwd_transitions: dict[XState, list[XTransition]] = dict()
         self.iw_bkwd_transitions: dict[XState, list[XTransition]] = dict()
-        self.state_info: dict[XState, IWStateSpace.StateInfo] = defaultdict(
-            lambda: IWStateSpace.StateInfo(
-                distance_to_goal=-1, distance_from_initial=-1
-            )
+        self._serialized_transitions: list[tuple[int, tuple[int, ...], int]] = (
+            serialized_transitions or []
         )
         self.space_options = space_options
         self.max_transitions = max_transitions
         self.max_time = max_time
         self.chunk_size = chunk_size
         self.pbar = pbar
-        self.n_cpus = min(n_cpus, mp.cpu_count())
-        if self.n_cpus > 1:
-            self._build_mp()
+        self.n_cpus = min(n_cpus, env_aware_cpu_count())
+        if self._serialized_transitions:
+            for state in self:
+                self.iw_fwd_transitions[state] = []
+                self.iw_bkwd_transitions[state] = []
+            self._load_from_serialized_transitions(self._serialized_transitions)
         else:
-            self._build()
+            if self.n_cpus > 1:
+                self._build_mp()
+            else:
+                self._build()
+        self.state_info: dict[XState, IWStateSpace.StateInfo]
+        if serialized_state_infos:
+            self.state_info = {
+                self[state]: info for state, info in enumerate(serialized_state_infos)
+            }
+        else:
+            self.state_info = defaultdict(
+                lambda: IWStateSpace.StateInfo(
+                    distance_to_goal=-1, distance_from_initial=-1
+                )
+            )
+            self._compute_iw_goal_distances()
+            self._compute_iw_initial_distances()
+
+    @property
+    def serialized_transitions(self):
+        if not self._serialized_transitions:
+            self.serialize_transitions()
+        return self._serialized_transitions
 
     @staticmethod
     def worker_build_transitions(state_indices):
@@ -394,21 +425,28 @@ class IWStateSpace(XStateSpace):
                 novel_hook=collector,
             )
             for node in collector.nodes:
-                transitions.append((idx, len(node.trace), node.state.index))
+                transitions.append(
+                    (idx, tuple(t.action.index for t in node.trace), node.state.index)
+                )
         return transitions
 
     def _build_mp(self):
         start_time = datetime.fromtimestamp(time.time())
-        self.iw_fwd_transitions = {state: [] for state in self}
-        self.iw_bkwd_transitions = {state: [] for state in self}
         num_states = len(self)
         indices = list(range(num_states))
 
-        num_workers = self.n_cpus
         chunks = list(
             indices[i : i + self.chunk_size]
             for i in range(0, len(indices), self.chunk_size)
         )
+        if len(chunks) == 1:
+            self._build()
+            return
+
+        num_workers = min(env_aware_cpu_count(), self.n_cpus, len(chunks))
+        for state in self:
+            self.iw_fwd_transitions[state] = []
+            self.iw_bkwd_transitions[state] = []
 
         # Prepare worker arguments for each small chunk.
         worker_args = (
@@ -426,8 +464,20 @@ class IWStateSpace(XStateSpace):
             initargs=worker_args,
         ) as pool:
             iterable = pool.imap(IWStateSpace.worker_build_transitions, chunks)
-            for result in tqdm(iterable, total=len(chunks)) if self.pbar else iterable:
-                self._process_transitions(result)
+            for result in (
+                pbar := (
+                    tqdm(
+                        iterable,
+                        total=len(chunks),
+                        desc=f"Building IWStateSpace({Path(self.problem.filepath).stem}) - #Proc: {num_workers}",
+                        ncols=80 + len(f" - #Proc: {num_workers}"),
+                    )
+                    if self.pbar
+                    else iterable
+                )
+            ):
+                self._serialized_transitions.extend(result)
+                self._load_from_serialized_transitions(result)
                 nr_transitions += len(result)
                 _check_timeout(
                     nr_transitions,
@@ -436,15 +486,18 @@ class IWStateSpace(XStateSpace):
                     self.max_time,
                     self.problem.name,
                 )
-        self._compute_iw_goal_distances()
-        self._compute_iw_initial_distances()
 
-    def _process_transitions(self, transitions: list[tuple[int, int, int]]):
-        for source_idx, nr_actions, target_idx in transitions:
+    def _load_from_serialized_transitions(
+        self, transitions: list[tuple[int, tuple[int, ...], int]]
+    ):
+        action_gen = self.successor_generator.action_generator
+        for source_idx, action_indices, target_idx in transitions:
             source_state = self[source_idx]
             target_state = self[target_idx]
             transition = XTransition.make_hollow(
-                source_state, [None] * nr_actions, target_state
+                source_state,
+                [action_gen.get_action(idx) for idx in action_indices],
+                target_state,
             )
             self.iw_fwd_transitions[source_state].append(transition)
             self.iw_bkwd_transitions[target_state].append(transition)
@@ -454,9 +507,15 @@ class IWStateSpace(XStateSpace):
         start_time = datetime.fromtimestamp(time.time())
         iterable = enumerate(self)
         for i, state in (
-            tqdm(iterable, desc="Building IWStateSpace", total=len(self))
-            if self.pbar
-            else iterable
+            pbar := (
+                tqdm(
+                    iterable,
+                    desc=f"Building IWStateSpace({Path(self.problem.filepath).stem})",
+                    total=len(self),
+                )
+                if self.pbar
+                else iterable
+            )
         ):
             state_transitions = []
 
@@ -486,8 +545,6 @@ class IWStateSpace(XStateSpace):
         for bkwd_transition_list in self.iw_fwd_transitions.values():
             for transition in bkwd_transition_list:
                 self.iw_bkwd_transitions[transition.target].append(transition)
-        self._compute_iw_goal_distances()
-        self._compute_iw_initial_distances()
 
     def _compute_iw_goal_distances(self):
         """
@@ -511,16 +568,8 @@ class IWStateSpace(XStateSpace):
                 continue
             is_expanded[current_state.index] = True
 
-            # Debug log for current state.
-            # logging.debug(
-            #     f"Current state: {current_state} "
-            #     f"(is goal: {current_state.is_goal}, "
-            #     f"is initial: {self.successor_generator.initial_state == current_state}), "
-            #     f"Number of predecessors: {self.backward_transition_count(current_state)}"
-            # )
             for transition in self.backward_transitions(current_state):
                 predecessor_state = transition.source
-                # logging.debug(f"Predecessor state: {predecessor_state.index}")
                 # If this predecessor hasn't been assigned a goal distance yet...
                 pred_state_info = self.state_info[predecessor_state]
                 if pred_state_info.distance_to_goal < 0:
@@ -556,12 +605,6 @@ class IWStateSpace(XStateSpace):
                 continue
             is_expanded[current_state.index] = True
 
-            # logging.debug(
-            #     f"Current state: {current_state.index} (is goal: {current_state.is_goal}, "
-            #     f"is initial: {self.initial_state == current_state}), "
-            #     f"number of successors: {self.forward_transition_count(current_state)}"
-            # )
-
             for transition in self.forward_transitions(current_state):
                 successor_state = transition.target
                 # if the successor's distance-from-initial is not yet set (< 0), update it.
@@ -573,6 +616,42 @@ class IWStateSpace(XStateSpace):
                     )
                     visit_queue.append(successor_state)
         assert sum(is_expanded) == len(is_expanded), "Not all states were expanded."
+
+    def __getstate__(self):
+        infos = [None] * len(self.state_info)
+        for s, info in self.state_info.items():
+            infos[s.index] = info
+        if not self._serialized_transitions:
+            self.serialize_transitions()
+        state = (
+            self._serialized_transitions,
+            infos,
+            self.iw.width,
+            self.iw.expansion_strategy,
+            self.problem.filepath,
+            self.problem.domain.filepath,
+            self.space_options,
+        )
+        return state
+
+    def __setstate__(self, state):
+        (
+            serialized_transitions,
+            state_info,
+            width,
+            expansion_strategy,
+            problem_path,
+            domain_path,
+            space_options,
+        ) = state
+        self.__init__(
+            IWSearch(width, expansion_strategy),
+            domain_path,
+            problem_path,
+            serialized_transitions=serialized_transitions,
+            serialized_state_infos=state_info,
+            **space_options,
+        )
 
     def __len__(self):
         return len(self._vertices)
@@ -615,22 +694,43 @@ class IWStateSpace(XStateSpace):
         else:
             return len(self.iw_bkwd_transitions[state])
 
+    def serialize_transitions(self):
+        """
+        Serializes the IWStateSpace transition to index-based transitions.
+
+        Pray to god that these indices never change.
+        """
+        for state in self:
+            for transition in self.forward_transitions(state):
+                action_indices = (
+                    tuple(action.index for action in transition.action)
+                    if isinstance(transition.action, Sequence)
+                    else (transition.action.index,)
+                )
+                self._serialized_transitions.append(
+                    (
+                        state.index,
+                        action_indices,
+                        transition.target.index,
+                    )
+                )
+
 
 if __name__ == "__main__":
     import os
 
     source_dir = "" if os.getcwd().endswith("/test") else "test/"
-    domain_path = f"{source_dir}pddl_instances/blocks/domain.pddl"
-    problem_path = f"{source_dir}pddl_instances/blocks/large.pddl"
+    domain_filepath = f"{source_dir}pddl_instances/blocks/domain.pddl"
+    problem_filepath = f"{source_dir}pddl_instances/blocks/medium.pddl"
     # problem_path = f"{source_dir}pddl_instances/blocks/iw/largish_unbound_goal.pddl"
     start = datetime.fromtimestamp(time.time())
-    state_space = XStateSpace(domain_path, problem_path)
+    state_space = XStateSpace(domain_filepath, problem_filepath)
     iw_space = IWStateSpace(
-        IWSearch(2),
-        # IWSearch(1),
+        # IWSearch(2),
+        IWSearch(1),
         state_space,
         n_cpus=mp.cpu_count(),
-        chunk_size=50,
+        chunk_size=300,
     )
     elapsed = datetime.fromtimestamp(time.time()) - start
     hours = elapsed.total_seconds() / 3600

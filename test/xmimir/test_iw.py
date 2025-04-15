@@ -1,3 +1,4 @@
+import pickle
 from test.fixtures import *  # noqa: F403,F401
 from typing import Sequence
 
@@ -142,6 +143,34 @@ def test_iw1_state_space(space_fixture, expected_solution_upper_bound_cost, requ
         < iw_space.goal_distance(iw_space.initial_state)
         <= expected_solution_upper_bound_cost
     )
+
+
+@pytest.mark.parametrize(
+    "space_fixture",
+    [
+        "small_blocks",
+        "medium_blocks",
+    ],
+)
+def test_iw1_state_serialization(space_fixture, request):
+    space, domain, problem = request.getfixturevalue(space_fixture)
+    iw_search = IWSearch(1)
+    pickled_obj = pickle.dumps(iw_search)
+    iw = pickle.loads(pickled_obj)
+    assert isinstance(iw, IWSearch)
+    assert iw.width == 1
+    assert iw.expansion_strategy == iw_search.expansion_strategy
+    iw_space = IWStateSpace(iw_search, space, n_cpus=os.cpu_count(), chunk_size=300)
+    pickled_space = pickle.dumps(iw_space)
+    deserialized_space = pickle.loads(pickled_space)
+    assert isinstance(deserialized_space, IWStateSpace)
+
+    for state in iw_space:
+        assert deserialized_space[state.index].semantic_eq(state)
+        assert state.index == deserialized_space[state.index].index
+        assert iw_space.goal_distance(state) == deserialized_space.goal_distance(
+            deserialized_space[state.index]
+        )
 
 
 #
