@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import torch
 from tensordict import NestedKey, TensorDictBase
-from torchrl.data import Composite, UnboundedContinuousTensorSpec
+from torchrl.data import Composite, Unbounded
 from torchrl.envs import Transform, TransformedEnv
 
 from rgnet.rl.embedding.embedding_module import EmbeddingModule
@@ -13,7 +13,6 @@ from rgnet.rl.non_tensor_data_utils import NonTensorWrapper
 
 
 class EmbeddingTransform(Transform):
-
     def __init__(
         self,
         current_embedding_key: NestedKey,
@@ -67,12 +66,8 @@ class EmbeddingTransform(Transform):
         embedding_shape.append(self.embedding_module.hidden_size)
         device = self.embedding_module.device
         new_observation_spec[self.current_embedding_key] = Composite(
-            dense_embedding=UnboundedContinuousTensorSpec(
-                shape=torch.Size(embedding_shape), device=device
-            ),
-            padding_mask=UnboundedContinuousTensorSpec(
-                shape=torch.Size(embedding_shape), device=device
-            ),
+            dense_embedding=Unbounded(shape=torch.Size(embedding_shape), device=device),
+            padding_mask=Unbounded(shape=torch.Size(embedding_shape), device=device),
             shape=observation_spec.shape,
             device=device,
         )
@@ -80,7 +75,6 @@ class EmbeddingTransform(Transform):
 
 
 class NonTensorTransformedEnv(TransformedEnv):
-
     def rand_action(self, tensordict: Optional[TensorDictBase] = None):
         """TransformedEnv does not delegate calls to the base_env and hence overridden
         functions for the base env, like rand_action, will not be called.

@@ -1,5 +1,5 @@
 colorama >= 0.4.6
-jsonargparse[signatures] >=4.27.7, <4.28.0  # taken from lightning/requirements/extra.txt
+jsonargparse[signatures] >=4.27.7  # taken from lightning/requirements/extra.txt
 lightning >= 2.0.0, <2.5.0.post0
 matplotlib>=3.0
 multimethod >= 2.0
