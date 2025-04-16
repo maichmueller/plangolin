@@ -6,7 +6,7 @@ import time
 import warnings
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import torch
 from lightning import LightningDataModule
@@ -42,7 +42,7 @@ def ensure_loaded(func):
     return wrapper
 
 
-class LazyEnvLookup:
+class LazyEnvLookup(Mapping[Path, ExpandedStateSpaceEnv]):
     """
     A dictionary-like object that loads environments for a given problem path upon __getitem__
 
@@ -82,6 +82,9 @@ class LazyEnvLookup:
     @ensure_loaded
     def items(self):
         return zip(self.problems.keys(), self.envs)
+
+    def __len__(self):
+        return len(self.problems)
 
     @ensure_loaded
     def __iter__(self):
@@ -135,7 +138,7 @@ class ThundeRLDataModule(LightningDataModule):
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
         self.flashdrive_kwargs = flashdrive_kwargs or dict()
-        self.envs: Dict[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
+        self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
 
@@ -164,6 +167,7 @@ class ThundeRLDataModule(LightningDataModule):
                     space,
                     **self.flashdrive_kwargs.get("iw_options", dict()),
                 ),
+                reward_function=self.reward_function,
                 reset=True,
             )
         else:
