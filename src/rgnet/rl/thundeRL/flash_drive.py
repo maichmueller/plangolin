@@ -13,16 +13,16 @@ from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
-from rgnet.rl.reward import RewardFunction, UnitReward
+from rgnet.rl.reward import RewardFunction
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 
 class FlashDrive(InMemoryDataset):
     def __init__(
         self,
-        domain_path: Path,
-        problem_path: Path,
-        reward_function: RewardFunction = UnitReward(gamma=0.9),
+        domain_path: Path | None = None,
+        problem_path: Path | None = None,
+        reward_function: RewardFunction | None = None,
         encoder_factory: Optional[EncoderFactory] = None,
         env_override: Optional[ExpandedStateSpaceEnv] = None,
         iw_search: IWSearch | None = None,
@@ -34,13 +34,24 @@ class FlashDrive(InMemoryDataset):
         logging_kwargs: Optional[Mapping[str, Any]] = None,
         iw_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        assert domain_path.exists() and domain_path.is_file()
-        assert problem_path.exists() and problem_path.is_file()
-        self.desc: Optional[str] = None
-        self.domain_file: Path = domain_path
-        self.problem_path: Path = problem_path
+        if env_override is None:
+            assert (
+                domain_path is not None and problem_path is not None
+            ), "Domain and problem paths must be provided if not env override is provided."
+            assert domain_path.exists() and domain_path.is_file()
+            assert problem_path.exists() and problem_path.is_file()
+            self.domain_file: Path = domain_path
+            self.problem_path: Path = problem_path
+        else:
+            self.domain_file = Path(
+                env_override.active_instances[0].problem.domain.filepath
+            )
+            self.problem_path = Path(env_override.active_instances[0].problem.filepath)
         self.encoder_factory = encoder_factory
-        self.reward_function = reward_function
+        self.reward_function = reward_function or getattr(
+            env_override, "reward_function"
+        )
+        self.desc: Optional[str] = None
         self.env_override = env_override
         self.iw_search: IWSearch = iw_search
         self.iw_options = iw_options or dict()
