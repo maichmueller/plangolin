@@ -21,7 +21,7 @@ pytest:
     matrix:
       - PYTHON_IMAGE: python:3.10
       - PYTHON_IMAGE: python:3.11
-      - PYTHON_IMAGE: python:3.12
+      - PYTHON_IMAGE: python:3.12.7
   image: $PYTHON_IMAGE
   script:
     - python -m pip install --upgrade pip setuptools wheel
