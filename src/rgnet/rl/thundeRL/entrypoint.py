@@ -16,7 +16,7 @@ def increase_resource_limit():
         new_soft = int(3e4)  # arbitrary, increase if necessary
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
         logging.info(
-            logging.info(f"Setting resource limits to: [{soft = }, {hard = }]")
+            f"Changing resource limits to: [{soft = } --> {new_soft = }, {hard = }]"
         )
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     logging.info(f"Resource limits: [{soft = }, {hard = }]")
