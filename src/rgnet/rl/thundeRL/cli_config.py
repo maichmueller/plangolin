@@ -210,14 +210,14 @@ class ThundeRLCLI(LightningCLI):
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
         )
-        parser.add_dataclass_arguments(
+        parser.add_class_arguments(
             TestSetup,
             "test_setup",
         )
         parser.add_class_arguments(
             InputData, "data_layout.input_data", as_positional=True
         )
-        parser.add_dataclass_arguments(OutputData, "data_layout.output_data")
+        parser.add_class_arguments(OutputData, "data_layout.output_data")
 
         parser.add_class_arguments(
             ValueEstimatorConfig, as_positional=True, nested_key="estimator_config"
@@ -235,7 +235,7 @@ class ThundeRLCLI(LightningCLI):
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
-        parser.add_dataclass_arguments(WandbExtraParameter, "wandb_extra")
+        parser.add_class_arguments(WandbExtraParameter, "wandb_extra")
 
         ################################################################################
         #############################                      #############################
