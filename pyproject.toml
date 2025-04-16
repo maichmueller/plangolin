@@ -19,6 +19,10 @@ keywords = [
     "rl",
     "planning"
 ]
+# error: patch_jsonargparse_python_3_12_8.<locals>._parse_known_args_patch() got an unexpected keyword argument 'intermixed'
+# limits us in using python versions >= 3.12.8 (some change in argparse results in this error) Until this is fixed
+# (and until dependencies such as torchrl are available for python 3.13) we need to limit the python version to < 3.12.8
+requires-python = ">=3.10,<3.12.8"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
