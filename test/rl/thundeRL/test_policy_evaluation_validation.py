@@ -175,19 +175,18 @@ class TestPolicyEvaluationValidation:
         space = medium_blocks[0]
         if width > 0:
             space = IWStateSpace(IWSearch(width), space)
+        env = ExpandedStateSpaceEnv(
+            space, reward_function=UnitReward(gamma=0.99), reset=True
+        )
         validator = PolicyEvaluationValidation(
-            envs=[
-                ExpandedStateSpaceEnv(
-                    space, reward_function=UnitReward(gamma=0.99), reset=True
-                )
-            ],
+            envs=[env],
             discounted_optimal_values=optimal_values,
             probs_collector=mock_probs_collector,
             num_iterations=10,
             log_aggregated_metric=False,
             only_run_for_dataloader={0},
         )
-        num_transitions = [space.forward_transition_count(s) for s in space]
+        num_transitions = [len(env.get_applicable_transitions([s])[0]) for s in space]
         probs = [torch.rand((num_t,)).softmax(dim=-1) for num_t in num_transitions]
         spy2(validator.message_passing[0].forward)
         validator.compute_values(probs, 0)

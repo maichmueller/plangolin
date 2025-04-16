@@ -17,6 +17,7 @@ from rgnet.rl.policy_evaluation import (
     mdp_graph_as_pyg_data,
 )
 from rgnet.rl.reward import UnitReward
+from rgnet.rl.reward.uniform_reward import FlatReward
 from xmimir import XState, XStateSpace
 
 
@@ -96,10 +97,17 @@ def discounted_value(distance_to_goal, gamma):
 
 @singledispatch
 def bellman_optimal_values(env: ExpandedStateSpaceEnv, **kwargs) -> torch.Tensor:
-    if type(env.reward_function) is UnitReward:  # 'is' to ensure no derived class
+    reward_type = type(env.reward_function)
+    if (
+        reward_type is UnitReward or reward_type is FlatReward
+    ):  # 'is' to ensure no derived class
         reward_func: UnitReward = env.reward_function
-        if type(env.active_instances[0]) is xmi.XStateSpace:
-            # the underlying state space is a pure state space (no macro transitions)
+        if (
+            type(env.active_instances[0]) is xmi.XStateSpace
+            or reward_type is FlatReward
+        ):
+            # the underlying state space is a pure state space (no macro transitions) or
+            # we are crediting all transitions with the same reward anyway
             if math.isclose(reward_func.regular_reward, -1.0, abs_tol=1e-8):
                 return bellman_optimal_values(
                     env.active_instances[0], gamma=reward_func.gamma
