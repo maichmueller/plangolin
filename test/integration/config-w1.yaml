@@ -1,0 +1,11 @@
+data:
+  flashdrive_kwargs:
+    iw_search:
+      class_path: xmimir.iw.IWSearch
+      init_args:
+        width: 1
+        expansion_strategy:
+          class_path: InOrderExpansion
+    iw_options:
+      n_cpus: 1
+      pbar: false

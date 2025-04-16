@@ -9,7 +9,7 @@ encoder:
   class_path: HeteroGraphEncoder
 
 reward:
-  class_path: UnitReward
+  class_path: FlatReward
 
 optimizer_setup:
   optimizer:
@@ -47,6 +47,6 @@ model:
   gnn:
     class_path: HeteroGNN
     init_args:
-      num_layer: 8
-      hidden_size: 3
+      num_layer: 2
+      hidden_size: 2
       aggr: logsumexp

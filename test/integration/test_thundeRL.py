@@ -3,7 +3,7 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from test.fixtures import medium_blocks, small_blocks
+from test.fixtures import medium_blocks, small_blocks  # noqa: F401, F403
 from typing import Any, List, Tuple
 
 import mockito
@@ -13,10 +13,7 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
-import xmimir as xmi
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl.reward import UnitReward
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.thundeRL import ThundeRLCLI
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
@@ -33,6 +30,7 @@ def cli_main():
     torch.set_float32_matmul_precision("medium")
     torch.multiprocessing.set_sharing_strategy("file_system")
     cli = ThundeRLCLI()
+    return cli
 
 
 class PolicyGradientLitModuleMock:
@@ -85,8 +83,9 @@ def launch_thundeRL(
         "training_step",
         training_step_mock,
     )
-    cli_main()
+    cli = cli_main()
     mockito.unstub(rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule)
+    return cli
 
 
 def _create_data_setup(tmp_path):
@@ -135,23 +134,24 @@ def validate_successor_batch(
     successor_list: List = successor_batch.to_data_list()
     num_successors_list = num_successors.tolist()
     state_indices_list = hetero_batch.idx.tolist()
-    successor_pointer = 0
+    state_succ_offset = 0
     for state_index, num_targets in zip(state_indices_list, num_successors_list):
         found_match = False
         for drive in drives:
             if len(drive) <= state_index:
                 continue
-            potential_hdata = drive[state_index]
-            targets = potential_hdata.targets
+            state_hetero_data = drive[state_index]
+            targets = state_hetero_data.targets
             if len(targets) != num_targets:
                 continue
+            # successors are the successors of this state(_index)
             successors = successor_list[
-                successor_pointer : successor_pointer + num_targets
+                state_succ_offset : state_succ_offset + num_targets
             ]
             if not all(hetero_data_equal(t, s) for t, s in zip(targets, successors)):
                 continue
             found_match = True
-        successor_pointer += num_targets
+        state_succ_offset += num_targets
         if not found_match:
             pytest.fail(
                 f"Could not find a state in any drive that matched the index {state_index} in targets."
@@ -159,8 +159,8 @@ def validate_successor_batch(
 
 
 def _validate_done_reward_num_transitions(
-    small_space: xmi.XStateSpace,
-    medium_space: xmi.XStateSpace,
+    small_space: ExpandedStateSpaceEnv,
+    medium_space: ExpandedStateSpaceEnv,
     mock: PolicyGradientLitModuleMock,
 ):
     assert len(mock.batched_list) == 5
@@ -179,9 +179,10 @@ def _validate_done_reward_num_transitions(
     assert len(set(flattened_indices)) == 125
 
     # Verify done information
-    def get_goal_transitions(space):
+    def get_goal_transitions(env):
         return sum(
-            [space.forward_transition_count(s) for s in space.goal_states_iter()]
+            len(env.get_applicable_transitions([s])[0])
+            for s in env.active_instances[0].goal_states_iter()
         )
 
     goal_transitions = get_goal_transitions(small_space) + get_goal_transitions(
@@ -195,56 +196,61 @@ def _validate_done_reward_num_transitions(
     assert flattened_reward[done_indices].sum() == 0
     # assert that the rewards are 1 for all other indices
     all_transitions = (
-        small_space.total_transition_count + medium_space.total_transition_count
+        small_space.active_instances[0].total_transition_count
+        + medium_space.active_instances[0].total_transition_count
+        - sum(
+            small_space.active_instances[0].forward_transition_count(s)
+            for s in small_space.active_instances[0].goal_states_iter()
+        )
+        - sum(
+            medium_space.active_instances[0].forward_transition_count(s)
+            for s in medium_space.active_instances[0].goal_states_iter()
+        )
+    )
+    print(
+        all_transitions,
+        flattened_reward[~flattened_done].sum(),
+        flattened_reward[~flattened_done].shape,
     )
     assert torch.allclose(
-        flattened_reward.sum().abs(),
+        flattened_reward[~flattened_done].sum().abs(),
         torch.tensor(
-            [all_transitions - goal_transitions],
+            all_transitions,
             dtype=torch.float,
             device=flattened_reward.device,
         ),
     )
 
 
-def test_full_epoch_data_collection(tmp_path, small_blocks, medium_blocks):
+@pytest.mark.parametrize("width", [0, 1, 2])
+def test_full_epoch_data_collection(tmp_path, width):
     """Run a full epoch of the training setup including small and medium blocks.
     Test that the model receives the correct data by patching it with PolicyGradientModuleMock
     which simply records all incoming data.
     This test might take a bit longer, you can exclude it by adding `--ignore=test/integration` to your pytest script
     """
-    small_space: xmi.XStateSpace
-    medium_space: xmi.XStateSpace
-    small_space, domain, small_problem = small_blocks
-    medium_space, _, medium_problem = medium_blocks
-
     input_dir, output_dir, dataset_dir = _create_data_setup(tmp_path)
-    domain_path = input_dir / "blocks" / "domain.pddl"
-    problem_dir = input_dir / "blocks" / "train"
-
-    drives = [
-        FlashDrive(
-            domain_path=domain_path,
-            problem_path=problem,
-            reward_function=UnitReward(gamma=0.9),
-            root_dir=str(dataset_dir),
-            encoder_factory=EncoderFactory(HeteroGraphEncoder),
-        )
-        for problem in problem_dir.iterdir()
-    ]
-
-    assert len(small_space) + len(medium_space) == 130
     mock = PolicyGradientLitModuleMock()
-    # args are specified in config.yaml
-    config_file = Path(__file__).parent / "config.yaml"
-    launch_thundeRL(
-        ["fit", f"--config {config_file}"],
+    # # args are specified in config.yaml
+    config_files = [
+        Path(__file__).parent / f"config.yaml",
+        (Path(__file__).parent / f"config{f'-w{width}'}.yaml") if width > 0 else "",
+    ]
+    cli = launch_thundeRL(
+        ["fit"]
+        + [f"--config {config_file}" for config_file in config_files if config_file],
         mock.training_step_mock,
         input_dir,
         dataset_dir,
         output_dir,
     )
-    _validate_done_reward_num_transitions(small_space, medium_space, mock)
+    data = cli.datamodule
+    drives = data.dataset.datasets
+    _validate_done_reward_num_transitions(
+        data.envs[drives[0].problem_path],
+        data.envs[drives[1].problem_path],
+        mock,
+    )
     for batch_tuple in zip(
         mock.batched_list, mock.successor_batch_list, mock.num_successor_list
     ):
