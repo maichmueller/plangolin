@@ -522,7 +522,6 @@ class PolicyEvaluationValidation(ValidationCallback):
             if self.skip_dataloader(idx):
                 continue
             nx_graph = env.to_mdp_graph()
-            print(nx_graph)
             self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
 
             self.message_passing[idx] = PolicyEvaluationMessagePassing(
