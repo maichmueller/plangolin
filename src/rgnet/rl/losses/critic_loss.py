@@ -88,28 +88,30 @@ class CriticLoss(LossModule):
         value_network_for_target_values = self.critic_network
         if optimal_targets:
             value_network_for_target_values = optimal_targets
-        if value_type == ValueEstimators.TD1:
-            self._value_estimator = TD1Estimator(
-                value_network=value_network_for_target_values, **hyperparams
-            )
-        elif value_type == ValueEstimators.TD0:
-            self._value_estimator = TD0Estimator(
-                value_network=value_network_for_target_values, **hyperparams
-            )
-        elif value_type == ValueEstimators.GAE:
-            self._value_estimator = GAE(
-                value_network=value_network_for_target_values, **hyperparams
-            )
-        elif value_type == ValueEstimators.TDLambda:
-            self._value_estimator = TDLambdaEstimator(
-                value_network=value_network_for_target_values, **hyperparams
-            )
-        elif value_type == "AllActionsValueEstimator":
-            self._value_estimator = AllActionsValueEstimator(
-                value_network=value_network_for_target_values, **hyperparams
-            )
-        else:
-            raise NotImplementedError(f"Unknown value type {value_type}")
+
+        match value_type:
+            case ValueEstimators.TD1:
+                self._value_estimator = TD1Estimator(
+                    value_network=value_network_for_target_values, **hyperparams
+                )
+            case ValueEstimators.TD0:
+                self._value_estimator = TD0Estimator(
+                    value_network=value_network_for_target_values, **hyperparams
+                )
+            case ValueEstimators.GAE:
+                self._value_estimator = GAE(
+                    value_network=value_network_for_target_values, **hyperparams
+                )
+            case ValueEstimators.TDLambda:
+                self._value_estimator = TDLambdaEstimator(
+                    value_network=value_network_for_target_values, **hyperparams
+                )
+            case "AllActionsValueEstimator":
+                self._value_estimator = AllActionsValueEstimator(
+                    value_network=value_network_for_target_values, **hyperparams
+                )
+            case _:
+                raise NotImplementedError(f"Unknown value type {value_type}")
 
         tensor_keys = {
             "advantage": self.tensor_keys.advantage,

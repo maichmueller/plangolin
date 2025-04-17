@@ -9,7 +9,6 @@ from .critic_loss import CriticLoss
 
 
 class ActorCriticLoss(CriticLoss):
-
     default_value_estimator: ValueEstimators = ValueEstimators.TD0
 
     @dataclass(frozen=True)
@@ -87,10 +86,10 @@ class ActorCriticLoss(CriticLoss):
         if self.log_prob_clip:
             log_prob = log_prob.clamp(-self.log_prob_clip, self.log_prob_clip)
         loss_actor = -log_prob * advantage.detach()
-        td_out = TensorDict({"loss_actor": loss_actor}, batch_size=[])
-
         loss_value = self._loss_critic(tensordict)
-        td_out.set("loss_critic", loss_value)
+        td_out = TensorDict(
+            {"loss_actor": loss_actor, "loss_critic": loss_value}, batch_size=[]
+        )
         td_out = td_out.named_apply(
             lambda name, value: (
                 _reduce(value, reduction=self.reduction).squeeze(-1)
