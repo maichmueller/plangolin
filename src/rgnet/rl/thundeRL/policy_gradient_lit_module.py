@@ -67,6 +67,10 @@ class PolicyGradientLitModule(lightning.LightningModule):
 
         return rewards, terminated
 
+    def on_fit_start(self):
+        # pass the device to the DataModule
+        self.trainer.datamodule.device = self.device
+
     def forward(
         self,
         states_data: Batch,

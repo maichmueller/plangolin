@@ -141,6 +141,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
+        # defaulted, to be overridden by trainer on setup
+        self.device = torch.device("cpu")
 
     def get_env(self, problem: Path | int) -> ExpandedStateSpaceEnv:
         try:
