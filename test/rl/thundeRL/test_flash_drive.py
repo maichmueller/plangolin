@@ -1,13 +1,11 @@
 from pathlib import Path
-from test.fixtures import fresh_drive, medium_blocks  # noqa: F401
+from test.fixtures import fresh_drive, make_fresh_drive, medium_blocks  # noqa: F401
 from test.supervised.test_data import hetero_data_equal
 
 import mockito
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl.reward import UnitReward
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 
@@ -35,20 +33,9 @@ def test_process(fresh_drive, medium_blocks):
 
 
 def test_save_and_load(fresh_drive, medium_blocks):
-    data_dir = Path(__file__).parent.parent.parent / "pddl_instances" / "blocks"
-    problem_path = data_dir / "medium.pddl"
-    domain_path = data_dir / "domain.pddl"
-
     mockito.spy2(FlashDrive.process)
 
-    drive = FlashDrive(
-        problem_path=problem_path,
-        domain_path=domain_path,
-        reward_function=UnitReward(deadend_reward=-100.0),
-        root_dir=fresh_drive.root,
-        force_reload=False,
-        encoder_factory=EncoderFactory(HeteroGraphEncoder),
-    )
+    drive = make_fresh_drive(Path(fresh_drive.root).parent, force_reload=False)
 
     mockito.verify(FlashDrive, times=0).process()
 

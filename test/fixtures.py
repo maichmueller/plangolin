@@ -213,8 +213,7 @@ def transformed_env(request, environment=None, embedding=None):
     )
 
 
-@pytest.fixture
-def fresh_drive(tmp_path, force_reload=True):
+def make_fresh_drive(tmp_path, force_reload=True):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
     data_dir = source_dir / "pddl_instances" / "blocks"
     problem_path = data_dir / "medium.pddl"
@@ -228,3 +227,8 @@ def fresh_drive(tmp_path, force_reload=True):
         encoder_factory=EncoderFactory(HeteroGraphEncoder),
     )
     return drive
+
+
+@pytest.fixture
+def fresh_drive(tmp_path, force_reload=True):
+    return make_fresh_drive(tmp_path, force_reload=force_reload)
