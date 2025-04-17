@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import pickle
 from pathlib import Path
@@ -20,6 +21,7 @@ from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 class FlashDrive(InMemoryDataset):
     def __init__(
         self,
+        root_dir: Path | str,
         domain_path: Path | None = None,
         problem_path: Path | None = None,
         reward_function: RewardFunction | None = None,
@@ -29,7 +31,6 @@ class FlashDrive(InMemoryDataset):
         ) = None,
         iw_search: IWSearch | None = None,
         max_expanded: Optional[int] = None,
-        root_dir: Optional[str] = None,
         log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
@@ -70,13 +71,17 @@ class FlashDrive(InMemoryDataset):
                 logging.warning(
                     "Randomized expansion strategy in the IW search leads to a fixed expansion order in a stored FlashDrive."
                 )
-            if root_dir is not None:
-                root_dir = str(root_dir) + f"_iw{iw_search.width}"
 
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
-
+        metadata_strs = [str(m) for m in self.metadata[1:]]
+        # We want to use the hash to store the metadata in a directory that is unique to the metadata
+        # the builtin function `hash` is deterministic only WITHIN the same execution of the interpreter.
+        # It is not guaranteed to be the same across different runs/platforms/python-versions, so we need a stable hash.
+        sha1 = hashlib.sha1(str.encode(",".join(metadata_strs)))
+        metadata_hash_hexa = sha1.hexdigest()
+        root_dir = Path(root_dir) / str(metadata_hash_hexa)
         self.metadata_path = Path(root_dir) / (
             str(self.processed_file_names[0]) + ".meta"
         )
@@ -93,14 +98,16 @@ class FlashDrive(InMemoryDataset):
             else:
                 self.desc = loaded_metadata[0]
         super().__init__(
-            root=root_dir,
+            root=str(root_dir.absolute()),
             transform=self.target_idx_to_data_transform,
             pre_transform=None,
             pre_filter=None,
             log=log,
             force_reload=force_reload,
         )
-        del self.env_override  # avoid pickling the env object by simply removing it
+        del (
+            self.env_override
+        )  # avoid pickling the un-pickleable env object by simply removing it
         self.load(self.processed_paths[0])
 
     def __str__(self):

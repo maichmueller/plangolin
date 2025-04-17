@@ -144,3 +144,6 @@ class EncoderFactory:
 
     def __call__(self, domain: XDomain) -> GraphEncoderBase:
         return self.encoder_class(domain, **self.kwargs)
+
+    def __str__(self):
+        return f"{self.encoder_class.__name__}({self.kwargs})"

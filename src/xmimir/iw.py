@@ -125,6 +125,9 @@ class ExpansionStrategy:
     @abstractmethod
     def __iter__(self) -> Iterator[ExpansionNode]: ...
 
+    def __str__(self):
+        return f"{self.__class__.__name__}()"
+
 
 class InOrderExpansion(ExpansionStrategy):
     def __iter__(self):
@@ -151,6 +154,9 @@ class RandomizedExpansion(ExpansionStrategy):
         for index in torch.randperm(len(self.options), generator=self.rng):
             yield self.options[index]
 
+    def __str__(self):
+        return f"{self.__class__.__name__}(seed={self.seed})"
+
 
 class CollectorHook:
     def __init__(self):
@@ -176,6 +182,9 @@ class IWSearch:
             self.width == other.width
             and self.expansion_strategy == other.expansion_strategy
         )
+
+    def __str__(self):
+        return f"IWSearch(width={self.width}, expansion_strategy={self.expansion_strategy})"
 
     def solve(
         self,

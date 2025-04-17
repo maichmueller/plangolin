@@ -36,6 +36,8 @@ class UnitReward(RewardFunction):
     overriding the _reward_macro method.
     """
 
+    str_float_prec = 5
+
     def __init__(
         self,
         gamma: float | None = None,
@@ -84,6 +86,16 @@ class UnitReward(RewardFunction):
             f"{self.__class__.__name__}({self.gamma:.9f}, {self.regular_reward:.9f}, {self.goal_reward:.9f})"
         )
 
+    def __str__(self):
+        return (
+            f"{self.__class__.__name__}("
+            f"gamma={self.gamma:.{self.str_float_prec}f}, "
+            f"regular_reward={self.regular_reward:.{self.str_float_prec}f}, "
+            f"goal_reward={self.goal_reward:.{self.str_float_prec}f}, "
+            f"deadend_reward={self.deadend_reward:.{self.str_float_prec}f}"
+            f")"
+        )
+
 
 class FlatReward(UnitReward):
     r"""
@@ -127,6 +139,10 @@ class FactoredMacroReward(UnitReward):
         if len(transition.action) == 0:
             raise ValueError("Cannot compute reward for 0-length macro.")
         return self.regular_reward * (1 + (len(transition.action) - 1) / self.factor)
+
+    def __str__(self):
+        parent = super().__str__()[:-1]
+        parent += f", factor={self.factor:.{self.str_float_prec}f})"
 
 
 class DiscountedMacroReward(UnitReward):

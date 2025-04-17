@@ -51,3 +51,6 @@ class RewardFunction:
         return hash(
             f"{self.__class__.__name__}({self.gamma:.9f}, {self.deadend_reward:.9f})"
         )
+
+    @abc.abstractmethod
+    def __str__(self): ...
