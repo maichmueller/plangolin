@@ -90,6 +90,18 @@ class LazyEnvLookup(Mapping[Path, ExpandedStateSpaceEnv]):
     def __iter__(self):
         return self.keys()
 
+    def __call__(
+        self, path: Path | str, lazy: bool = True
+    ) -> ExpandedStateSpaceEnv | Callable[[], ExpandedStateSpaceEnv]:
+        """
+        If lazy is True, return a callable that loads the environment when called.
+        Otherwise, return the environment directly.
+        """
+        if lazy:
+            return lambda: self[path]
+        else:
+            return self[path]
+
     def __getitem__(self, path: Path | str) -> ExpandedStateSpaceEnv:
         path = Path(path)
         if path not in self.problems:
@@ -233,7 +245,7 @@ class ThundeRLDataModule(LightningDataModule):
                     problem_path=problem_path,
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
-                    env_override=self.envs[problem_path],
+                    env_override=self.envs(problem_path, lazy=True),
                     **flashdrive_kwargs,
                 )
                 update(drive)
@@ -315,6 +327,7 @@ class ThundeRLDataModule(LightningDataModule):
             persistent_workers=self.num_workers_train > 0,
         )
         defaults.update(kwargs)
+
         return DataLoader(
             self.dataset,
             collate_fn=collate_fn,

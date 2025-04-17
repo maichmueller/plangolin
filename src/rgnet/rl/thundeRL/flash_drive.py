@@ -1,7 +1,7 @@
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
@@ -24,7 +24,9 @@ class FlashDrive(InMemoryDataset):
         problem_path: Path | None = None,
         reward_function: RewardFunction | None = None,
         encoder_factory: Optional[EncoderFactory] = None,
-        env_override: Optional[ExpandedStateSpaceEnv] = None,
+        env_override: (
+            ExpandedStateSpaceEnv | Callable[[], ExpandedStateSpaceEnv] | None
+        ) = None,
         iw_search: IWSearch | None = None,
         max_expanded: Optional[int] = None,
         root_dir: Optional[str] = None,
@@ -34,19 +36,27 @@ class FlashDrive(InMemoryDataset):
         logging_kwargs: Optional[Mapping[str, Any]] = None,
         iw_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        if env_override is None:
-            assert (
-                domain_path is not None and problem_path is not None
-            ), "Domain and problem paths must be provided if not env override is provided."
-            assert domain_path.exists() and domain_path.is_file()
-            assert problem_path.exists() and problem_path.is_file()
-            self.domain_file: Path = domain_path
-            self.problem_path: Path = problem_path
-        else:
+        self.domain_file: Path = domain_path
+        self.problem_path: Path = problem_path
+        if self.domain_file is None and env_override is not None:
+            assert not callable(env_override), (
+                "`env_override` must be an instance of ExpandedStateSpaceEnv "
+                "if not providing `problem_path` and `domain_path`."
+            )
             self.domain_file = Path(
                 env_override.active_instances[0].problem.domain.filepath
             )
+        if self.problem_path is None and env_override is not None:
+            assert not callable(env_override), (
+                "`env_override` must be an instance of ExpandedStateSpaceEnv "
+                "if not providing `problem_path` and `domain_path`."
+            )
             self.problem_path = Path(env_override.active_instances[0].problem.filepath)
+        assert (
+            domain_path is not None and problem_path is not None
+        ), "Domain and problem paths are None."
+        assert domain_path.exists() and domain_path.is_file()
+        assert problem_path.exists() and problem_path.is_file()
         self.encoder_factory = encoder_factory
         self.reward_function = reward_function or getattr(
             env_override, "reward_function"
@@ -62,6 +72,7 @@ class FlashDrive(InMemoryDataset):
                 )
             if root_dir is not None:
                 root_dir = str(root_dir) + f"_iw{iw_search.width}"
+
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
@@ -70,7 +81,7 @@ class FlashDrive(InMemoryDataset):
             str(self.processed_file_names[0]) + ".meta"
         )
         if self.metadata_path.exists():
-            # verify that the metadata matches the current configuration, otherwise we cannot trust previously processed
+            # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
             # data will align with our expectations.
             with open(self.metadata_path, "rb") as file:
                 loaded_metadata = pickle.load(file)
@@ -152,6 +163,8 @@ class FlashDrive(InMemoryDataset):
             )
         if self.env_override is not None:
             env = self.env_override
+            if callable(env):
+                env = env()
             if not isinstance(env, ExpandedStateSpaceEnv):
                 raise ValueError(
                     f"`env_override` must be an instance of ExpandedStateSpaceEnv. Given: {type(env)}"
