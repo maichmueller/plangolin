@@ -750,7 +750,7 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         obj = super().make_hollow()
         obj.source = source
         obj.target = target
-        obj.action = tuple(action) if hasattr(action, "__iter__") else action
+        obj.action = tuple(action) if isinstance(action, Sequence) else action
         return obj
 
     def __iter__(self):
@@ -847,7 +847,7 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
         return self.base.get_action_grounder()
 
     def get_action(self, index: int):
-        return self.action_grounder.get_ground_action(index)
+        return XAction(self.action_grounder.get_ground_action(index), self)
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
         for action in self.base.generate_applicable_actions(state.base):

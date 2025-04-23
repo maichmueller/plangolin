@@ -46,19 +46,6 @@ from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
 
 
-def pretty_print_transitions(transitions: List[xmi.XTransition]):
-    return (
-        "["
-        + ", ".join(
-            [
-                str(t.action).strip("<Action >") if t.action is not None else "None"
-                for t in transitions
-            ]
-        )
-        + "]"
-    )
-
-
 def resolve_checkpoints(
     out_data: OutputData,
 ) -> Tuple[List[Path], Path | None]:

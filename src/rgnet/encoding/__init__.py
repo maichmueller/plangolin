@@ -1,4 +1,4 @@
-from .base_encoder import GraphEncoderBase
+from .base_encoder import EncoderFactory, GraphEncoderBase
 from .color_encoder import ColorGraphEncoder
 from .direct_encoder import DirectGraphEncoder
 from .featuremap import FeatureMap, FeatureMode

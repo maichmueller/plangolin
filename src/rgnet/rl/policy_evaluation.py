@@ -45,8 +45,8 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
         is_goal_state,
         dtype=torch.bool,
     )
-    # goal states have the value of their reward (typically 0, but could be arbitrary),
-    # rest is initialized to 0.
+    # goal states have the value of their reward (typically 0, but could be arbitrary);
+    # the rest is initialized to 0.
     pyg_graph.x = torch.where(
         pyg_graph.goals,
         torch.tensor(goal_reward, dtype=torch.float),

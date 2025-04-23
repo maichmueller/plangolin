@@ -1,4 +1,4 @@
-from test.fixtures import hetero_encoded_state
+from test.fixtures import hetero_encoded_state  # noqa: F401, F403
 from test.supervised.test_data import create_dataset
 
 import pytest
