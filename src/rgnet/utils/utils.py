@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import pathlib
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable, List, Reversible, Tuple
+from typing import Any, Callable, Iterable, List, Reversible, Tuple
 
 import networkx as nx
 import torch
@@ -115,3 +116,14 @@ def env_aware_cpu_count(ignore_slurm: bool = False) -> int:
         if ignore_slurm
         else os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())
     )
+
+
+def persistent_hash(data: Iterable[Any], sep: str = ",") -> str:
+    """
+    When saving to disk under a hash folder name, you need to use a stable hash.
+    The builtin function `hash` is deterministic only WITHIN the same execution of the interpreter.
+    It is not guaranteed to be the same across different runs/platforms/python-versions.
+    """
+    sha1 = hashlib.sha1(str.encode(sep.join(str(d) for d in data)))
+    metadata_hash_hexa = sha1.hexdigest()
+    return str(metadata_hash_hexa)
