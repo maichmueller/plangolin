@@ -470,7 +470,7 @@ class PolicyEvaluationValidation(ValidationCallback):
 
     def __init__(
         self,
-        envs: List[ExpandedStateSpaceEnv],
+        envs: List[ExpandedStateSpaceEnv | torch.utils.data.Dataset],
         discounted_optimal_values: Dict[int, torch.Tensor],
         probs_collector: ProbsCollector,
         log_name: str = "policy_evaluation",
@@ -481,7 +481,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         only_run_for_dataloader: Optional[set[int]] = None,
     ) -> None:
         """
-        :param spaces: List of all validation spaces (independent of only_run_for_dataloader)
+        :param envs: List of validation environments (independent of only_run_for_dataloader)
             This is needed to construct the state space as networkx graph.
         :param discounted_optimal_values: Dictionary mapping the dataloader index to a flat tensor.
             optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
@@ -521,9 +521,20 @@ class PolicyEvaluationValidation(ValidationCallback):
         for idx, env in tqdm(enumerate(envs), total=len(envs)):
             if self.skip_dataloader(idx):
                 continue
-            nx_graph = env.to_mdp_graph()
-            self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
 
+            from rgnet.rl.thundeRL import FlashDrive
+
+            match env:
+                case ExpandedStateSpaceEnv():
+                    nx_graph = env.to_mdp_graph()
+                case FlashDrive():
+                    nx_graph = env.mdp_graph
+                case _:
+                    raise TypeError(
+                        f"Unsupported environment type {type(env)}. "
+                        "Expected ExpandedStateSpaceEnv or FlashDrive."
+                    )
+            self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
             self.message_passing[idx] = PolicyEvaluationMessagePassing(
                 gamma=env.reward_function.gamma,
                 num_iterations=num_iterations,

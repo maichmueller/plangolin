@@ -378,21 +378,21 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source="data",
+            source="data.validation_datasets",
             target="model.validation_hooks.init_args.discounted_optimal_values",
-            compute_fn=lambda data: {
-                i: bellman_optimal_values(data.envs[prob])
-                for i, prob in enumerate(data.data.validation_problem_paths)
+            compute_fn=lambda datasets: {
+                i: bellman_optimal_values(flashdrive.mdp_graph)
+                for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
         )
         # PolicyValidation
         parser.link_arguments(
-            source="data",
+            source="data.validation_datasets",
             target="model.validation_hooks.init_args.optimal_policy_dict",
-            compute_fn=lambda data: {
-                i: optimal_policy(data.envs[prob])
-                for i, prob in enumerate(data.data.validation_problem_paths)
+            compute_fn=lambda datasets: {
+                i: optimal_policy(flashdrive.mdp_graph)
+                for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
         )
@@ -405,11 +405,8 @@ class ThundeRLCLI(LightningCLI):
 
         # PolicyEvaluationValidation
         parser.link_arguments(
-            source="data",
+            source="data.validation_datasets",
             target="model.validation_hooks.init_args.envs",
-            compute_fn=lambda data: list(
-                data.envs[prob] for prob in data.data.validation_problem_paths
-            ),
             apply_on="instantiate",
         )
         parser.link_arguments(

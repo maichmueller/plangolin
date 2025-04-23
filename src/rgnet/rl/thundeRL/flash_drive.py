@@ -1,8 +1,8 @@
-import hashlib
 import logging
 import pickle
+from os.path import splitext
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
@@ -12,9 +12,10 @@ import xmimir as xmi
 from rgnet.encoding import GraphEncoderBase
 from rgnet.encoding.base_encoder import EncoderFactory
 from rgnet.logging_setup import tqdm
-from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv, ExpandedStateSpaceEnvLoader
 from rgnet.rl.envs.expanded_state_space_env import IteratingReset
 from rgnet.rl.reward import RewardFunction
+from rgnet.utils.utils import persistent_hash
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 
@@ -26,9 +27,7 @@ class FlashDrive(InMemoryDataset):
         problem_path: Path | None = None,
         reward_function: RewardFunction | None = None,
         encoder_factory: Optional[EncoderFactory] = None,
-        env_override: (
-            ExpandedStateSpaceEnv | Callable[[], ExpandedStateSpaceEnv] | None
-        ) = None,
+        env: ExpandedStateSpaceEnv | ExpandedStateSpaceEnvLoader | None = None,
         iw_search: IWSearch | None = None,
         max_expanded: Optional[int] = None,
         log: bool = False,
@@ -37,33 +36,29 @@ class FlashDrive(InMemoryDataset):
         logging_kwargs: Optional[Mapping[str, Any]] = None,
         iw_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        self.domain_file: Path = domain_path
+        self.domain_path: Path = domain_path
         self.problem_path: Path = problem_path
-        if self.domain_file is None and env_override is not None:
-            assert not callable(env_override), (
-                "`env_override` must be an instance of ExpandedStateSpaceEnv "
+        if self.domain_path is None and env is not None:
+            assert not isinstance(env, ExpandedStateSpaceEnvLoader), (
+                "`env` must be an instance of ExpandedStateSpaceEnv "
                 "if not providing `problem_path` and `domain_path`."
             )
-            self.domain_file = Path(
-                env_override.active_instances[0].problem.domain.filepath
-            )
-        if self.problem_path is None and env_override is not None:
-            assert not callable(env_override), (
-                "`env_override` must be an instance of ExpandedStateSpaceEnv "
+            self.domain_path = Path(env.active_instances[0].problem.domain.filepath)
+        if self.problem_path is None and env is not None:
+            assert not isinstance(env, ExpandedStateSpaceEnvLoader), (
+                "`env` must be an instance of ExpandedStateSpaceEnv "
                 "if not providing `problem_path` and `domain_path`."
             )
-            self.problem_path = Path(env_override.active_instances[0].problem.filepath)
+            self.problem_path = Path(env.active_instances[0].problem.filepath)
         assert (
-            domain_path is not None and problem_path is not None
-        ), "Domain and problem paths are None."
-        assert domain_path.exists() and domain_path.is_file()
-        assert problem_path.exists() and problem_path.is_file()
+            self.domain_path is not None and self.problem_path is not None
+        ), "Domain or problem paths are None."
+        assert self.domain_path.exists() and self.domain_path.is_file()
+        assert self.problem_path.exists() and self.problem_path.is_file()
         self.encoder_factory = encoder_factory
-        self.reward_function = reward_function or getattr(
-            env_override, "reward_function"
-        )
+        self.reward_function = reward_function or getattr(env, "reward_function")
         self.desc: Optional[str] = None
-        self.env_override = env_override
+        self.env = env
         self.iw_search: IWSearch = iw_search
         self.iw_options = iw_options or dict()
         if iw_search is not None:
@@ -75,15 +70,10 @@ class FlashDrive(InMemoryDataset):
         self.max_expanded = max_expanded
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
-        metadata_strs = [str(m) for m in self.metadata[1:]]
-        # We want to use the hash to store the metadata in a directory that is unique to the metadata
-        # the builtin function `hash` is deterministic only WITHIN the same execution of the interpreter.
-        # It is not guaranteed to be the same across different runs/platforms/python-versions, so we need a stable hash.
-        sha1 = hashlib.sha1(str.encode(",".join(metadata_strs)))
-        metadata_hash_hexa = sha1.hexdigest()
-        root_dir = Path(root_dir) / str(metadata_hash_hexa)
-        self.metadata_path = Path(root_dir) / (
-            str(self.processed_file_names[0]) + ".meta"
+        metadata_hash = persistent_hash(self.metadata[1:])
+        root_dir = Path(root_dir) / metadata_hash
+        self.metadata_path: Path = Path(root_dir) / (
+            str(splitext(self.processed_file_names[0])[0]) + ".meta.pt"
         )
         if self.metadata_path.exists():
             # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
@@ -97,6 +87,10 @@ class FlashDrive(InMemoryDataset):
                 force_reload = True
             else:
                 self.desc = loaded_metadata[0]
+        self.mdp_graph_path = Path(root_dir) / (
+            str(splitext(self.processed_file_names[0])[0]) + ".graph.pt"
+        )
+
         super().__init__(
             root=str(root_dir.absolute()),
             transform=self.target_idx_to_data_transform,
@@ -106,12 +100,18 @@ class FlashDrive(InMemoryDataset):
             force_reload=force_reload,
         )
         del (
-            self.env_override
+            self.env
         )  # avoid pickling the un-pickleable env object by simply removing it
         self.load(self.processed_paths[0])
 
     def __str__(self):
         return self.desc
+
+    @property
+    def mdp_graph(self):
+        with open(self.mdp_graph_path, "rb") as file:
+            mdp_graph = pickle.load(file)
+        return mdp_graph
 
     def _metadata_misaligned(self, meta: Tuple) -> str:
         (
@@ -129,7 +129,7 @@ class FlashDrive(InMemoryDataset):
             return f"iw_search: given={self.iw_search} != loaded={iw_search}"
         if self.reward_function != reward_function:
             return f"reward_function: given={self.reward_function} != loaded={reward_function}"
-        if (our_file := self.domain_file.read_text()) != domain_content:
+        if (our_file := self.domain_path.read_text()) != domain_content:
             return f"domain: given={our_file} != loaded={domain_content}"
         if (our_file := self.problem_path.read_text()) != problem_content:
             return f"problem: given={our_file} != loaded={problem_content}"
@@ -139,7 +139,7 @@ class FlashDrive(InMemoryDataset):
 
     @property
     def metadata(self):
-        domain_content = self.domain_file.read_text()
+        domain_content = self.domain_path.read_text()
         problem_content = self.problem_path.read_text()
         return (
             self.desc,
@@ -168,9 +168,9 @@ class FlashDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        if self.env_override is not None:
-            env = self.env_override
-            if callable(env):
+        if self.env is not None:
+            env = self.env
+            if isinstance(env, ExpandedStateSpaceEnvLoader):
                 env = env()
             if not isinstance(env, ExpandedStateSpaceEnv):
                 raise ValueError(
@@ -179,7 +179,7 @@ class FlashDrive(InMemoryDataset):
             space = env.active_instances[0]
         else:
             space = xmi.XStateSpace(
-                str(self.domain_file.absolute()),
+                str(self.domain_path.absolute()),
                 str(self.problem_path.absolute()),
                 max_num_states=self.max_expanded or 1_000_000,
             )
@@ -197,6 +197,9 @@ class FlashDrive(InMemoryDataset):
         )
         with open(self.metadata_path, "wb") as file:
             pickle.dump(self.metadata, file)
+        mdp_graph = env.to_mdp_graph(serializable=True)
+        with open(self.mdp_graph_path, "wb") as file:
+            pickle.dump(mdp_graph, file)
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
             f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
