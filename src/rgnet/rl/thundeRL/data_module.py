@@ -3,10 +3,9 @@ from __future__ import annotations
 import datetime
 import logging
 import time
-import warnings
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import torch
 from lightning import LightningDataModule
@@ -19,6 +18,7 @@ from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import collate_fn
+from rgnet.rl.thundeRL.env_lookup import LazyEnvLookup
 from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.utils import env_aware_cpu_count
 from xmimir import Domain
@@ -27,94 +27,6 @@ from xmimir.iw import IWStateSpace
 
 def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
-
-
-def ensure_loaded(func):
-    """
-    Decorator to ensure that the environment is loaded before calling the function.
-    """
-
-    def wrapper(self, *args, **kwargs):
-        if not self._all_loaded:
-            self._load_all()
-        return func(self, *args, **kwargs)
-
-    return wrapper
-
-
-class LazyEnvLookup(Mapping[Path, ExpandedStateSpaceEnv]):
-    """
-    A dictionary-like object that loads environments for a given problem path upon __getitem__
-
-    Expected to be instantiated with a list of problem paths and a callable that takes a path and returns an environment.
-    """
-
-    def __init__(
-        self,
-        problems: Iterable[Path],
-        env_callable: Callable[[Path], ExpandedStateSpaceEnv],
-        loaded_envs: Dict[Path, ExpandedStateSpaceEnv] | None = None,
-    ):
-        problems = tuple(problems)
-        self.problems = {problem: i for i, problem in enumerate(problems)}
-        self.envs: list[ExpandedStateSpaceEnv | None] = [None] * len(problems)
-        if loaded_envs is not None:
-            for problem in problems:
-                if problem in loaded_envs:
-                    self.envs[self.problems[problem]] = loaded_envs[problem]
-        self.env_callable = env_callable
-        self._all_loaded = False
-
-    def _load_all(self):
-        for problem in self.problems:
-            if self.envs[self.problems[problem]] is None:
-                self.envs[self.problems[problem]] = self.env_callable(problem)
-        self._all_loaded = True
-
-    @ensure_loaded
-    def keys(self):
-        return self.problems.keys()
-
-    @ensure_loaded
-    def values(self):
-        return self.envs
-
-    @ensure_loaded
-    def items(self):
-        return zip(self.problems.keys(), self.envs)
-
-    def __len__(self):
-        return len(self.problems)
-
-    @ensure_loaded
-    def __iter__(self):
-        return self.keys()
-
-    def __call__(
-        self, path: Path | str, lazy: bool = True
-    ) -> ExpandedStateSpaceEnv | Callable[[], ExpandedStateSpaceEnv]:
-        """
-        If lazy is True, return a callable that loads the environment when called.
-        Otherwise, return the environment directly.
-        """
-        if lazy:
-            return lambda: self[path]
-        else:
-            return self[path]
-
-    def __getitem__(self, path: Path | str) -> ExpandedStateSpaceEnv:
-        path = Path(path)
-        if path not in self.problems:
-            raise KeyError(f"Problem {path} not member of the environments to load.")
-        env = self.envs[self.problems[path]]
-        if env is None:
-            env = self.env_callable(path)
-            self.envs[self.problems[path]] = env
-        self.all_loaded = all(env is not None for env in self.envs)
-        return env
-
-    def __setitem__(self, key, value):
-        raise NotImplementedError("This dictionary is read-only.")
 
 
 class ThundeRLDataModule(LightningDataModule):
@@ -136,6 +48,7 @@ class ThundeRLDataModule(LightningDataModule):
     ) -> None:
         super().__init__()
 
+        self._data_prepared = False
         self.data = input_data
         self.reward_function = reward_function
         self.batch_size = batch_size
@@ -245,7 +158,7 @@ class ThundeRLDataModule(LightningDataModule):
                     problem_path=problem_path,
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
-                    env_override=self.envs(problem_path, lazy=True),
+                    env=self.envs(problem_path),
                     **flashdrive_kwargs,
                 )
                 update(drive)
@@ -270,11 +183,8 @@ class ThundeRLDataModule(LightningDataModule):
         NOTE it is important for the validation problems to be in the same order as in
         :attr: `InputData.validation_problem_paths`!
         """
-        if self.dataset is not None:
-            warnings.warn(
-                "Called prepare_data() but the data is already loaded."
-                "Replacing datasets ..."
-            )
+        if self._data_prepared:
+            return
 
         train_prob_paths: List[Path] = self.data.problem_paths
         validation_prob_paths: List[Path] | None = self.data.validation_problem_paths
@@ -295,9 +205,6 @@ class ThundeRLDataModule(LightningDataModule):
             val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
             logging.info(f"Loaded VALIDATION datasets:\n" f"{val_desc}")
 
-        if self.exit_after_processing:
-            logging.info("Stopping after data processing desired. Exiting now.")
-            exit(0)
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
@@ -305,6 +212,10 @@ class ThundeRLDataModule(LightningDataModule):
             self.validation_sets = [
                 datasets[val_problem] for val_problem in validation_prob_paths
             ]
+        self._data_prepared = True
+        if self.exit_after_processing:
+            logging.info("Stopping after data processing desired. Exiting now.")
+            exit(0)
 
     def _imbalanced_sampler(self):
         # We expect that every datapoint has a distance_to_goal attribute
@@ -315,6 +226,24 @@ class ThundeRLDataModule(LightningDataModule):
         # Adding +1 to each distance (label) doesnt change the relative class counts, so does not change the sampling
         class_tensor = class_tensor + 1
         return ImbalancedSampler(dataset=class_tensor)
+
+    @property
+    def train_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.dataset.datasets
+
+    @property
+    def validation_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.validation_sets
+
+    @property
+    def datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.train_datasets + self.validation_datasets
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         defaults = dict(

@@ -2,7 +2,8 @@ import abc
 import itertools
 from collections import defaultdict
 from functools import cache
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import networkx as nx
 import torch
@@ -12,7 +13,7 @@ from torchrl.data.utils import DEVICE_TYPING
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
 from rgnet.rl.reward import RewardFunction, UnitReward
-from xmimir import XState, XTransition
+from xmimir import XState, XStateSpace, XTransition
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):
@@ -148,6 +149,7 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
             | Callable[[XState, Sequence[XTransition]], Sequence[float]]
             | None
         ) = None,
+        serializable: bool = False,
         use_space_directly: bool = True,
     ) -> nx.DiGraph:
         r"""
@@ -170,6 +172,9 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
                | None
         )
                The transition probabilities for each state. If None, uniform transition probabilities are used.
+        serializable: bool,
+                If True, only serializable (pickleable) attributes are used from the state space.
+                This is a lossy encoding.
         use_space_directly: bool
                If True, the state space is used directly.
                Otherwise, the environment is used to traverse the space and generate the graph.
@@ -212,17 +217,45 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
 
         else:
             transition_probs = transition_probabilities
+
+        def node_type(instance: XStateSpace, state: XState):
+            if state.is_goal:
+                return "goal"
+            elif instance.initial_state == state:
+                return "initial"
+            elif instance.is_deadend(state):
+                return "deadend"
+            else:
+                return "default"
+
+        if serializable:
+
+            def state_node(state: XState):
+                return state.index
+
+            def emplace_node(instance: XStateSpace, state: XState):
+                atom_str = ", ".join(map(str, state.atoms(with_statics=False)))
+                mdp_graph.add_node(
+                    state.index,
+                    ntype=node_type(instance, state),
+                    atoms=f"[{atom_str}]",
+                    dist=instance.goal_distance(state),
+                )
+
+        else:
+
+            def state_node(state: XState):
+                return state
+
+            def emplace_node(instance: XStateSpace, state: XState):
+                mdp_graph.add_node(
+                    state,
+                    ntype=node_type(instance, state),
+                    dist=instance.goal_distance(state),
+                )
+
         for state, instance in zip(states, instances):
-            node_type = (
-                "goal"
-                if self.is_goal(instance, state)
-                else ("initial" if instance.initial_state == state else "default")
-            )
-            mdp_graph.add_node(
-                state,
-                ntype=node_type,
-                dist=instance.goal_distance(state),
-            )
+            emplace_node(instance, state)
         running_transition_idx = itertools.count(0)
         for state, instance, state_transitions in zip(states, instances, transitions):
             t_probs: Sequence[float] = transition_probs(state, state_transitions)
@@ -230,13 +263,117 @@ class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):
                 state_transitions, instances=[instance] * len(state_transitions)
             )
             for t_idx, t in enumerate(state_transitions):
+                if isinstance(t.action, Sequence):
+                    action_data = (
+                        "\n".join(str(a) for a in t.action),
+                        tuple(a.index for a in t.action),
+                    )
+                elif t.action is None:
+                    action_data = None
+                else:
+                    action_data = str(t.action), t.action.index
                 mdp_graph.add_edge(
-                    t.source,
-                    t.target,
-                    action=t.action,
+                    state_node(t.source),
+                    state_node(t.target),
+                    action=action_data,
                     reward=reward[t_idx],
                     probs=t_probs[t_idx],
                     idx=next(running_transition_idx),
                 )
         mdp_graph.graph["gamma"] = self.reward_function.gamma
         return mdp_graph
+
+
+def ensure_loaded(func):
+    """
+    Decorator to ensure that the environment is loaded before calling the function.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if not self._all_loaded:
+            self._load_all()
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+class ExpandedStateSpaceEnvLoader:
+    """
+    A callable wrapper that ensures that the environment is loaded before calling the function.
+
+    Needed for LazyEnvLookup to return a callable instead of an environment, that can also be typechecked correctly.
+    """
+
+    def __init__(self, env_callable: Callable[[], ExpandedStateSpaceEnv]):
+        self.loader_callable = env_callable
+
+    def __call__(self) -> ExpandedStateSpaceEnv:
+        return self.loader_callable()
+
+
+class LazyEnvLookup(Mapping[Path, ExpandedStateSpaceEnv]):
+    """
+    A dictionary-like object that loads environments for a given problem path upon __getitem__
+
+    Expected to be instantiated with a list of problem paths and a callable that takes a path and returns an environment.
+    """
+
+    def __init__(
+        self,
+        problems: Iterable[Path],
+        env_callable: Callable[[Path], ExpandedStateSpaceEnv],
+        loaded_envs: Dict[Path, ExpandedStateSpaceEnv] | None = None,
+    ):
+        problems = tuple(problems)
+        self.problems = {problem: i for i, problem in enumerate(problems)}
+        self.envs: list[ExpandedStateSpaceEnv | None] = [None] * len(problems)
+        if loaded_envs is not None:
+            for problem in problems:
+                if problem in loaded_envs:
+                    self.envs[self.problems[problem]] = loaded_envs[problem]
+        self.env_callable = env_callable
+        self._all_loaded = False
+
+    def _load_all(self):
+        for problem in self.problems:
+            if self.envs[self.problems[problem]] is None:
+                self.envs[self.problems[problem]] = self.env_callable(problem)
+        self._all_loaded = True
+
+    @ensure_loaded
+    def keys(self):
+        return self.problems.keys()
+
+    @ensure_loaded
+    def values(self):
+        return self.envs
+
+    @ensure_loaded
+    def items(self):
+        return zip(self.problems.keys(), self.envs)
+
+    def __len__(self):
+        return len(self.problems)
+
+    @ensure_loaded
+    def __iter__(self):
+        return self.keys()
+
+    def __call__(
+        self, path: Path | str
+    ) -> ExpandedStateSpaceEnv | ExpandedStateSpaceEnvLoader:
+        return ExpandedStateSpaceEnvLoader(lambda: self[path])
+
+    def __getitem__(self, path: Path | str) -> ExpandedStateSpaceEnv:
+        path = Path(path)
+        if path not in self.problems:
+            raise KeyError(f"Problem {path} not member of the environments to load.")
+        env = self.envs[self.problems[path]]
+        if env is None:
+            env = self.env_callable(path)
+            self.envs[self.problems[path]] = env
+        self.all_loaded = all(env is not None for env in self.envs)
+        return env
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError("This dictionary is read-only.")

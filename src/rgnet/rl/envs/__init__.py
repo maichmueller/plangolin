@@ -1,7 +1,9 @@
 from .expanded_state_space_env import (
     ExpandedStateSpaceEnv,
+    ExpandedStateSpaceEnvLoader,
     InitialStateReset,
     IteratingReset,
+    LazyEnvLookup,
     MultiInstanceStateSpaceEnv,
     ResetStrategy,
     UniformRandomReset,
