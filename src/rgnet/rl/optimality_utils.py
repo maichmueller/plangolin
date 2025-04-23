@@ -23,7 +23,7 @@ from xmimir import XState, XStateSpace
 
 @singledispatch
 def optimal_policy(
-    env: ExpandedStateSpaceEnv, optimal_values: list[Tensor] | None = None
+    env: ExpandedStateSpaceEnv, optimal_values: list[Tensor] | Tensor | None = None
 ) -> Dict[int, Set[int]]:
     if type(env.reward_function) is UnitReward:
         reward_func: UnitReward = env.reward_function
@@ -33,11 +33,15 @@ def optimal_policy(
                 return optimal_policy(env.active_instances[0])
     if optimal_values is not None:
         return optimal_policy(env.active_instances[0], optimal_values=optimal_values)
+    else:
+        return optimal_policy(
+            env.active_instances[0], optimal_values=bellman_optimal_values(env)
+        )
 
 
 @optimal_policy.register
 def _(
-    space: XStateSpace, optimal_values: list[Tensor] | None = None
+    space: XStateSpace, optimal_values: list[Tensor] | Tensor | None = None
 ) -> Dict[int, Set[int]]:
     """
     Computes the optimal policy for the given state space.
@@ -48,11 +52,13 @@ def _(
         - optimal_values[i][j] is the value of the transition space.forward_transitions(state)[j]
     """
     if optimal_values is not None:
+        # optimal_values represents rewards, so we need to use argmax
 
         def optimal_successors(state: XState) -> Tensor:
-            return optimal_values[state.index].argmin()
+            return optimal_values[state.index].argmax()
 
     else:
+        # optimal_values is None, so we use the goal distance --> argmin
 
         def optimal_successors(state: XState) -> Tensor:
             return torch.tensor(
@@ -72,6 +78,48 @@ def _(
             continue
         best_actions: Set[int] = set(optimal_successors(state).view(-1).tolist())
         optimal[state.index] = best_actions
+    return optimal
+
+
+@optimal_policy.register
+def _(
+    space_graph: nx.DiGraph, optimal_values: list[Tensor] | Tensor | None = None
+) -> Dict[int, Set[int]]:
+    """
+    Computes the optimal policy for the given state MDP graph.
+
+    If `optimal_values` is provided, it is used to determine the optimal actions.
+    Assumptions:
+        - optimal_values[i] is the value of the state for which state.index == i
+        - optimal_values[i][j] is the value of the transition space.forward_transitions(state)[j]
+    """
+    if optimal_values is not None:
+        # optimal_values represents rewards, so we need to use argmax
+
+        def optimal_successors(node) -> Tensor:
+            return optimal_values[node].argmax()
+
+    else:
+        # optimal_values is None, so we use the goal distance --> argmin
+
+        def optimal_successors(node) -> Tensor:
+            return torch.tensor(
+                [
+                    space_graph.nodes[target]["dist"]
+                    for _, target in space_graph.edges(node)
+                ],
+                dtype=torch.float,
+            ).argmin()
+
+    # index of state to set of indices of optimal actions
+    # optimal[i] = {j},  0 <= j < len(space.forward_transitions(space[i]))
+    optimal: Dict[int, Set[int]] = dict()
+    for node, data in space_graph.nodes.items():
+        if data["ntype"] == "deadend":
+            optimal[node] = set()
+            continue
+        best_actions: Set[int] = set(optimal_successors(node).view(-1).tolist())
+        optimal[node] = best_actions
     return optimal
 
 
