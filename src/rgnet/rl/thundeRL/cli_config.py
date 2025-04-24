@@ -202,9 +202,9 @@ class ThundeRLCLI(LightningCLI):
         parser.add_subclass_arguments(
             RewardFunction, "reward", default=lazy_instance(UnitReward)
         )
-        # parser.add_class_arguments(IWSearch, "data.flashdrive_kwargs.iw_search")
+        # parser.add_class_arguments(IWSearch, "data.drive_kwargs.iw_search")
         # parser.add_subclass_arguments(
-        #     ExpansionStrategy, "data.flashdrive_kwargs.iw_search.expansion_strategy"
+        #     ExpansionStrategy, "data.drive_kwargs.iw_search.expansion_strategy"
         # )
 
         parser.add_argument(

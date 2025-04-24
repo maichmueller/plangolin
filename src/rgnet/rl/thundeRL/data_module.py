@@ -43,7 +43,7 @@ class ThundeRLDataModule(LightningDataModule):
         balance_by_distance_to_goal: bool = True,
         max_cpu_count: Optional[int] = None,
         exit_after_processing: bool = False,
-        flashdrive_kwargs: Optional[Dict[str, Any]] = None,
+        drive_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -61,7 +61,7 @@ class ThundeRLDataModule(LightningDataModule):
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
-        self.flashdrive_kwargs = flashdrive_kwargs or dict()
+        self.drive_kwargs = drive_kwargs or dict()
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
@@ -86,12 +86,12 @@ class ThundeRLDataModule(LightningDataModule):
                 )
             ]
         space = self.data.get_or_load_space(prob)
-        if (iw_search := self.flashdrive_kwargs.get("iw_search")) is not None:
+        if (iw_search := self.drive_kwargs.get("iw_search")) is not None:
             return ExpandedStateSpaceEnv(
                 IWStateSpace(
                     iw_search,
                     space,
-                    **self.flashdrive_kwargs.get("iw_options", dict()),
+                    **self.drive_kwargs.get("iw_options", dict()),
                 ),
                 reward_function=self.reward_function,
                 reset=True,
@@ -112,7 +112,7 @@ class ThundeRLDataModule(LightningDataModule):
             )
 
         datasets: Dict[Path, FlashDrive] = dict()
-        flashdrive_kwargs = self.flashdrive_kwargs | dict(
+        drive_kwargs = self.drive_kwargs | dict(
             domain_path=self.data.domain_path,
             reward_function=self.reward_function,
             logging_kwargs=None,
@@ -124,7 +124,7 @@ class ThundeRLDataModule(LightningDataModule):
             def enqueue_parallel(problem_path: Path, task_id: int):
                 return pool.apply_async(
                     FlashDrive,
-                    kwds=flashdrive_kwargs
+                    kwds=drive_kwargs
                     | dict(
                         problem_path=problem_path,
                         root_dir=str(self.data.dataset_dir / problem_path.stem),
@@ -158,7 +158,7 @@ class ThundeRLDataModule(LightningDataModule):
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
                     env=self.envs(problem_path),
-                    **flashdrive_kwargs,
+                    **drive_kwargs,
                 )
                 update(drive)
                 datasets[problem_path] = drive
@@ -242,7 +242,7 @@ class ThundeRLDataModule(LightningDataModule):
     def datasets(self):
         if not self._data_prepared:
             self.prepare_data()
-        return self.train_datasets + self.validation_datasets
+        return self.train_datasets + list(self.validation_datasets)
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         defaults = dict(
