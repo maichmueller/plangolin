@@ -14,11 +14,11 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
 from rgnet.encoding import GraphEncoderBase
+from rgnet.rl.data import FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import collate_fn
-from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.utils import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace

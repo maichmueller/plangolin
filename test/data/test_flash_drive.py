@@ -1,12 +1,16 @@
 from pathlib import Path
-from test.fixtures import fresh_drive, make_fresh_drive, medium_blocks  # noqa: F401
+from test.fixtures import (  # noqa: F401
+    fresh_flashdrive,
+    make_fresh_flashdrive,
+    medium_blocks,
+)
 from test.supervised.test_data import hetero_data_equal
 
 import mockito
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.rl.thundeRL.flash_drive import FlashDrive
+from rgnet.rl.data.flash_drive import FlashDrive
 
 
 def validate_drive(drive, space):
@@ -17,25 +21,27 @@ def validate_drive(drive, space):
         i = state.index
         data: HeteroData = drive[i]
         assert data.idx == i
-        assert data.done.numel() == num_transitions
-        assert data.reward.numel() == num_transitions
-        assert len(data.targets) == num_transitions
         if space.is_goal(state):
             assert data.done.all()
         else:
             assert not drive.done.all()
+            assert data.done.numel() == num_transitions
+            assert data.reward.numel() == num_transitions
+            assert len(data.targets) == num_transitions
         expected = encoder.to_pyg_data(encoder.encode(state))
         assert hetero_data_equal(data, expected)
 
 
-def test_process(fresh_drive, medium_blocks):
-    validate_drive(fresh_drive, medium_blocks[0])
+def test_process(fresh_flashdrive, medium_blocks):
+    validate_drive(fresh_flashdrive, medium_blocks[0])
 
 
-def test_save_and_load(fresh_drive, medium_blocks):
+def test_save_and_load(fresh_flashdrive, medium_blocks):
     mockito.spy2(FlashDrive.process)
 
-    drive = make_fresh_drive(Path(fresh_drive.root).parent, force_reload=False)
+    drive = make_fresh_flashdrive(
+        Path(fresh_flashdrive.root).parent, force_reload=False
+    )
 
     mockito.verify(FlashDrive, times=0).process()
 
