@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from enum import Enum, auto
 from functools import cache, cached_property
 from itertools import chain
@@ -1074,6 +1075,22 @@ class XStateSpace(MimirWrapper[StateSpace]):
             )
             for vertex in self._vertices
         )
+
+    @cache
+    def atom_count(self, category: XCategory):
+        counter = itertools.count()
+        get_atom = getattr(self.pddl_repositories, f"get_{category.name}_ground_atom")
+        while True:
+            count = next(counter)
+            try:
+                get_atom(count)
+            except IndexError:
+                return count
+
+    def all_atoms(self, category: XCategory) -> Iterable[XAtom]:
+        get_atom = getattr(self.pddl_repositories, f"get_{category.name}_ground_atom")
+        for i in range(self.atom_count(category)):
+            yield XAtom(get_atom(i))
 
     def is_deadend(self, state: XState) -> bool:
         return self.base.is_deadend_vertex(state.index)
