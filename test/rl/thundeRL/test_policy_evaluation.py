@@ -1,6 +1,6 @@
 import itertools
 import warnings
-from test.fixtures import fresh_drive, medium_blocks  # noqa: F401, F403
+from test.fixtures import fresh_flashdrive, medium_blocks  # noqa: F401, F403
 
 import networkx as nx
 import torch
@@ -68,7 +68,7 @@ def test_mdp_graph_as_pyg_data(medium_blocks):
     )
 
 
-def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
+def test_mp_on_optimal_medium(fresh_flashdrive, medium_blocks):
     space, _, _ = medium_blocks
     gamma = 0.9
     env = ExpandedStateSpaceEnv(
@@ -106,7 +106,7 @@ def test_mp_on_optimal_medium(fresh_drive, medium_blocks):
     assert torch.allclose(values, optimal_values, 0.01)
 
 
-def test_mp_on_faulty_medium(fresh_drive, medium_blocks):
+def test_mp_on_faulty_medium(fresh_flashdrive, medium_blocks):
     """
     Test that running policy evaluation on a policy that never reaches the goal will yield
     discounted infinite trajectory values for all non-goal states.
