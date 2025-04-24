@@ -120,6 +120,7 @@ class GenericDrive(InMemoryDataset):
 
     def _metadata_misaligned(self, meta: Tuple) -> str:
         (
+            class_,
             _,
             encoder_factory,
             reward_function,
@@ -127,6 +128,8 @@ class GenericDrive(InMemoryDataset):
             problem_content,
             space_options,
         ) = meta
+        if self.__class__.__name__ != class_:
+            return f"Class: given={self.__class__.__name__} != loaded={class_}"
         if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
             return f"encoder_factory: given={self.encoder_factory} != loaded={encoder_factory}"
         if self.reward_function != reward_function:
@@ -146,6 +149,7 @@ class GenericDrive(InMemoryDataset):
         domain_content = self.domain_path.read_text()
         problem_content = self.problem_path.read_text()
         return (
+            self.__class__,
             self.desc,
             self.encoder_factory,
             self.reward_function,
