@@ -97,6 +97,11 @@ def medium_delivery_2_pkgs():
 
 
 @pytest.fixture(scope="session")
+def small_delivery_1_pkgs():
+    return problem_setup("delivery", "instance_2x2_p-1_0")
+
+
+@pytest.fixture(scope="session")
 def small_delivery_2_pkgs():
     return problem_setup("delivery", "instance_2x2_p-2_0")
 

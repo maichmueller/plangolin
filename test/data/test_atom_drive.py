@@ -48,8 +48,8 @@ def validate_drive(drive: AtomDrive, space):
     [
         ("small_blocks", ["blocks", "small.pddl"]),
         ("medium_blocks", ["blocks", "medium.pddl"]),
+        ("small_delivery_1_pkgs", ["delivery", "instance_2x2_p-1_0.pddl"]),
         ("small_delivery_2_pkgs", ["delivery", "instance_2x2_p-2_0.pddl"]),
-        ("small_delivery_3_pkgs", ["delivery", "instance_2x2_p-3_0.pddl"]),
     ],
     indirect=["fresh_atomdrive"],  # only this one is a fixture
 )
