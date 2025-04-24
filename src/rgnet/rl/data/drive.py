@@ -2,6 +2,7 @@ import logging
 import pickle
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
 from os.path import splitext
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
@@ -19,6 +20,16 @@ from rgnet.rl.envs.expanded_state_space_env import (
 )
 from rgnet.rl.reward import RewardFunction
 from rgnet.utils.utils import persistent_hash
+
+
+@dataclass(frozen=True)
+class GenericDriveMetadata:
+    class_: type
+    encoder_factory: EncoderFactory
+    reward_function: RewardFunction
+    domain_content: str
+    problem_content: str
+    space_options: Optional[Mapping[str, Any]]
 
 
 class GenericDrive(InMemoryDataset):
@@ -67,7 +78,7 @@ class GenericDrive(InMemoryDataset):
         self.store_mdp_graph = store_mdp_graph
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
-        metadata_hash = persistent_hash(self.metadata[1:])
+        metadata_hash = persistent_hash(self.metadata.__dict__.values())
         root_dir = Path(root_dir) / metadata_hash
         self.metadata_path: Path = Path(root_dir) / (
             str(splitext(self.processed_file_names[0])[0]) + ".meta.pt"
@@ -76,14 +87,12 @@ class GenericDrive(InMemoryDataset):
             # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
             # data will align with our expectations.
             with open(self.metadata_path, "rb") as file:
-                loaded_metadata = pickle.load(file)
+                loaded_metadata, self.desc = pickle.load(file)
             if mismatch_desc := self._metadata_misaligned(loaded_metadata):
                 logging.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
-            else:
-                self.desc = loaded_metadata[0]
         if self.store_mdp_graph:
             self.mdp_graph_path = Path(root_dir) / (
                 str(splitext(self.processed_file_names[0])[0]) + ".graph.pt"
@@ -118,44 +127,33 @@ class GenericDrive(InMemoryDataset):
         )
         return None
 
-    def _metadata_misaligned(self, meta: Tuple) -> str:
-        (
-            class_,
-            _,
-            encoder_factory,
-            reward_function,
-            domain_content,
-            problem_content,
-            space_options,
-        ) = meta
-        if self.__class__.__name__ != class_:
-            return f"Class: given={self.__class__.__name__} != loaded={class_}"
-        if self.encoder_factory is not None and self.encoder_factory != encoder_factory:
-            return f"encoder_factory: given={self.encoder_factory} != loaded={encoder_factory}"
-        if self.reward_function != reward_function:
-            return f"reward_function: given={self.reward_function} != loaded={reward_function}"
-        if (our_file := self.domain_path.read_text()) != domain_content:
-            return f"domain: given={our_file} != loaded={domain_content}"
-        if (our_file := self.problem_path.read_text()) != problem_content:
-            return f"problem: given={our_file} != loaded={problem_content}"
-        if self.space_options != space_options:
-            return (
-                f"space_options: given={self.space_options} != loaded={space_options}"
-            )
+    def _metadata_misaligned(self, meta: GenericDriveMetadata) -> str:
+        if self.__class__ != meta.class_:
+            return f"Class: given={self.__class__} != loaded={meta.class_}"
+        if (
+            self.encoder_factory is not None
+            and self.encoder_factory != meta.encoder_factory
+        ):
+            return f"encoder_factory: given={self.encoder_factory} != loaded={meta.encoder_factory}"
+        if self.reward_function != meta.reward_function:
+            return f"reward_function: given={self.reward_function} != loaded={meta.reward_function}"
+        if (our_file := self.domain_path.read_text()) != meta.domain_content:
+            return f"domain: given={our_file} != loaded={meta.domain_content}"
+        if (our_file := self.problem_path.read_text()) != meta.problem_content:
+            return f"problem: given={our_file} != loaded={meta.problem_content}"
+        if self.space_options != meta.space_options:
+            return f"space_options: given={self.space_options} != loaded={meta.space_options}"
         return ""
 
     @property
-    def metadata(self):
-        domain_content = self.domain_path.read_text()
-        problem_content = self.problem_path.read_text()
-        return (
-            self.__class__,
-            self.desc,
-            self.encoder_factory,
-            self.reward_function,
-            domain_content,
-            problem_content,
-            self.space_options,
+    def metadata(self) -> GenericDriveMetadata:
+        return GenericDriveMetadata(
+            class_=self.__class__,
+            encoder_factory=self.encoder_factory,
+            reward_function=self.reward_function,
+            domain_content=self.domain_path.read_text(),
+            problem_content=self.problem_path.read_text(),
+            space_options=self.space_options,
         )
 
     @property
@@ -193,10 +191,11 @@ class GenericDrive(InMemoryDataset):
                 reward_function=self.reward_function,
                 reset=True,
             )
+        self._set_desc(space)
         data_list = self._build(env)
         if self.store_mdp_graph:
             with open(self.metadata_path, "wb") as file:
-                pickle.dump(self.metadata, file)
+                pickle.dump((self.metadata, self.desc), file)
             mdp_graph = env.to_mdp_graph(serializable=True)
             with open(self.mdp_graph_path, "wb") as file:
                 pickle.dump(mdp_graph, file)
@@ -206,6 +205,9 @@ class GenericDrive(InMemoryDataset):
         )
         del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
+
+    def _set_desc(self, space: xmi.XStateSpace):
+        self.desc = f"{self.__class__.__name__}({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
 
     def _make_space(self):
         space = xmi.XStateSpace(

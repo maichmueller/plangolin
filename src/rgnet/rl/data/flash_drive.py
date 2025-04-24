@@ -1,6 +1,7 @@
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple, Union
+from typing import Any, List, Mapping, Optional, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
@@ -10,7 +11,12 @@ from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
-from .drive import GenericDrive
+from .drive import GenericDrive, GenericDriveMetadata
+
+
+@dataclass(frozen=True)
+class FlashDriveMetadata(GenericDriveMetadata):
+    iw_search: IWSearch | None
 
 
 class FlashDrive(GenericDrive):
@@ -30,16 +36,18 @@ class FlashDrive(GenericDrive):
                 )
         super().__init__(*args, transform=self.target_idx_to_data_transform, **kwargs)
 
-    def _metadata_misaligned(self, meta: Tuple) -> str:
-        iw_search = meta[-1]
-        if not super()._metadata_misaligned(meta[:-1]):
-            if self.iw_search is not None and self.iw_search != iw_search:
-                return f"iw_search: given={self.iw_search} != loaded={iw_search}"
+    def _metadata_misaligned(self, meta: FlashDriveMetadata) -> str:
+        if not super()._metadata_misaligned(meta):
+            if self.iw_search is not None and self.iw_search != meta.iw_search:
+                return f"iw_search: given={self.iw_search} != loaded={meta.iw_search}"
         return ""
 
     @property
-    def metadata(self):
-        return *super().metadata, self.iw_search
+    def metadata(self) -> FlashDriveMetadata:
+        return FlashDriveMetadata(
+            **super().metadata.__dict__,
+            iw_search=self.iw_search,
+        )
 
     def _make_space(self):
         space = super()._make_space()
@@ -54,7 +62,6 @@ class FlashDrive(GenericDrive):
         out = env.traverse()[0]
         space: xmi.XStateSpace = out[env.keys.instance][0]
         encoder = self.encoder_factory(space.problem.domain)
-        self.desc = f"FlashDrive({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
         nr_states: int = len(space)
         logger = self._get_logger()
         logger.info(

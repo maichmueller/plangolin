@@ -54,7 +54,6 @@ class AtomDrive(GenericDrive):
     ) -> List[HeteroData]:
         space: xmi.XStateSpace = env.active_instances[0]
         encoder = self.encoder_factory(space.problem.domain)
-        self.desc = f"{self.__class__.__name__}({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
         nr_states: int = len(space)
         logger = self._get_logger()
         logger.info(
