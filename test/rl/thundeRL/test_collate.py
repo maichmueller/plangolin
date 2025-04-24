@@ -6,12 +6,12 @@ import torch.utils.data
 from rgnet.rl.thundeRL.collate import collate_fn
 
 
-def test(tmp_path, medium_blocks, fresh_flashdrive):
+def test(tmp_path, medium_blocks, fresh_flashdrive_medium_blocks):
     space = medium_blocks[0]
     assert len(space) == 125
 
     loader = torch.utils.data.DataLoader(
-        fresh_flashdrive, collate_fn=collate_fn, batch_size=25
+        fresh_flashdrive_medium_blocks, collate_fn=collate_fn, batch_size=25
     )
     batches = [batch for batch in loader]
     assert len(batches) == 5

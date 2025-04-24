@@ -59,11 +59,30 @@ def test_process(problem, fresh_atomdrive, request):
     validate_drive(fresh_atomdrive, problem[0])
 
 
-def test_save_and_load(fresh_atomdrive, medium_blocks):
+@pytest.mark.parametrize(
+    ("problem", "fresh_atomdrive"),
+    [
+        ("small_blocks", ["blocks", "small.pddl"]),
+        ("medium_blocks", ["blocks", "medium.pddl"]),
+    ],
+    indirect=["fresh_atomdrive"],  # only this one is a fixture
+)
+def test_save_and_load(problem, fresh_atomdrive, request):
+    problem = request.getfixturevalue(problem)
     mockito.spy2(AtomDrive.process)
-
-    drive = make_fresh_atomdrive(Path(fresh_atomdrive.root).parent, force_reload=False)
+    domain = str(
+        fresh_atomdrive.domain_path.parent.relative_to(
+            fresh_atomdrive.domain_path.parent.parent
+        )
+    )
+    drive = make_fresh_atomdrive(
+        Path(fresh_atomdrive.root).parent,
+        domain=domain,
+        problem=f"{fresh_atomdrive.problem_path.stem}.pddl",
+        force_reload=False,
+    )
 
     mockito.verify(AtomDrive, times=0).process()
+    mockito.unstub(AtomDrive)
 
-    validate_drive(drive, medium_blocks[0])
+    validate_drive(drive, problem[0])

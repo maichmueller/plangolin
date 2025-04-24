@@ -1,4 +1,4 @@
-from test.fixtures import fresh_flashdrive, medium_blocks  # noqa: F401
+from test.fixtures import fresh_flashdrive_medium_blocks, medium_blocks  # noqa: F401
 
 import mockito
 import torch.optim
@@ -13,7 +13,7 @@ from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
-def test_training_step(fresh_flashdrive, medium_blocks):
+def test_training_step(fresh_flashdrive_medium_blocks, medium_blocks):
     """
     Integration test for the training step of the PolicyGradientModule.
     Mocked: HeteroGNN, ActorCritic, ValueOperator
@@ -33,7 +33,7 @@ def test_training_step(fresh_flashdrive, medium_blocks):
     BATCH_SIZE = 5
     GAMMA = 0.9
 
-    batch = [fresh_flashdrive[i] for i in range(BATCH_SIZE)]
+    batch = [fresh_flashdrive_medium_blocks[i] for i in range(BATCH_SIZE)]
     batch[0].done = torch.full_like(batch[0].done, fill_value=True)
     batch[0].reward = torch.full_like(batch[0].reward, fill_value=0.0)
     batched_tuple = collate_fn(batch)

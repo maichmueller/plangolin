@@ -3,10 +3,12 @@ from test.fixtures import (  # noqa: F401
     fresh_flashdrive,
     make_fresh_flashdrive,
     medium_blocks,
+    small_blocks,
 )
 from test.supervised.test_data import hetero_data_equal
 
 import mockito
+import pytest
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder
@@ -32,17 +34,44 @@ def validate_drive(drive, space):
         assert hetero_data_equal(data, expected)
 
 
-def test_process(fresh_flashdrive, medium_blocks):
-    validate_drive(fresh_flashdrive, medium_blocks[0])
+@pytest.mark.parametrize(
+    ("problem", "fresh_flashdrive"),
+    [
+        ("small_blocks", ["blocks", "small.pddl"]),
+        ("medium_blocks", ["blocks", "medium.pddl"]),
+    ],
+    indirect=["fresh_flashdrive"],  # only this one is a fixture
+)
+def test_process(fresh_flashdrive, problem, request):
+    # Dynamically get the fixture by name
+    problem = request.getfixturevalue(problem)
+    validate_drive(fresh_flashdrive, problem[0])
 
 
-def test_save_and_load(fresh_flashdrive, medium_blocks):
+@pytest.mark.parametrize(
+    ("problem", "fresh_flashdrive"),
+    [
+        ("small_blocks", ["blocks", "small.pddl"]),
+        ("medium_blocks", ["blocks", "medium.pddl"]),
+    ],
+    indirect=["fresh_flashdrive"],  # only this one is a fixture
+)
+def test_save_and_load(fresh_flashdrive, problem, request):
+    # Dynamically get the fixture by name
+    problem = request.getfixturevalue(problem)
     mockito.spy2(FlashDrive.process)
-
+    domain = str(
+        fresh_flashdrive.domain_path.parent.relative_to(
+            fresh_flashdrive.domain_path.parent.parent
+        )
+    )
     drive = make_fresh_flashdrive(
-        Path(fresh_flashdrive.root).parent, force_reload=False
+        Path(fresh_flashdrive.root).parent,
+        domain=domain,
+        problem=f"{fresh_flashdrive.problem_path.stem}.pddl",
+        force_reload=False,
     )
 
     mockito.verify(FlashDrive, times=0).process()
 
-    validate_drive(drive, medium_blocks[0])
+    validate_drive(drive, problem[0])

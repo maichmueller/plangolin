@@ -252,9 +252,7 @@ def make_fresh_flashdrive(
     return drive
 
 
-def make_fresh_atomdrive(
-    tmp_path, domain="blocks", problem="medium.pddl", force_reload=True
-):
+def make_fresh_atomdrive(tmp_path, domain, problem, force_reload=True):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
     data_dir = source_dir / "pddl_instances" / domain
     problem_path = data_dir / problem
@@ -277,6 +275,13 @@ def fresh_flashdrive(tmp_path, request):
     force_reload = rest[0] if rest else True
     return make_fresh_flashdrive(
         tmp_path, domain=domain, problem=problem, force_reload=force_reload
+    )
+
+
+@pytest.fixture
+def fresh_flashdrive_medium_blocks(tmp_path):
+    return make_fresh_flashdrive(
+        tmp_path, domain="blocks", problem="medium.pddl", force_reload=True
     )
 
 
