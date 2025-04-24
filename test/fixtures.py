@@ -13,6 +13,7 @@ import xmimir as xmi
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory, GraphEncoderBase
 from rgnet.rl.agents import ActorCritic
+from rgnet.rl.data.atom_drive import AtomDrive
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
@@ -88,6 +89,26 @@ def largish_blocks_unbound_goal():
 @pytest.fixture(scope="session")
 def medium_blocks_width1_goal():
     return problem_setup("blocks", "iw/medium_width1_goal")
+
+
+@pytest.fixture(scope="session")
+def medium_delivery_2_pkgs():
+    return problem_setup("delivery", "instance_3x3_p-2_0")
+
+
+@pytest.fixture(scope="session")
+def small_delivery_2_pkgs():
+    return problem_setup("delivery", "instance_2x2_p-2_0")
+
+
+@pytest.fixture(scope="session")
+def small_delivery_3_pkgs():
+    return problem_setup("delivery", "instance_2x2_p-3_0")
+
+
+@pytest.fixture(scope="session")
+def large_delivery_3_pkgs():
+    return problem_setup("delivery", "instance_3x3_p-3_0")
 
 
 def encoded_state(
@@ -213,10 +234,12 @@ def transformed_env(request, environment=None, embedding=None):
     )
 
 
-def make_fresh_drive(tmp_path, force_reload=True):
+def make_fresh_flashdrive(
+    tmp_path, domain="blocks", problem="medium.pddl", force_reload=True
+):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
-    data_dir = source_dir / "pddl_instances" / "blocks"
-    problem_path = data_dir / "medium.pddl"
+    data_dir = source_dir / "pddl_instances" / domain
+    problem_path = data_dir / problem
     domain_path = data_dir / "domain.pddl"
     drive = FlashDrive(
         problem_path=problem_path,
@@ -229,6 +252,40 @@ def make_fresh_drive(tmp_path, force_reload=True):
     return drive
 
 
+def make_fresh_atomdrive(
+    tmp_path, domain="blocks", problem="medium.pddl", force_reload=True
+):
+    source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
+    data_dir = source_dir / "pddl_instances" / domain
+    problem_path = data_dir / problem
+    domain_path = data_dir / "domain.pddl"
+    drive = AtomDrive(
+        problem_path=problem_path,
+        domain_path=domain_path,
+        reward_function=UnitReward(gamma=0.99),
+        root_dir=str(tmp_path.absolute()),
+        force_reload=force_reload,
+        encoder_factory=EncoderFactory(HeteroGraphEncoder),
+    )
+    return drive
+
+
 @pytest.fixture
-def fresh_drive(tmp_path, force_reload=True):
-    return make_fresh_drive(tmp_path, force_reload=force_reload)
+def fresh_flashdrive(tmp_path, request):
+    # Unpack with default
+    domain, problem, *rest = request.param
+    force_reload = rest[0] if rest else True
+    return make_fresh_flashdrive(
+        tmp_path, domain=domain, problem=problem, force_reload=force_reload
+    )
+
+
+@pytest.fixture
+def fresh_atomdrive(tmp_path, request):
+    # Unpack with default
+    domain, problem, *rest = request.param
+    force_reload = rest[0] if rest else True
+
+    return make_fresh_atomdrive(
+        tmp_path, domain=domain, problem=problem, force_reload=force_reload
+    )
