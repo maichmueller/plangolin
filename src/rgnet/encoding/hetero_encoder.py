@@ -23,7 +23,7 @@ class PredicateEdgeType(NamedTuple):
     dst_type: str
 
 
-class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
+class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     """
     An encoder to represent states as heterogeneous graphs with objects and predicates as vertices
     and edges (i, j) whenever a predicate p(..., i, j, ...) holds in the state.
@@ -175,7 +175,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
 
         return data
 
-    def from_pyg_data(self, data: HeteroData) -> nx.Graph:
+    def from_pyg_data(self, data: HeteroData) -> GraphT:
         """
         Reconstruct a graph from a HeteroData object.
         Every node has a type attribute, either self.obj_type_id or a predicate name.
@@ -185,24 +185,30 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.Graph]):
         :param data: HetereData object encoded with this encoder.
         :return: The networkx graph as described above.
         """
-        graph = nx.Graph(encoding=self)
+        graph = self._graph_t(encoding=self)
         assert all(pred in data.node_types for pred in self.arity_dict.keys())
         obj_type: str = self.obj_type_id
         # Every node needs a unique name, but obj-names are lost, therefore we use the
         # index in the feature matrix together with the type.
         for obj_idx in range(data.x_dict[obj_type].shape[0]):
-            graph.add_node(obj_type + str(obj_idx), type=obj_type)
+            graph.add_node(f"{obj_type}[{obj_idx}]", type=obj_type)
 
         for predicate in self.arity_dict.keys():
             for pred_idx in range(data.x_dict[predicate].shape[0]):
-                graph.add_node(predicate + str(pred_idx), type=predicate)
-
+                graph.add_node(f"{predicate}[{pred_idx}]", type=predicate)
+        edge_types = set()
         for src, rel, dst in data.edge_types:
+            if (src, rel, dst) in edge_types:
+                raise ValueError(f"Duplicate edge type found ({src}, {rel}, {dst}).")
+            if (dst, rel, src) in edge_types:
+                continue
+            edge_types.add((src, rel, dst))
             src_tensor, dst_tensor = data.edge_index_dict[src, rel, dst]
             for src_idx, dst_idx in zip(src_tensor, dst_tensor):
+                print(f"{src}[{src_idx}]", f"{dst}[{dst_idx}]", int(rel))
                 graph.add_edge(
-                    src + str(src_idx.item()),
-                    dst + str(dst_idx.item()),
+                    f"{src}[{src_idx}]",
+                    f"{dst}[{dst_idx}]",
                     position=int(rel),
                 )
-        return graph
+        return self._graph_t(graph)

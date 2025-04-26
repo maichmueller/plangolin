@@ -1,6 +1,10 @@
 import logging
 from collections import defaultdict
-from test.fixtures import hetero_encoded_state, small_blocks
+from test.fixtures import (  # noqa: F401
+    hetero_encoded_state,
+    medium_blocks,
+    small_blocks,
+)
 
 import networkx as nx
 import networkx.algorithms.isomorphism as iso
@@ -13,13 +17,14 @@ from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
 from rgnet.utils import import_all_from
 
 
-def test_hetero_data():
-    domain, problems = import_all_from("test/pddl_instances/blocks")
+@pytest.mark.parametrize("domain", ["blocks", "blocks_eq"])
+def test_hetero_data(domain):
+    domain, problems = import_all_from(f"test/pddl_instances/{domain}")
     for prob in problems:
         if "large" in prob.filepath:
             continue
         logging.info("Testing problem: " + prob.name)
-        state_space = xmi.XStateSpace(domain.filepath, prob.filepath)
+        state_space = xmi.XStateSpace(prob)
         encoder = HeteroGraphEncoder(state_space.problem.domain)
         for state in state_space:
             data = encoder.to_pyg_data(encoder.encode(state))
@@ -29,15 +34,34 @@ def test_hetero_data():
 
 @pytest.mark.parametrize(
     "hetero_encoded_state",
-    [["blocks", "small", "initial"], ["blocks", "small", "goal"]],
+    [
+        ["blocks", "small", "initial"],
+        ["blocks", "small", "goal"],
+        ["blocks", "medium", "initial"],
+        ["blocks", "medium", "goal"],
+        ["blocks_eq", "small", "initial"],
+        ["blocks_eq", "small", "goal"],
+        ["blocks_eq", "medium", "initial"],
+        ["blocks_eq", "medium", "goal"],
+    ],
     indirect=True,
+    ids=[
+        "blocks-small-initial",
+        "blocks-small-goal",
+        "blocks-medium-initial",
+        "blocks-medium-goal",
+        "blocks_eq-small-initial",
+        "blocks_eq-small-goal",
+        "blocks_eq-medium-initial",
+        "blocks_eq-medium-goal",
+    ],
 )
 def test_decode(hetero_encoded_state):
     graph, encoder = hetero_encoded_state
     data = encoder.to_pyg_data(graph)
     decoded = encoder.from_pyg_data(data)
     node_match = iso.categorical_node_match("type", None)
-    edge_match = iso.numerical_edge_match("position", None)
+    edge_match = iso.numerical_multiedge_match("position", None)
     assert nx.is_isomorphic(
         graph, decoded, node_match=node_match, edge_match=edge_match
     )
