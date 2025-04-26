@@ -16,6 +16,7 @@ from torchrl.modules import ValueOperator
 
 from rgnet.logging_setup import tqdm
 from rgnet.rl.agents import ActorCritic
+from rgnet.rl.data import FlashDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.policy_evaluation import (
@@ -522,11 +523,9 @@ class PolicyEvaluationValidation(ValidationCallback):
             if self.skip_dataloader(idx):
                 continue
 
-            from rgnet.rl.thundeRL import FlashDrive
-
             match env:
                 case ExpandedStateSpaceEnv():
-                    nx_graph = env.to_mdp_graph()
+                    nx_graph = env.to_mdp_graphs()[0]
                 case FlashDrive():
                     nx_graph = env.mdp_graph
                 case _:

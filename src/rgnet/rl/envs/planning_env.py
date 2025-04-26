@@ -280,7 +280,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         return rewards, torch.tensor(done, dtype=torch.bool, device=self.device)
 
     def get_applicable_transitions(
-        self, states: Iterable[xmi.XState]
+        self,
+        states: Iterable[xmi.XState],
+        instances: Iterable[InstanceType] | None = None,
     ) -> List[List[xmi.XTransition]]:
         """
         For dead-end states or goal-states we add an artificial self-transition without real action (None).
@@ -297,7 +299,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
                 and self.transitions_for(instance, state)
             )
             or [xmi.XTransition.make_hollow(state, None, state)]
-            for (instance, state) in zip(self._active_instances, states)
+            for (instance, state) in zip(instances or self._active_instances, states)
         ]
 
     def rand_action(
@@ -419,7 +421,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             self._active_instances[index] = self._instance_replacement_strategy(index)
 
         initial_states, initial_goals = zip(
-            *[self.initial_for(instance) for instance in self._active_instances]
+            *(self.initial_for(instance) for instance in self._active_instances)
         )
         if states is not None:
             assert len(states) == self.batch_size[0]

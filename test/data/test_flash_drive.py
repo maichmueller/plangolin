@@ -73,5 +73,6 @@ def test_save_and_load(fresh_flashdrive, problem, request):
     )
 
     mockito.verify(FlashDrive, times=0).process()
+    mockito.unstub(FlashDrive)
 
     validate_drive(drive, problem[0])

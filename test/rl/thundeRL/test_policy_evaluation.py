@@ -35,7 +35,7 @@ def test_build_mdp_graph(medium_blocks):
         reward_function=UnitReward(gamma=0.9),
     )
     env.reset()
-    nx_graph = env.to_mdp_graph()
+    nx_graph = env.to_mdp_graphs()[0]
     assert all(
         all(
             out_edge[0] == s.index and out_edge[1] == out_transition.target.index
@@ -56,7 +56,7 @@ def test_mdp_graph_as_pyg_data(medium_blocks):
         reward_function=UnitReward(gamma=0.9),
     )
     env.reset()
-    pyg_graph = mdp_graph_as_pyg_data(env.to_mdp_graph(probs_list))
+    pyg_graph = mdp_graph_as_pyg_data(env.to_mdp_graphs(probs_list)[0])
     # Check that the probabilities are stored in the edge_attr
     # Note that we cannot use positional comparison of probabilities stored, as the edges order is not guaranteed, i.e.
     # this is not a valid test:
@@ -96,7 +96,7 @@ def test_mp_on_optimal_medium(medium_blocks):
     optimal_policy_probabilities: tuple[torch.Tensor, ...] = tuple(
         optimal_probs(i, s) for (i, s) in enumerate(space)
     )
-    graph = env.to_mdp_graph(optimal_policy_probabilities)
+    graph = env.to_mdp_graphs(optimal_policy_probabilities)[0]
     graph = mdp_graph_as_pyg_data(graph)
 
     values = value_iteration_mp(graph)
@@ -149,7 +149,7 @@ def test_mp_on_faulty_medium(medium_blocks):
 
     probs_list = tuple(faulty_probs(i, s) for (i, s) in enumerate(space))
 
-    graph = env.to_mdp_graph(probs_list)
+    graph = env.to_mdp_graphs(probs_list)[0]
     graph_data = mdp_graph_as_pyg_data(graph)
 
     _debug_policy_per_state = {

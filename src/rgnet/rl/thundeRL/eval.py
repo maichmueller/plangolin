@@ -95,7 +95,7 @@ def wandb_id_resolver(out_data: OutputData) -> str:
             run_id = run_dir.name.split("-")[-1]
             if len(run_id) == 8:
                 return run_id
-    # try the lighting logging directory
+    # try the lightning logging directory
     if (lightning_dir := out_data.out_dir / "rgnet").is_dir():
         run_dir = next(lightning_dir.iterdir(), None)
         if run_dir is not None and len(run_dir.name) == 8:
@@ -386,7 +386,7 @@ class RLExperimentAnalyzer:
 
     def mdp_graph_for_space(self, space: xmi.XStateSpace):
         if space not in self._mdp_graph_for_space:
-            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graph()
+            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graphs()[0]
             pyg_graph = mdp_graph_as_pyg_data(nx_graph)
             pyg_graph.to(self.device)
             self._mdp_graph_for_space[space] = nx_graph

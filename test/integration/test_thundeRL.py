@@ -43,11 +43,11 @@ class PolicyGradientLitModuleMock:
     def training_step_mock(
         self, batch_tuple: Tuple[Batch, Batch, torch.Tensor], **kwargs: Any
     ) -> STEP_OUTPUT:
-        assert isinstance(batch_tuple, tuple)
+        assert type(batch_tuple) == tuple
         assert len(batch_tuple) == 3
-        assert isinstance(batch_tuple[0], Batch)
-        assert isinstance(batch_tuple[1], Batch)
-        assert isinstance(batch_tuple[2], torch.Tensor)
+        assert type(batch_tuple[0]) == Batch
+        assert type(batch_tuple[1]) == Batch
+        assert type(batch_tuple[2]) == torch.Tensor
         batched, successor_batch, num_successor = batch_tuple
         assert batched.batch_size == num_successor.numel()
         assert batched.done.device == batched.reward.device == num_successor.device
