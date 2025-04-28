@@ -16,13 +16,10 @@ from torchrl.modules import ValueOperator
 
 from rgnet.logging_setup import tqdm
 from rgnet.rl.agents import ActorCritic
-from rgnet.rl.data import FlashDrive
+from rgnet.rl.data import BaseDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.policy_evaluation import (
-    PolicyEvaluationMessagePassing,
-    mdp_graph_as_pyg_data,
-)
+from rgnet.rl.policy_evaluation import PolicyEvaluationMessagePassing
 from rgnet.utils.utils import KeyAwareDefaultDict
 
 
@@ -525,15 +522,15 @@ class PolicyEvaluationValidation(ValidationCallback):
 
             match env:
                 case ExpandedStateSpaceEnv():
-                    nx_graph = env.to_mdp_graph(0)
-                case FlashDrive():
-                    nx_graph = env.mdp_graph
+                    pyg_graph = env.to_pyg_data(0)
+                case BaseDrive():
+                    pyg_graph = env.pyg_graph_data
                 case _:
                     raise TypeError(
                         f"Unsupported environment type {type(env)}. "
-                        "Expected ExpandedStateSpaceEnv or FlashDrive."
+                        "Expected ExpandedStateSpaceEnv or type[BaseDrive]."
                     )
-            self._graphs[idx] = mdp_graph_as_pyg_data(nx_graph)
+            self._graphs[idx] = pyg_graph
             self.message_passing[idx] = PolicyEvaluationMessagePassing(
                 gamma=env.reward_function.gamma,
                 num_iterations=num_iterations,
