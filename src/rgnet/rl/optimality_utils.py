@@ -1,4 +1,5 @@
 import math
+import warnings
 from functools import singledispatch
 from typing import Dict, List, Set
 
@@ -13,11 +14,13 @@ import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.rl.policy_evaluation import (
+    OptimalPolicyMessagePassing,
     ValueIterationMessagePassing,
     mdp_graph_as_pyg_data,
 )
 from rgnet.rl.reward import UnitReward
 from rgnet.rl.reward.uniform_reward import FlatReward
+from rgnet.utils.utils import broadcastable
 from xmimir import XState, XStateSpace
 
 
@@ -121,6 +124,21 @@ def _(
         best_actions: Set[int] = set(optimal_successors(node).view(-1).tolist())
         optimal[node] = best_actions
     return optimal
+
+
+@optimal_policy.register
+def _(space_data: pyg.data.Data, optimal_values: list[Tensor] | Tensor | None = None):
+    if isinstance(optimal_values, torch.Tensor):
+        assert broadcastable(optimal_values.shape, (space_data.num_nodes,))
+        setattr(
+            space_data,
+            ValueIterationMessagePassing.default_attr_name,
+            optimal_values.view(space_data.num_nodes),
+        )
+    elif isinstance(optimal_values, list):
+        warnings.warn("Ignoring optimal_values given as list, recomputing them.")
+
+    return OptimalPolicyMessagePassing(gamma=space_data.gamma)(space_data)
 
 
 def optimal_policy_tensors(space: XStateSpace) -> list[Tensor]:

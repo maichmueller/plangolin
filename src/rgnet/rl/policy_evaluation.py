@@ -1,4 +1,5 @@
 from functools import cache
+from typing import Optional
 
 import networkx as nx
 import torch
@@ -86,36 +87,55 @@ class PolicyEvaluationMessagePassing(MessagePassing):
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
     """
 
+    default_attr_name = "policy_values"
+
     def __init__(
         self,
         gamma: float,
         num_iterations: int = 1_000,
-        difference_threshold: float = 0.001,
+        difference_threshold: float | None = 0.001,
         *,
+        attr_name: str | None = None,
         aggr: str = "sum",
     ):
         super().__init__(aggr=aggr, node_dim=-1, flow="target_to_source")
         self.register_buffer("gamma", torch.as_tensor(gamma))
         self.num_iterations = num_iterations
         self.difference_threshold = difference_threshold
+        self.attr_name = attr_name or self.default_attr_name
 
     def forward(self, data: torch_geometric.data.Data) -> Tensor:
+        if hasattr(data, self.attr_name):
+            return getattr(data, self.attr_name)
+        values = self._forward(data)
+        setattr(data, self.attr_name, values)
+        return values
+
+    def _forward(self, data):
         assert isinstance(data.x, torch.Tensor)
-        assert data.x.shape == data.goals.shape
         assert data.edge_attr.ndim == 2
         assert data.edge_index.shape[-1] == data.edge_attr.shape[0]
-        values = data.x
-        goal_states: torch.Tensor | torch.BoolTensor = data.goals
+        values = self._init_values(data)
         for _ in range(self.num_iterations):
             new_values: torch.Tensor = self.propagate(
                 edge_index=data.edge_index, edge_attr=data.edge_attr, x=values
             )
-            if l1_loss(values, new_values) < self.difference_threshold:
+            if (
+                self.difference_threshold is not None
+                and l1_loss(values, new_values) < self.difference_threshold
+            ):
                 break
-            # We have to ensure that goal states stay at the given goal value (0.0 often, but decided by reward func).
-            # environment transitions from goal states would terminate.
-            values = torch.where(goal_states, values, new_values)
-        data.x = values
+            values = self._apply_new_values(data, new_values, values)
+        return values
+
+    def _init_values(self, data):
+        return torch.zeros_like(data.x)
+
+    def _apply_new_values(self, data, new_values, values):
+        # We have to ensure that goal states stay at the given goal value (0.0 often, but decided by reward func).
+        # environment transitions from goal states would terminate.
+        assert data.goals.shape == values.shape
+        values = torch.where(data.goals, values, new_values)
         return values
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
@@ -144,7 +164,7 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
         \pi(s'|s) = \argmax_{s'} [R(s,s') + \gamma V(s')]
 
     Hence, to emulate this we need the transition "probabilities" to be merely a weight of 1.0 for all edges.
-    We enforce this by setting the transition probabilities to 1.0 actively in the forward method.
+    We enforce this by setting the transition probabilities to 1.0 actively in the message method.
 
     Assumes the input Data object has the following attributes:
     - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
@@ -154,14 +174,75 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
     """
 
+    default_attr_name = "bellman_optimal_values"
+
     def __init__(
         self,
         *args,
+        aggr: str = "max",
         **kwargs,
     ):
-        kwargs["aggr"] = "max"
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, aggr=aggr, **kwargs)
 
-    def forward(self, data: torch_geometric.data.Data) -> Tensor:
-        data.edge_attr[:, 0] = 1.0
-        return super().forward(data)
+    def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
+        reward = edge_attr[:, 1]
+        return reward + self.gamma * x_j
+
+
+# noinspection PyMethodOverriding, PyAbstractClass
+class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
+    """
+    Implements Optimal Policy as a Pytorch Geometric message passing function.
+    Can be executed on cpu or an accelerator.
+
+    Note: Optimal Policy follows the formula:
+
+    .. math::
+        \pi(s'|s) = \argmax_{s'} [R(s,s') + \gamma V(s')]
+
+    where V(s) is the value of state s. In a deterministic MDP, actions coincide with successor states.
+    """
+
+    default_attr_name = "optimal_policy"
+
+    def __init__(
+        self,
+        *args,
+        aggr=None,
+        value_iteration_mp: Optional[ValueIterationMessagePassing] = None,
+        nr_iterations: int = 1,  # a single iteration is enough
+        difference_threshold: float | None = None,  # not used
+        **kwargs,
+    ):
+        super().__init__(
+            *args,
+            aggr=aggr,
+            nr_iterations=nr_iterations,
+            difference_threshold=difference_threshold,
+            **kwargs,
+        )
+        self.value_iteration_mp = value_iteration_mp or ValueIterationMessagePassing()
+
+    def _forward(self, data: torch_geometric.data.Data) -> Tensor:
+        """
+        Computes the optimal policy for the given data object.
+
+        Assumes the input Data object has the following attributes:
+        - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
+                     edge_attr[:, 0] = (ignored) transition probabilities
+                     edge_attr[:, 1] = rewards
+        """
+
+    def _init_values(self, data):
+        return self.value_iteration_mp(data)
+
+    def aggregate(
+        self,
+        inputs: Tensor,
+        index: Tensor,
+        ptr: Optional[Tensor] = None,
+        dim_size: Optional[int] = None,
+    ) -> Tensor:
+        return torch.empty_like(inputs).scatter_reduce(
+            0, index, inputs, reduce="amax", include_self=False
+        )
