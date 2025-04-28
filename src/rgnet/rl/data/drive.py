@@ -32,7 +32,7 @@ class GenericDriveMetadata:
     space_options: Optional[Mapping[str, Any]]
 
 
-class GenericDrive(InMemoryDataset):
+class BaseDrive(InMemoryDataset):
     def __init__(
         self,
         root_dir: Path | str,

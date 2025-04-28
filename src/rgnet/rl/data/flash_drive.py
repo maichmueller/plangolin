@@ -11,7 +11,7 @@ from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
-from .drive import GenericDrive, GenericDriveMetadata
+from .drive import BaseDrive, GenericDriveMetadata
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class FlashDriveMetadata(GenericDriveMetadata):
     iw_search: IWSearch | None
 
 
-class FlashDrive(GenericDrive):
+class FlashDrive(BaseDrive):
     def __init__(
         self,
         *args,

@@ -17,7 +17,9 @@ from . import encoding, models, rl, supervised
 torch.serialization.add_safe_globals(
     [
         supervised.MultiInstanceSupervisedSet,
-        rl.thundeRL.FlashDrive,
+        rl.data.FlashDrive,
+        rl.data.AtomDrive,
+        rl.data.BaseDrive,
         pyg.data.Data,
         pyg.data.HeteroData,
         pyg.data.Batch,

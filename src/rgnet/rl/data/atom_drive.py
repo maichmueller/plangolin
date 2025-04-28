@@ -10,7 +10,7 @@ from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir import XAtom, XCategory, XState, XStateSpace
 
-from .drive import GenericDrive
+from .drive import BaseDrive
 
 
 def make_atom_ids(space: XStateSpace) -> dict[str, int]:
@@ -26,7 +26,7 @@ def make_atom_ids(space: XStateSpace) -> dict[str, int]:
     return atom_lookup
 
 
-class AtomDrive(GenericDrive):
+class AtomDrive(BaseDrive):
     """
     AtomDrive stores for each state s their optimal distance to any atom p, i.e., a value function V(p | s).
     """

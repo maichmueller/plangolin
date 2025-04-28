@@ -1,6 +1,7 @@
 from . import (
     agents,
     configs,
+    data,
     embedding,
     envs,
     losses,
