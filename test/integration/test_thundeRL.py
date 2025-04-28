@@ -13,9 +13,9 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
 import rgnet
+from rgnet.rl.data import FlashDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.thundeRL import ThundeRLCLI
-from rgnet.rl.thundeRL.flash_drive import FlashDrive
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -43,10 +43,12 @@ class PolicyGradientLitModuleMock:
     def training_step_mock(
         self, batch_tuple: Tuple[Batch, Batch, torch.Tensor], **kwargs: Any
     ) -> STEP_OUTPUT:
-        assert type(batch_tuple) == tuple
+        # We can no longer check for tuple exclusively because if a pytorch dataloader has pin_memory=True set,
+        # their data will be converted to a list (https://github.com/pytorch/pytorch/issues/48419)
+        assert isinstance(batch_tuple, (list, tuple))
         assert len(batch_tuple) == 3
-        assert type(batch_tuple[0]) == Batch
-        assert type(batch_tuple[1]) == Batch
+        assert isinstance(batch_tuple[0], Batch)
+        assert isinstance(batch_tuple[1], Batch)
         assert type(batch_tuple[2]) == torch.Tensor
         batched, successor_batch, num_successor = batch_tuple
         assert batched.batch_size == num_successor.numel()

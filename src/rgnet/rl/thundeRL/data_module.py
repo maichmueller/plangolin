@@ -253,13 +253,12 @@ class ThundeRLDataModule(LightningDataModule):
             shuffle=not self.balance_by_distance_to_goal,
             num_workers=self.num_workers_train,
             persistent_workers=self.num_workers_train > 0,
+            pin_memory=True,
         )
-        defaults.update(kwargs)
-
         return DataLoader(
             self.dataset,
             collate_fn=collate_fn,
-            **defaults,
+            **(defaults | kwargs),
         )
 
     def val_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
@@ -270,13 +269,13 @@ class ThundeRLDataModule(LightningDataModule):
             num_workers=self.num_workers_val,
             # as we have multiple loader each individually should get fewer workers
             persistent_workers=False,  # when True validation memory usage increases a lot with every dataloader.
+            pin_memory=True,
         )
-        defaults.update(kwargs)
         return [
             DataLoader(
                 dataset,
                 collate_fn=collate_fn,
-                **defaults,
+                **(defaults | kwargs),
             )
             for dataset in self.validation_sets
         ]
