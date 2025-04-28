@@ -3,7 +3,7 @@ seed_everything: true
 data:
   batch_size: 26
   parallel: False
-  balance_by_distance_to_goal: False
+  balance_by_attr: ''
 
 encoder:
   class_path: HeteroGraphEncoder

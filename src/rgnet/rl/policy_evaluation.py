@@ -210,18 +210,20 @@ class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
         *args,
         aggr=None,
         value_iteration_mp: Optional[ValueIterationMessagePassing] = None,
-        nr_iterations: int = 1,  # a single iteration is enough
+        num_iterations: int = 1,  # a single iteration is enough
         difference_threshold: float | None = None,  # not used
         **kwargs,
     ):
         super().__init__(
             *args,
             aggr=aggr,
-            nr_iterations=nr_iterations,
+            num_iterations=num_iterations,
             difference_threshold=difference_threshold,
             **kwargs,
         )
-        self.value_iteration_mp = value_iteration_mp or ValueIterationMessagePassing()
+        self.value_iteration_mp = value_iteration_mp or ValueIterationMessagePassing(
+            self.gamma
+        )
 
     def _forward(self, data: torch_geometric.data.Data) -> Tensor:
         """
