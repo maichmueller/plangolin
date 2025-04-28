@@ -43,7 +43,7 @@ class BaseDrive(InMemoryDataset):
         encoder_factory: Optional[EncoderFactory] = None,
         *,
         transform: Callable[[HeteroData | Data], HeteroData | Data] = None,
-        store_mdp_graph: bool = True,
+        store_pyg_graph: bool = True,
         log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
@@ -75,7 +75,7 @@ class BaseDrive(InMemoryDataset):
         self.desc: Optional[str] = None
         self.env = env
         self.space_options = space_options
-        self.store_mdp_graph = store_mdp_graph
+        self.store_pyg_graph = store_pyg_graph
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
         metadata_hash = persistent_hash(self.metadata.__dict__.values())
@@ -93,12 +93,12 @@ class BaseDrive(InMemoryDataset):
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
-        if self.store_mdp_graph:
-            self.mdp_graph_path = Path(root_dir) / (
+        if self.store_pyg_graph:
+            self.pyg_graph_path = Path(root_dir) / (
                 str(splitext(self.processed_file_names[0])[0]) + ".graph.pt"
             )
         else:
-            self.mdp_graph_path = None
+            self.pyg_graph_path = None
 
         super().__init__(
             root=str(root_dir.absolute()),
@@ -117,13 +117,13 @@ class BaseDrive(InMemoryDataset):
         return self.desc
 
     @property
-    def mdp_graph(self):
-        if self.mdp_graph_path is not None:
-            with open(self.mdp_graph_path, "rb") as file:
+    def pyg_graph_data(self):
+        if self.pyg_graph_path is not None:
+            with open(self.pyg_graph_path, "rb") as file:
                 mdp_graph = pickle.load(file)
             return mdp_graph
         warnings.warn(
-            f"Drive object has no MDP graph path set ({self.mdp_graph_path=}). Cannot load graph."
+            f"Drive object has no MDP graph path set ({self.pyg_graph_path=}). Cannot load graph."
         )
         return None
 
@@ -193,12 +193,14 @@ class BaseDrive(InMemoryDataset):
             )
         self._set_desc(space)
         data_list = self._build(env)
-        if self.store_mdp_graph:
+
+        if self.store_pyg_graph:
             with open(self.metadata_path, "wb") as file:
                 pickle.dump((self.metadata, self.desc), file)
-            mdp_graph = env.to_mdp_graph(0, serializable=True)
-            with open(self.mdp_graph_path, "wb") as file:
-                pickle.dump(mdp_graph, file)
+            pyg_graph_data = env.to_pyg_data(0)
+            with open(self.pyg_graph_path, "wb") as file:
+                pickle.dump(pyg_graph_data, file)
+
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
             f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"

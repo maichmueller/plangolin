@@ -14,11 +14,11 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
 from rgnet.encoding import GraphEncoderBase
-from rgnet.rl.data import FlashDrive
+from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
-from rgnet.rl.thundeRL.collate import collate_fn
+from rgnet.rl.thundeRL.collate import transitions_batching_collate_fn
 from rgnet.utils.utils import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -36,11 +36,12 @@ class ThundeRLDataModule(LightningDataModule):
         batch_size: int,
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
+        drive_type: type[BaseDrive] = FlashDrive,
         batch_size_validation: Optional[int] = None,
         num_workers_train: int = 6,
         num_workers_validation: int = 2,
         parallel: bool = True,
-        balance_by_distance_to_goal: bool = True,
+        balance_by_attr: str = "distance_to_goal",
         max_cpu_count: Optional[int] = None,
         exit_after_processing: bool = False,
         drive_kwargs: Optional[Dict[str, Any]] = None,
@@ -53,10 +54,11 @@ class ThundeRLDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.batch_size_validation = batch_size_validation or batch_size
         self.parallel = parallel
+        self.drive_type = drive_type
         self.num_workers_train = num_workers_train
         self.num_workers_val = num_workers_validation
         self.encoder_factory = encoder_factory
-        self.balance_by_distance_to_goal = balance_by_distance_to_goal
+        self.balance_by_attr = balance_by_attr
         self.max_cpu_count = max_cpu_count
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
@@ -111,7 +113,7 @@ class ThundeRLDataModule(LightningDataModule):
                 f"(#{len(dataset)} states)."
             )
 
-        datasets: Dict[Path, FlashDrive] = dict()
+        datasets: Dict[Path, BaseDrive] = dict()
         drive_kwargs = self.drive_kwargs | dict(
             domain_path=self.data.domain_path,
             reward_function=self.reward_function,
@@ -123,7 +125,7 @@ class ThundeRLDataModule(LightningDataModule):
 
             def enqueue_parallel(problem_path: Path, task_id: int):
                 return pool.apply_async(
-                    FlashDrive,
+                    self.drive_type,
                     kwds=drive_kwargs
                     | dict(
                         problem_path=problem_path,
@@ -153,7 +155,7 @@ class ThundeRLDataModule(LightningDataModule):
                     datasets[problem_path] = result.get()
         else:
             for problem_path in problem_paths:
-                drive = FlashDrive(
+                drive = self.drive_type(
                     problem_path=problem_path,
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
@@ -216,15 +218,20 @@ class ThundeRLDataModule(LightningDataModule):
             logging.info("Stopping after data processing desired. Exiting now.")
             exit(0)
 
-    def _imbalanced_sampler(self):
-        # We expect that every datapoint has a distance_to_goal attribute
-        class_tensor = torch.cat(
-            [dataset.distance_to_goal for dataset in self.dataset.datasets]
-        )
-        # Account for deadend state labels being -1 (not working with bincount usage inside `ImbalancedSampler`)
-        # Adding +1 to each distance (label) doesnt change the relative class counts, so does not change the sampling
-        class_tensor = class_tensor + 1
-        return ImbalancedSampler(dataset=class_tensor)
+    def _sampler(self) -> ImbalancedSampler | None:
+        if self.balance_by_attr:
+            class_tensor = torch.cat(
+                [
+                    getattr(dataset, self.balance_by_attr)
+                    for dataset in self.train_datasets
+                ]
+            )
+            # Account for deadend state labels being -1 (not working with bincount usage inside `ImbalancedSampler`)
+            # Adding +1 to each distance (label) doesnt change the relative class counts, so does not change the sampling
+            class_tensor = class_tensor + 1
+            return ImbalancedSampler(dataset=class_tensor)
+        else:
+            return None
 
     @property
     def train_datasets(self):
@@ -246,18 +253,16 @@ class ThundeRLDataModule(LightningDataModule):
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         defaults = dict(
-            sampler=(
-                self._imbalanced_sampler() if self.balance_by_distance_to_goal else None
-            ),
+            sampler=self._sampler(),
             batch_size=self.batch_size,
-            shuffle=not self.balance_by_distance_to_goal,
+            shuffle=not self.balance_by_attr,
             num_workers=self.num_workers_train,
             persistent_workers=self.num_workers_train > 0,
             pin_memory=True,
         )
         return DataLoader(
             self.dataset,
-            collate_fn=collate_fn,
+            collate_fn=transitions_batching_collate_fn,
             **(defaults | kwargs),
         )
 
@@ -274,7 +279,7 @@ class ThundeRLDataModule(LightningDataModule):
         return [
             DataLoader(
                 dataset,
-                collate_fn=collate_fn,
+                collate_fn=transitions_batching_collate_fn,
                 **(defaults | kwargs),
             )
             for dataset in self.validation_sets
