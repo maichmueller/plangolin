@@ -161,7 +161,7 @@ def bellman_optimal_values(env: ExpandedStateSpaceEnv, **kwargs) -> torch.Tensor
                     env.active_instances[0], gamma=reward_func.gamma
                 )
         kwargs["gamma"] = reward_func.gamma
-    graph = env.to_mdp_graphs()[0]
+    graph = env.to_mdp_graph(0)
     return bellman_optimal_values(graph, **kwargs)
 
 

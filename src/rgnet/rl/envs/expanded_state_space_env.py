@@ -85,6 +85,30 @@ class IteratingReset(ResetStrategy):
         return space.get_state(idx)
 
 
+def _serialized_action_info(transition):
+    if isinstance(transition.action, Sequence):
+        action_data = (
+            "\n".join(str(a) for a in transition.action),
+            tuple(a.index for a in transition.action),
+        )
+    elif transition.action is None:
+        action_data = None
+    else:
+        action_data = str(transition.action), transition.action.index
+    return action_data
+
+
+def _node_type(instance: XStateSpace, state: XState):
+    if state.is_goal:
+        return "goal"
+    elif instance.initial_state == state:
+        return "initial"
+    elif instance.is_deadend(state):
+        return "deadend"
+    else:
+        return "default"
+
+
 class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
     def __init__(
         self,
@@ -138,26 +162,19 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
     @cache
     def to_pyg_data(
         self,
+        instance_index: int,
         transition_probabilities: (
-            tuple[
-                tuple[torch.Tensor, ...]
-                | Callable[[XState, Sequence[XTransition]], Sequence[float]],
-                ...,
-            ]
+            tuple[torch.Tensor, ...]
+            | Callable[[XState, Sequence[XTransition]], Sequence[float]]
             | None
         ) = None,
-    ) -> tuple[pyg.data.Data, ...]:
+    ) -> pyg.data.Data:
         r"""Converts a :obj:`networkx.Graph` or :obj:`networkx.DiGraph` to a
         :class:`torch_geometric.data.Data` instance.
 
         :params:
             transition_probabilities (tuple[torch.Tensor] | Callable[[XState, Sequence[XTransition]], Sequence[float]] | None):
                 The transition probabilities for each state. If None, uniform transition probabilities are used.
-
-        .. note::
-
-            All :attr:`group_node_attrs` and :attr:`group_edge_attrs` values must
-            be numeric.
 
         Examples:
             >>> edge_index = torch.tensor([
@@ -170,114 +187,151 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             >>> from_networkx(g)
             Data(edge_index=[2, 6], num_nodes=4)
         """
-        data_list = []
-        for i, space in enumerate(self.active_instances):
-            if transition_probabilities is None:
+        space = self._all_instances[instance_index]
 
-                def transition_probs(s: XState, ts: Sequence[XTransition]):
-                    n_trans = len(ts)
-                    if n_trans == 0:
-                        raise ValueError(
-                            "Given state has no transitions. "
-                            "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
-                        )
-                    return torch.ones((n_trans,), dtype=torch.float) / n_trans
+        if transition_probabilities is None:
 
-            elif isinstance(transition_probabilities, Sequence):
-                assert len(transition_probabilities) == len(space)
-                this_instance_probs = transition_probabilities[i]
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                n_trans = len(ts)
+                if n_trans == 0:
+                    raise ValueError(
+                        "Given state has no transitions. "
+                        "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
+                    )
+                return torch.ones((n_trans,), dtype=torch.float) / n_trans
 
-                def transition_probs(s: XState, ts: Sequence[XTransition]):
-                    return this_instance_probs[s.index]
+        elif isinstance(transition_probabilities, Sequence):
+            assert len(transition_probabilities) == len(space)
+            this_instance_probs = transition_probabilities[i]
 
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                return this_instance_probs[s.index]
+
+        else:
+            transition_probs = transition_probabilities[i]
+
+        # mapping = dict(zip(G.nodes(), range(G.number_of_nodes())))  # this is just state to state-index, i.e. state.index
+        # a state space may have multiple forward transitions from each goal state,
+        # but our envs only return a single placeholder transition for termination
+        number_of_extra_goal_out_transitions = (
+            sum(
+                space.forward_transition_count(goal)
+                for goal in space.goal_states_iter()
+            )
+            - space.goal_count
+        )
+        edge_index = torch.empty(
+            (
+                2,
+                space.total_transition_count - number_of_extra_goal_out_transitions,
+            ),
+            dtype=torch.long,
+        )
+        group_edge_attrs = ["probs", "reward", "idx"]
+
+        data_dict: Dict[str, Any] = defaultdict(list)
+        data_dict["edge_index"] = edge_index
+        data_dict["gamma"] = self.reward_function.gamma
+
+        transitions = self.get_applicable_transitions(
+            space, instances=itertools.repeat(space)
+        )
+        transition_index = itertools.count(0)
+        goal_reward = [float("inf")] * len(space)
+        instances = itertools.repeat(space)
+        for state, instance, state_transitions in zip(space, instances, transitions):
+            t_probs: Sequence[float] = transition_probs(state, state_transitions)
+            reward, _ = self.get_reward_and_done(
+                state_transitions, instances=[space] * len(state_transitions)
+            )
+            transition_indices = list(
+                next(transition_index) for _ in range(len(state_transitions))
+            )
+            data_dict["dist"].append(instance.goal_distance(state))
+            data_dict["ntype"].append(_node_type(instance, state))
+            is_goal_state = instance.is_goal(state)
+            data_dict["goals"].append(is_goal_state)
+            if is_goal_state:
+                goal_reward[state.index] = float(reward)
+            data_dict["reward"].extend(reward)
+            data_dict["probs"].extend(t_probs)
+            data_dict["action"].extend(
+                _serialized_action_info(t) for t in state_transitions
+            )
+            data_dict["idx"].extend(transition_indices)
+
+            edge_index[0, transition_indices] = state.index
+            edge_index[1, transition_indices] = torch.tensor(
+                [t.target.index for t in state_transitions], dtype=torch.long
+            )
+
+        for key, value in data_dict.items():
+            if isinstance(value, (tuple, list)) and isinstance(value[0], torch.Tensor):
+                data_dict[key] = torch.stack(value, dim=0)
             else:
-                transition_probs = transition_probabilities[i]
+                try:
+                    data_dict[key] = torch.as_tensor(value)
+                except KeyboardInterrupt:
+                    raise KeyboardInterrupt
+                except Exception:
+                    pass
 
-            # mapping = dict(zip(G.nodes(), range(G.number_of_nodes())))  # this is just state to state-index, i.e. state.index
-            # a state space may have multiple forward transitions from each goal state,
-            # but our envs only return a single placeholder transition for termination
-            number_of_extra_goal_out_transitions = (
-                sum(
-                    space.forward_transition_count(goal)
-                    for goal in space.goal_states_iter()
-                )
-                - space.goal_count
-            )
-            edge_index = torch.empty(
-                (
-                    2,
-                    space.total_transition_count - number_of_extra_goal_out_transitions,
+        data = pyg.data.Data.from_dict(data_dict)
+        if group_edge_attrs is not None:
+            xs = []
+            for key in group_edge_attrs:
+                x = data[key]
+                x = x.view(-1, 1) if x.dim() <= 1 else x
+                xs.append(x)
+                del data[key]
+            data.edge_attr = torch.cat(xs, dim=-1)
+
+        # goal states have the value of their reward (typically 0, but could be arbitrary);
+        # the rest is initialized to 0.
+        data.x = torch.where(
+            data.goals,
+            torch.tensor(goal_reward, dtype=torch.float),
+            torch.zeros((len(space),), dtype=torch.float),
+        )
+        data.num_nodes = len(space)
+        return data
+
+    def _traverse_space(
+        self, index: int, use_space_directly: bool = True
+    ) -> tuple[
+        Sequence["XState"], Sequence["XStateSpace"], Sequence[Sequence["XTransition"]]
+    ]:
+        if use_space_directly:
+            # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
+            space = self._all_instances[index]
+            return (
+                space,
+                [space] * len(space),
+                self.get_applicable_transitions(
+                    space, instances=itertools.repeat(space)
                 ),
-                dtype=torch.long,
             )
-            group_edge_attrs = ["probs", "reward", "idx"]
-
-            data_dict: Dict[str, Any] = defaultdict(list)
-            data_dict["edge_index"] = edge_index
-            data_dict["gamma"] = self.reward_function.gamma
-
-            transitions = self.get_applicable_transitions(space)
-            instances = itertools.repeat(space)
-            for state, instance, state_transitions in zip(
-                space, instances, transitions
-            ):
-                t_probs: Sequence[float] = transition_probs(state, state_transitions)
-                reward, _ = self.get_reward_and_done(
-                    state_transitions, instances=[] * len(state_transitions)
-                )
-                state_idx = state.index
-                transition_indices = list(
-                    range(state_idx, state_idx + len(state_transitions))
-                )
-                data_dict["reward"].extend(reward)
-                data_dict["probs"].extend(t_probs)
-                data_dict["idx"].extend(transition_indices)
-                edge_index[0, transition_indices] = state.index
-                edge_index[1, transition_indices] = torch.tensor(
-                    [t.target.index for t in state_transitions], dtype=torch.long
-                )
-
-            for key, value in data_dict.items():
-                if isinstance(value, (tuple, list)) and isinstance(
-                    value[0], torch.Tensor
-                ):
-                    data_dict[key] = torch.stack(value, dim=0)
-                else:
-                    try:
-                        data_dict[key] = torch.as_tensor(value)
-                    except KeyboardInterrupt:
-                        raise KeyboardInterrupt
-                    except Exception:
-                        pass
-
-            data = pyg.data.Data.from_dict(data_dict)
-            if group_edge_attrs is not None:
-                xs = []
-                for key in group_edge_attrs:
-                    x = data[key]
-                    x = x.view(-1, 1) if x.dim() <= 1 else x
-                    xs.append(x)
-                    del data[key]
-                data.edge_attr = torch.cat(xs, dim=-1)
-
-            data.num_nodes = len(space)
-            data_list.append(data)
-        return tuple(data_list)
+        else:
+            traversal_list = self.traverse()
+            traversal_td = traversal_list[index]
+            return (
+                traversal_td["state"],
+                traversal_td["instance"],
+                traversal_td["transitions"],
+            )
 
     @cache
-    def to_mdp_graphs(
+    def to_mdp_graph(
         self,
+        instance_index: int,
         transition_probabilities: (
-            tuple[
-                tuple[torch.Tensor, ...]
-                | Callable[[XState, Sequence[XTransition]], Sequence[float]],
-                ...,
-            ]
+            tuple[torch.Tensor, ...]
+            | Callable[[XState, Sequence[XTransition]], Sequence[float]]
             | None
         ) = None,
         serializable: bool = False,
         use_space_directly: bool = True,
-    ) -> tuple[nx.MultiDiGraph, ...]:
+    ) -> nx.MultiDiGraph:
         r"""
         Encode the state space as networkx graph. Each state is a node and each transition
         corresponds to an edge. The states are encoded as unique integers.
@@ -292,11 +346,13 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
         Parameters
         ----------
-        transition_probabilities: (
-               Sequence[torch.FloatTensor | torch.Tensor]
-               | Callable[[XState, Sequence[XTransition]], Sequence[float]]
-               | None
-        )
+        instance_index: int,
+            the index of the state space to convert.
+        transition_probabilities: tuple[
+                tuple[torch.Tensor] | Callable[[XState, Sequence[XTransition]], Sequence[float]],
+                ...
+            ]
+            | None,
                The transition probabilities for each state. If None, uniform transition probabilities are used.
         serializable: bool,
                 If True, only serializable (pickleable) attributes are used from the state space.
@@ -307,40 +363,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                This is significantly faster for large state spaces, since default .traverse() functions
                merely replicate the state space as a tensordict.
         """
-        graph_list = []
-
-        # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
-        def traverse_space(index: int):
-            if use_space_directly:
-                self.reset()
-                space = self._all_instances[index]
-                return (
-                    space,
-                    [space] * len(space),
-                    self.get_applicable_transitions(
-                        space, instances=itertools.repeat(space)
-                    ),
-                )
-            else:
-                traversal_list = self.traverse()
-                traversal_td = traversal_list[0]
-                return (
-                    traversal_td["state"],
-                    traversal_td["instance"],
-                    traversal_td[transitions],
-                )
-
-        def node_type(instance: XStateSpace, state: XState):
-            if state.is_goal:
-                return "goal"
-            elif instance.initial_state == state:
-                return "initial"
-            elif instance.is_deadend(state):
-                return "deadend"
-            else:
-                return "default"
 
         if serializable:
+            # If serializable is True, we use the state index as nodes.
+            # Otherwise, the XState itself is going to form the nodes.
 
             def state_node(state: XState):
                 return state.index
@@ -351,7 +377,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                 atom_str = ", ".join(map(str, state.atoms(with_statics=False)))
                 graph.add_node(
                     state.index,
-                    ntype=node_type(instance, state),
+                    ntype=_node_type(instance, state),
                     atoms=f"[{atom_str}]",
                     dist=instance.goal_distance(state),
                 )
@@ -366,67 +392,77 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             ):
                 graph.add_node(
                     state,
-                    ntype=node_type(instance, state),
+                    ntype=_node_type(instance, state),
                     dist=instance.goal_distance(state),
                 )
 
-        for i in range(len(self.active_instances)):
-            mdp_graph = nx.MultiDiGraph()
+        mdp_graph = nx.MultiDiGraph()
 
-            states, instances, transitions = traverse_space(i)
+        states, instances, transitions = self._traverse_space(
+            instance_index, use_space_directly
+        )
 
-            if transition_probabilities is None:
+        if transition_probabilities is None:
 
-                def transition_probs(s: XState, ts: Sequence[XTransition]):
-                    n_trans = len(ts)
-                    if n_trans == 0:
-                        raise ValueError(
-                            "Given state has no transitions. "
-                            "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
-                        )
-                    return torch.ones((n_trans,), dtype=torch.float) / n_trans
-
-            elif isinstance(transition_probabilities, Sequence):
-                assert len(transition_probabilities) == len(states)
-                this_instance_probs = transition_probabilities[i]
-
-                def transition_probs(s: XState, ts: Sequence[XTransition]):
-                    return this_instance_probs[s.index]
-
-            else:
-                transition_probs = transition_probabilities[i]
-
-            for state, instance in zip(states, instances):
-                emplace_node(mdp_graph, instance, state)
-            running_transition_idx = itertools.count(0)
-            for state, instance, state_transitions in zip(
-                states, instances, transitions
-            ):
-                t_probs: Sequence[float] = transition_probs(state, state_transitions)
-                reward, _ = self.get_reward_and_done(
-                    state_transitions, instances=[instance] * len(state_transitions)
-                )
-                for t_idx, t in enumerate(state_transitions):
-                    if isinstance(t.action, Sequence):
-                        action_data = (
-                            "\n".join(str(a) for a in t.action),
-                            tuple(a.index for a in t.action),
-                        )
-                    elif t.action is None:
-                        action_data = None
-                    else:
-                        action_data = str(t.action), t.action.index
-                    mdp_graph.add_edge(
-                        state_node(t.source),
-                        state_node(t.target),
-                        action=action_data,
-                        reward=reward[t_idx],
-                        probs=t_probs[t_idx],
-                        idx=next(running_transition_idx),
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                n_trans = len(ts)
+                if n_trans == 0:
+                    raise ValueError(
+                        "Given state has no transitions. "
+                        "At least a self-loop transition (for e.g. dead-ends/goals) is expected."
                     )
-            mdp_graph.graph["gamma"] = self.reward_function.gamma
-            graph_list.append(mdp_graph)
-        return tuple(graph_list)
+                return torch.ones((n_trans,), dtype=torch.float) / n_trans
+
+        elif isinstance(transition_probabilities, Sequence):
+            is_sequence_of_sequences_of_floats = (
+                len(transition_probabilities)
+                == len(states)  # the outermost sequence has #entries == #states
+                and (
+                    isinstance(seq := transition_probabilities[0], Sequence)
+                    or (isinstance(seq, torch.Tensor) and seq.dtype == torch.float)
+                )
+                # the inner sequence/tensor has #entries == #transitions
+                and (
+                    isinstance(value := transition_probabilities[0][0], float)
+                    or (isinstance(value, torch.Tensor) and value.ndim == 0)
+                )  # innermost is sequence/tensor over floats --> we have only data for a single state space
+            )
+            assert is_sequence_of_sequences_of_floats, (
+                "Given a sequence type, "
+                "we expect a sequence of sequences of floats or a sequence of tensors over floats."
+            )
+            assert len(transition_probabilities) == len(states)
+
+            def transition_probs(s: XState, ts: Sequence[XTransition]):
+                return transition_probabilities[s.index]
+
+        else:
+            assert callable(transition_probabilities), (
+                "Given transition probabilities are neither a sequence of sequences of floats nor a callable."
+                "Please provide a sequence of sequences of floats or a callable."
+            )
+            transition_probs = transition_probabilities
+
+        for state, instance in zip(states, instances):
+            emplace_node(mdp_graph, instance, state)
+        running_transition_idx = itertools.count(0)
+        for state, instance, state_transitions in zip(states, instances, transitions):
+            t_probs: Sequence[float] = transition_probs(state, state_transitions)
+            reward, _ = self.get_reward_and_done(
+                state_transitions, instances=[instance] * len(state_transitions)
+            )
+            for t_idx, t in enumerate(state_transitions):
+                action_data = _serialized_action_info(t)
+                mdp_graph.add_edge(
+                    state_node(t.source),
+                    state_node(t.target),
+                    action=action_data,
+                    reward=reward[t_idx],
+                    probs=t_probs[t_idx],
+                    idx=next(running_transition_idx),
+                )
+        mdp_graph.graph["gamma"] = self.reward_function.gamma
+        return mdp_graph
 
 
 class ExpandedStateSpaceEnv(MultiInstanceStateSpaceEnv):

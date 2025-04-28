@@ -386,7 +386,7 @@ class RLExperimentAnalyzer:
 
     def mdp_graph_for_space(self, space: xmi.XStateSpace):
         if space not in self._mdp_graph_for_space:
-            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graphs()[0]
+            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graph(0)
             pyg_graph = mdp_graph_as_pyg_data(nx_graph)
             pyg_graph.to(self.device)
             self._mdp_graph_for_space[space] = nx_graph

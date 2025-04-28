@@ -13,12 +13,12 @@ import xmimir as xmi
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory, GraphEncoderBase
 from rgnet.rl.agents import ActorCritic
+from rgnet.rl.data import FlashDrive
 from rgnet.rl.data.atom_drive import AtomDrive
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.rl.reward import UnitReward
-from rgnet.rl.thundeRL.flash_drive import FlashDrive
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
@@ -200,15 +200,17 @@ def embedding_mock(hidden_size):
 
 
 @pytest.fixture
-def multi_instance_env(request, spaces=None, batch_size=None):
-    if spaces is None or batch_size is None:
-        blocks_names, batch_size = request.param
-        blocks = [request.getfixturevalue(name) for name in blocks_names]
-        spaces = [space for space, _, _ in blocks]
+def multi_instance_env(request):
+    # Expecting request.param to be a dict with 'spaces' and 'batch_size'
+    spaces = [
+        request.getfixturevalue(name)[0]
+        for name in (
+            request.param.get("spaces", None) or ["small_blocks", "medium_blocks"]
+        )
+    ]
+    batch_size = request.param.get("batch_size")
     return MultiInstanceStateSpaceEnv(
-        spaces=spaces,
-        batch_size=torch.Size((batch_size,)),
-        seed=42,
+        spaces=spaces, batch_size=torch.Size((batch_size,)), seed=42
     )
 
 

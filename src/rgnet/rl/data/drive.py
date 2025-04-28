@@ -196,7 +196,7 @@ class BaseDrive(InMemoryDataset):
         if self.store_mdp_graph:
             with open(self.metadata_path, "wb") as file:
                 pickle.dump((self.metadata, self.desc), file)
-            mdp_graph = env.to_mdp_graphs(serializable=True)[0]
+            mdp_graph = env.to_mdp_graph(0, serializable=True)
             with open(self.mdp_graph_path, "wb") as file:
                 pickle.dump(mdp_graph, file)
         self._get_logger().info(

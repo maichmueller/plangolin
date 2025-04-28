@@ -257,7 +257,9 @@ class TestAllActionsValueEstimator:
             )
 
     @pytest.mark.parametrize(
-        "multi_instance_env", [[["small_blocks", "medium_blocks"], 5]], indirect=True
+        "multi_instance_env",
+        [dict(spaces=["small_blocks", "medium_blocks"], batch_size=5)],
+        indirect=True,
     )
     @pytest.mark.parametrize("hidden_size", [4])
     def test_env_based_provider(

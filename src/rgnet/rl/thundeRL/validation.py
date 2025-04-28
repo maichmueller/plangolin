@@ -525,7 +525,7 @@ class PolicyEvaluationValidation(ValidationCallback):
 
             match env:
                 case ExpandedStateSpaceEnv():
-                    nx_graph = env.to_mdp_graphs()[0]
+                    nx_graph = env.to_mdp_graph(0)
                 case FlashDrive():
                     nx_graph = env.mdp_graph
                 case _:

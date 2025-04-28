@@ -1,39 +1,31 @@
-from test.fixtures import medium_blocks, small_blocks
-from typing import List, Tuple
+from test.fixtures import medium_blocks, multi_instance_env, small_blocks  # noqa: F401
+from typing import List
 
 import pytest
 import torch
 from tensordict import TensorDict
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.rl.policy_evaluation import mdp_graph_as_pyg_data
 from xmimir import XState, XStateSpace, XTransition
 
 from .test_state_space_env import get_expected_root_keys
 
 
-@pytest.fixture
-def multi_instance_env(
-    batch_size, small_blocks, medium_blocks, seed=42
-) -> Tuple[XStateSpace, XStateSpace, MultiInstanceStateSpaceEnv]:
-    space_small, _, _ = small_blocks
-    space_medium, _, _ = medium_blocks
-
-    return (
-        space_small,
-        space_medium,
-        MultiInstanceStateSpaceEnv(
-            spaces=[space_small, space_medium],
-            batch_size=torch.Size((batch_size,)),
-            seed=seed,
-        ),
-    )
-
-
-@pytest.mark.parametrize("batch_size", [1, 2, 3])
-def test_reset(multi_instance_env, batch_size):
-    small_space, medium_space, environment = multi_instance_env
-
+@pytest.mark.parametrize(
+    "multi_instance_env",
+    [
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=1),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=2),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=3),
+    ],
+    indirect=True,
+)
+def test_reset(multi_instance_env):
+    environment = multi_instance_env
+    small_space, medium_space = multi_instance_env._all_instances
+    batch_size = environment.batch_size[0]
     td = environment.reset()
     expected_keys = get_expected_root_keys(environment)
     assert td.sorted_keys == expected_keys
@@ -59,9 +51,19 @@ def test_reset(multi_instance_env, batch_size):
     assert out.sorted_keys == expected_keys
 
 
-@pytest.mark.parametrize("batch_size", [1, 2, 3])
-def test_partial_reset(multi_instance_env, batch_size):
-    small_space, medium_space, environment = multi_instance_env
+@pytest.mark.parametrize(
+    "multi_instance_env",
+    [
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=1),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=2),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=3),
+    ],
+    indirect=True,
+)
+def test_partial_reset(multi_instance_env):
+    environment = multi_instance_env
+    small_space, medium_space = multi_instance_env._all_instances
+    batch_size = environment.batch_size[0]
     spaces = [small_space, medium_space]
 
     goal_state = next(small_space.goal_states_iter())
@@ -158,3 +160,36 @@ def test_partial_reset(multi_instance_env, batch_size):
     assert next_tensordict[("next", keys.state)] == [
         a.target for a in next_random_actions
     ]
+
+
+@pytest.mark.parametrize(
+    "multi_instance_env",
+    [
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=1),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=2),
+        dict(spaces=["small_blocks", "medium_blocks"], batch_size=3),
+    ],
+    indirect=True,
+)
+def test_pyg_conversion(multi_instance_env):
+    mdp_graphs = tuple(
+        multi_instance_env.to_mdp_graph(i)
+        for i in range(len(multi_instance_env._all_instances))
+    )
+    pyg_data_from_mdps = tuple(
+        mdp_graph_as_pyg_data(mdp_graph) for mdp_graph in mdp_graphs
+    )
+    pyg_data_from_envs = tuple(
+        multi_instance_env.to_pyg_data(i)
+        for i in range(len(multi_instance_env._all_instances))
+    )
+    for pyg_data_from_env, pyg_data_from_mdp in zip(
+        pyg_data_from_envs, pyg_data_from_mdps
+    ):
+        assert pyg_data_from_env.num_nodes == pyg_data_from_mdp.num_nodes
+        assert pyg_data_from_env.num_edges == pyg_data_from_mdp.num_edges
+        assert torch.all(pyg_data_from_env.x == pyg_data_from_mdp.x)
+        assert torch.all(pyg_data_from_env.edge_index == pyg_data_from_mdp.edge_index)
+        assert torch.allclose(pyg_data_from_env.edge_attr, pyg_data_from_mdp.edge_attr)
+        assert torch.all(pyg_data_from_env.goals == pyg_data_from_mdp.goals)
+        assert pyg_data_from_env.gamma == pyg_data_from_mdp.gamma

@@ -958,7 +958,7 @@ class XSearchResult(MimirWrapper[SearchResult]):
     __hash__ = None
 
 
-class XStateSpace(MimirWrapper[StateSpace]):
+class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
     """
     The extended state space class.
 
