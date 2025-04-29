@@ -15,7 +15,7 @@ class Plan:
     problem: xmi.XProblem
 
     def __post_init__(self):
-        self.cost = sum(a.cost for s, t, a in self.transitions)
+        self.cost = sum(transition.action.cost for transition in self.transitions)
 
 
 def parse_fd_plan(path: Path, problem: xmi.XProblem) -> Plan:
