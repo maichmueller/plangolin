@@ -6,6 +6,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
 
+import lightning
 import torch
 from jsonargparse import lazy_instance
 from lightning import Trainer
@@ -19,6 +20,8 @@ from lightning.pytorch.cli import (
 from lightning.pytorch.loggers import WandbLogger
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
+
+from rgnet.algorithms import bellman_optimal_values, optimal_policy
 
 # avoids specifying full class_path for encoder in cli
 from rgnet.encoding import (  # noqa: F401
@@ -40,7 +43,6 @@ from rgnet.rl.losses import (  # noqa: F401
     CriticLoss,
 )
 from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
-from rgnet.rl.optimality_utils import bellman_optimal_values, optimal_policy
 from rgnet.rl.reward import RewardFunction, UnitReward
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
@@ -162,9 +164,11 @@ class TestSetup:
     exploration_type: ExplorationType = ExplorationType.MODE
 
 
-class ThundeRLCLI(LightningCLI):
+class RGNetCLI(LightningCLI):
     def __init__(
         self,
+        lit_module_class: Type[lightning.LightningModule],
+        lit_data_module_class: Type[lightning.LightningDataModule] = ThundeRLDataModule,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
         save_config_kwargs: Optional[Dict[str, Any]] = None,
         trainer_class: Union[Type[Trainer], Callable[..., Trainer]] = Trainer,
@@ -179,8 +183,8 @@ class ThundeRLCLI(LightningCLI):
         run: bool = True,
     ) -> None:
         super().__init__(
-            PolicyGradientLitModule,
-            ThundeRLDataModule,
+            lit_module_class,
+            lit_data_module_class,
             save_config_callback,
             save_config_kwargs,
             trainer_class,
@@ -194,7 +198,7 @@ class ThundeRLCLI(LightningCLI):
             auto_configure_optimizers=False,
         )
 
-    def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
+    def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         parser.add_subclass_arguments(GraphEncoderBase, "encoder")
 
         parser.add_class_arguments(EncoderFactory, "encoder_factory")
@@ -202,10 +206,6 @@ class ThundeRLCLI(LightningCLI):
         parser.add_subclass_arguments(
             RewardFunction, "reward", default=lazy_instance(UnitReward)
         )
-        # parser.add_class_arguments(IWSearch, "data.drive_kwargs.iw_search")
-        # parser.add_subclass_arguments(
-        #     ExpansionStrategy, "data.drive_kwargs.iw_search.expansion_strategy"
-        # )
 
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
@@ -229,9 +229,6 @@ class ThundeRLCLI(LightningCLI):
             skip={"clone_tensordict", "keys"},
         )
 
-        parser.add_class_arguments(
-            ActorCritic, "agent", as_positional=True, skip={"keys"}
-        )
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
@@ -303,14 +300,8 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "data_layout.input_data", "data.input_data", apply_on="instantiate"
         )
-        parser.link_arguments(
-            "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
-        )
 
         # Model links
-        parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
-
-        parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
         parser.link_arguments(
             "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"
         )
@@ -319,31 +310,11 @@ class ThundeRLCLI(LightningCLI):
         )
         # Loss links
         parser.link_arguments(
-            "agent.value_operator",
-            "loss.init_args.critic_network",
-            apply_on="instantiate",
-        )
-        parser.link_arguments(
             ("loss", "estimator_config"),
             "model.loss",
             apply_on="instantiate",
             compute_fn=configure_loss,
         )
-        parser.link_arguments(
-            "estimator_config.estimator_type",
-            "model.add_all_rewards_and_done",
-            apply_on="instantiate",
-            compute_fn=lambda estimator_type: estimator_type
-            == "AllActionsValueEstimator",
-        )
-        parser.link_arguments(
-            "estimator_config.estimator_type",
-            "model.add_successor_embeddings",
-            apply_on="instantiate",
-            compute_fn=lambda estimator_type: estimator_type
-            == "AllActionsValueEstimator",
-        )
-
         # Trainer / logger links
         parser.link_arguments(
             source="data_layout.output_data.out_dir",
@@ -371,6 +342,141 @@ class ThundeRLCLI(LightningCLI):
             compute_fn=validation_dataloader_names,
             apply_on="instantiate",
         )
+
+    def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
+        if type(self) is not RGNetCLI:
+            # while we are not at the root of CLI dependency (RGNetCLI), we ask all parents to define their arguments
+            # also note: super() is not used here, as we want to call the parent class of `self`, not the
+            # parent class of RGNetCLI.
+            super(type(self), self).add_arguments_to_parser_impl(parser)
+        self.add_arguments_to_parser_impl(parser)
+
+    def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
+        """
+        We need to add the validation callbacks of the model to the trainer.
+        The problem is that we have a list of callbacks, and we can't extend
+        the list of callbacks provided via the config using jsonargparse.
+        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
+        Therefore, we manually add our model callbacks to the extra callbacks.
+        """
+        if (
+            isinstance(self.model, PolicyGradientLitModule)
+            and self.model.validation_hooks
+        ):
+            model_callbacks = self.model.validation_hooks
+            extra_callbacks = [
+                self._get(self.config_init, c)
+                for c in self._parser(self.subcommand).callback_keys
+            ]
+            extra_callbacks.extend(model_callbacks)
+            trainer_config = {
+                **self._get(self.config_init, "trainer", default={}),
+                **kwargs,
+            }
+            return self._instantiate_trainer(trainer_config, extra_callbacks)
+
+        return super().instantiate_trainer(**kwargs)
+
+    def convert_to_nested_dict(self, config: Namespace):
+        """Lightning converts nested namespaces to strings"""
+        mapping: Dict = vars(config).copy()
+        for key, item in mapping.items():
+            if isinstance(item, Namespace):
+                mapping[key] = self.convert_to_nested_dict(item)
+            if isinstance(item, Sequence) and not isinstance(item, str):
+                mapping[key] = [
+                    (
+                        sequence_item
+                        if not isinstance(sequence_item, Namespace)
+                        else self.convert_to_nested_dict(sequence_item)
+                    )
+                    for sequence_item in item
+                ]
+        return mapping
+
+    def before_fit(self):
+        self.trainer.logger.log_hyperparams(
+            self.convert_to_nested_dict(self.config["fit"])
+        )
+        wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
+        if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
+            self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
+        if wandb_extra.log_code:  # save everything inside src/rgnet
+            self.trainer.logger.experiment.log_code(
+                str((Path(__file__) / ".." / ".." / "..").resolve())
+            )
+
+
+class ThundeRLCLI(RGNetCLI):
+    def __init__(
+        self,
+        save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
+        save_config_kwargs: Optional[Dict[str, Any]] = None,
+        trainer_class: Union[Type[Trainer], Callable[..., Trainer]] = Trainer,
+        trainer_defaults: Optional[Dict[str, Any]] = None,
+        seed_everything_default: Union[bool, int] = True,
+        parser_kwargs: Optional[
+            Union[Dict[str, Any], Dict[str, Dict[str, Any]]]
+        ] = None,
+        subclass_mode_model: bool = False,
+        subclass_mode_data: bool = False,
+        args: ArgsType = None,
+        run: bool = True,
+    ) -> None:
+        super().__init__(
+            PolicyGradientLitModule,
+            ThundeRLDataModule,
+            save_config_callback,
+            save_config_kwargs,
+            trainer_class,
+            trainer_defaults,
+            seed_everything_default,
+            parser_kwargs,
+            subclass_mode_model,
+            subclass_mode_data,
+            args,
+            run,
+        )
+
+    def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
+        parser.add_class_arguments(
+            ActorCritic, "agent", as_positional=True, skip={"keys"}
+        )
+
+        #############################    Link arguments    #############################
+
+        # Model links
+        parser.link_arguments("agent", "model.actor_critic", apply_on="instantiate")
+
+        parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
+
+        parser.link_arguments(
+            "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
+        )
+
+        # Loss links
+        parser.link_arguments(
+            "agent.value_operator",
+            "loss.init_args.critic_network",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_all_rewards_and_done",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
+        )
+        parser.link_arguments(
+            "estimator_config.estimator_type",
+            "model.add_successor_embeddings",
+            apply_on="instantiate",
+            compute_fn=lambda estimator_type: estimator_type
+            == "AllActionsValueEstimator",
+        )
+
+        #################################### Validation callback links ##############################
+
         # CriticValidation
         parser.link_arguments(
             source="agent.value_operator",
@@ -381,7 +487,7 @@ class ThundeRLCLI(LightningCLI):
             source="data.validation_datasets",
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=lambda datasets: {
-                i: bellman_optimal_values(flashdrive.mdp_graph)
+                i: bellman_optimal_values(flashdrive.pyg_graph_data)
                 for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
@@ -391,7 +497,7 @@ class ThundeRLCLI(LightningCLI):
             source="data.validation_datasets",
             target="model.validation_hooks.init_args.optimal_policy_dict",
             compute_fn=lambda datasets: {
-                i: optimal_policy(flashdrive.mdp_graph)
+                i: optimal_policy(flashdrive.pyg_graph_data)
                 for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
