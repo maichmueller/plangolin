@@ -12,13 +12,13 @@ from typing import Optional
 import torch
 from torchrl.objectives import ValueEstimators
 
+from rgnet.algorithms import OptimalValueFunction, discounted_value
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.rl.losses import CriticLoss
 from rgnet.rl.losses.all_actions_estimator import EnvironmentBasedRewardProvider
-from rgnet.rl.optimality_utils import OptimalValueFunction, discounted_value
 
 ARGS_BOOL_TYPE = lambda x: bool(strtobool(str(x)))
 

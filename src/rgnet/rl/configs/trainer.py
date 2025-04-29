@@ -6,6 +6,7 @@ try:
     from enum import StrEnum  # Available in Python 3.11+
 except ImportError:
     from strenum import StrEnum  # Backport for Python < 3.11
+
 from math import ceil
 from typing import Dict, List
 
@@ -15,10 +16,10 @@ from torchrl.envs import EnvBase
 from torchrl.record.loggers import Logger
 
 import xmimir as xmi
+from rgnet.algorithms import bellman_optimal_values
 from rgnet.rl.configs.agent import Agent
 from rgnet.rl.configs.value_estimator import ARGS_BOOL_TYPE
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.optimality_utils import bellman_optimal_values
 from rgnet.rl.rollout_collector import RolloutCollector
 from rgnet.rl.trainer import PolicyQuality, SupervisedValueLoss, Trainer
 

@@ -12,16 +12,17 @@ from torchrl.modules import ValueOperator
 
 import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
-from rgnet.rl.policy_evaluation import (
-    OptimalPolicyMessagePassing,
-    ValueIterationMessagePassing,
-    mdp_graph_as_pyg_data,
-)
 from rgnet.rl.reward import UnitReward
 from rgnet.rl.reward.uniform_reward import FlatReward
+from rgnet.utils import mdp_graph_as_pyg_data
 from rgnet.utils.utils import broadcastable
 from xmimir import XState, XStateSpace
+
+from ..rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from .policy_evaluation_mp import (
+    OptimalPolicyMessagePassing,
+    ValueIterationMessagePassing,
+)
 
 
 @singledispatch
@@ -54,23 +55,45 @@ def _(
         - optimal_values[i] is the value of the state for which state.index == i
         - optimal_values[i][j] is the value of the transition space.forward_transitions(state)[j]
     """
-    if optimal_values is not None:
-        # optimal_values represents rewards, so we need to use argmax
+    match optimal_values:
+        case None:
+            # optimal_values is None, so we use the goal distance --> argmin
+            def optimal_successors(state: XState) -> Tensor:
+                return torch.tensor(
+                    [
+                        space.goal_distance(t.target)
+                        for t in space.forward_transitions(state)
+                    ],
+                    dtype=torch.float,
+                ).argmin()
 
-        def optimal_successors(state: XState) -> Tensor:
-            return optimal_values[state.index].argmax()
+        case list():
+            # optimal_values represents rewards, so we need to use argmax
+            assert isinstance(optimal_values[0], Tensor)
 
-    else:
-        # optimal_values is None, so we use the goal distance --> argmin
+            def optimal_successors(state: XState) -> Tensor:
+                return optimal_values[state.index].argmax()
 
-        def optimal_successors(state: XState) -> Tensor:
-            return torch.tensor(
-                [
-                    space.goal_distance(t.target)
-                    for t in space.forward_transitions(state)
-                ],
-                dtype=torch.float,
-            ).argmin()
+        case Tensor():
+            # optimal_values represents rewards, so we need to use argmax
+            # we assume here that the tensor is a 1D tensor with the same length as the number of states,
+            # in which optimal_values[i] is the optimal value of the state for which state.index == i
+            assert broadcastable(optimal_values.shape, (len(space),))
+            optimal_values = optimal_values.view(len(space))
+
+            def optimal_successors(state: XState) -> Tensor:
+                return torch.tensor(
+                    [
+                        optimal_values[t.target.index]
+                        for t in space.forward_transitions(state)
+                    ],
+                    dtype=torch.float,
+                ).argmax()
+
+        case _:
+            raise TypeError(
+                f"optimal_values must be None, a list of Tensors or a Tensor, but got {type(optimal_values)}"
+            )
 
     # index of state to set of indices of optimal actions
     # optimal[i] = {j},  0 <= j < len(space.forward_transitions(space[i]))
@@ -139,22 +162,6 @@ def _(space_data: pyg.data.Data, optimal_values: list[Tensor] | Tensor | None = 
         warnings.warn("Ignoring optimal_values given as list, recomputing them.")
 
     return OptimalPolicyMessagePassing(gamma=space_data.gamma)(space_data)
-
-
-def optimal_policy_tensors(space: XStateSpace) -> list[Tensor]:
-    # index of state to distribution over successor states as ordered in the state space object
-    optimal: list[Tensor] = [None] * len(space)
-    for i, state in enumerate(space):
-        transitions = list(space.forward_transitions(state))
-        distances = torch.tensor(
-            [space.goal_distance(t.target) for t in transitions],
-            dtype=torch.int,
-        )
-        best_distances, _ = torch.where(distances == torch.min(distances))
-        policy = torch.zeros((len(transitions),), dtype=torch.float)
-        policy[best_distances] = 1.0 / len(best_distances)
-        optimal[i] = policy
-    return optimal
 
 
 def discounted_value(distance_to_goal, gamma):

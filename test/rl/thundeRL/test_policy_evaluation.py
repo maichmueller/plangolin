@@ -7,13 +7,14 @@ import torch
 from matplotlib import pyplot as plt
 
 import xmimir as xmi
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.optimality_utils import bellman_optimal_values, optimal_policy
-from rgnet.rl.policy_evaluation import (
+from rgnet.algorithms import (
     PolicyEvaluationMessagePassing,
-    mdp_graph_as_pyg_data,
+    bellman_optimal_values,
+    optimal_policy,
 )
+from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
+from rgnet.utils import mdp_graph_as_pyg_data
 
 
 def _placeholder_probs(space: xmi.XStateSpace):

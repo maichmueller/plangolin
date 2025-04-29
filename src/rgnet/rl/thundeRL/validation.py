@@ -14,12 +14,12 @@ from tensordict import NestedKey, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
 
+from rgnet.algorithms import PolicyEvaluationMessagePassing
 from rgnet.logging_setup import tqdm
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import BaseDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.policy_evaluation import PolicyEvaluationMessagePassing
 from rgnet.utils.utils import KeyAwareDefaultDict
 
 
