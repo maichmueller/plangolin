@@ -7,11 +7,7 @@ import torch
 from matplotlib import pyplot as plt
 
 import xmimir as xmi
-from rgnet.algorithms import (
-    PolicyEvaluationMessagePassing,
-    bellman_optimal_values,
-    optimal_policy,
-)
+from rgnet.algorithms import PolicyEvaluationMP, bellman_optimal_values, optimal_policy
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
 from rgnet.utils import mdp_graph_as_pyg_data
@@ -79,7 +75,7 @@ def test_mp_on_optimal_medium(medium_blocks):
     )
     env.reset()
 
-    value_iteration_mp = PolicyEvaluationMessagePassing(
+    value_iteration_mp = PolicyEvaluationMP(
         gamma, num_iterations=100, difference_threshold=0.001
     )
 
@@ -121,7 +117,7 @@ def test_mp_on_faulty_medium(medium_blocks):
         reward_function=UnitReward(gamma=gamma),
     )
     env.reset()
-    policy_eval_mp = PolicyEvaluationMessagePassing(
+    policy_eval_mp = PolicyEvaluationMP(
         gamma, num_iterations=100, difference_threshold=0.001
     )
     goal_state = next(space.goal_states_iter())

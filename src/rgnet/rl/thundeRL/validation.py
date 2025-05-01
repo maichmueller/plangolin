@@ -14,7 +14,7 @@ from tensordict import NestedKey, TensorDict
 from torch import Tensor
 from torchrl.modules import ValueOperator
 
-from rgnet.algorithms import PolicyEvaluationMessagePassing
+from rgnet.algorithms import PolicyEvaluationMP
 from rgnet.logging_setup import tqdm
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import BaseDrive
@@ -514,7 +514,7 @@ class PolicyEvaluationValidation(ValidationCallback):
             lambda dataloader_idx: self._compute_loss(dataloader_idx)
         )
         self._graphs: Dict[int, pyg.data.Data] = dict()
-        self.message_passing: Dict[int, PolicyEvaluationMessagePassing] = dict()
+        self.message_passing: Dict[int, PolicyEvaluationMP] = dict()
         logging.info("Building state space graphs for validation problem.")
         for idx, env in tqdm(enumerate(envs), total=len(envs)):
             if self.skip_dataloader(idx):
@@ -531,7 +531,7 @@ class PolicyEvaluationValidation(ValidationCallback):
                         "Expected ExpandedStateSpaceEnv or type[BaseDrive]."
                     )
             self._graphs[idx] = pyg_graph
-            self.message_passing[idx] = PolicyEvaluationMessagePassing(
+            self.message_passing[idx] = PolicyEvaluationMP(
                 gamma=env.reward_function.gamma,
                 num_iterations=num_iterations,
                 difference_threshold=difference_threshold,

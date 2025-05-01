@@ -12,7 +12,7 @@ from rgnet.utils.reshape import unsqueeze_right_like
 # MessagePassing interface defines message_and_aggregate and edge_update, which are
 # marked abstract but should only be overwritten if needed.
 # noinspection PyMethodOverriding, PyAbstractClass
-class PolicyEvaluationMessagePassing(MessagePassing):
+class PolicyEvaluationMP(MessagePassing):
     r"""
     Implements Policy evaluation as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
@@ -96,7 +96,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
-class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
+class ValueIterationMP(PolicyEvaluationMP):
     r"""
     Implements Value Iteration as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
@@ -141,8 +141,8 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
-class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
-    """
+class OptimalPolicyMP(ValueIterationMP):
+    r"""
     Implements Optimal Policy as a Pytorch Geometric message passing function.
     Can be executed on cpu or an accelerator.
 
@@ -160,7 +160,7 @@ class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
         self,
         *args,
         aggr=None,
-        value_iteration_mp: Optional[ValueIterationMessagePassing] = None,
+        value_iteration_mp: Optional[ValueIterationMP] = None,
         num_iterations: int = 1,  # a single iteration is enough
         difference_threshold: float | None = None,  # not used
         **kwargs,
@@ -172,9 +172,7 @@ class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
             difference_threshold=difference_threshold,
             **kwargs,
         )
-        self.value_iteration_mp = value_iteration_mp or ValueIterationMessagePassing(
-            self.gamma
-        )
+        self.value_iteration_mp = value_iteration_mp or ValueIterationMP(self.gamma)
 
     def _forward(self, data: torch_geometric.data.Data) -> Tensor:
         """

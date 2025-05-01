@@ -4,8 +4,4 @@ from .optimality import (
     discounted_value,
     optimal_policy,
 )
-from .policy_evaluation_mp import (
-    OptimalPolicyMessagePassing,
-    PolicyEvaluationMessagePassing,
-    ValueIterationMessagePassing,
-)
+from .policy_evaluation_mp import OptimalPolicyMP, PolicyEvaluationMP, ValueIterationMP

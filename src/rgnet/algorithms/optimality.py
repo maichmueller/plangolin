@@ -19,10 +19,7 @@ from rgnet.utils.utils import broadcastable
 from xmimir import XState, XStateSpace
 
 from ..rl.non_tensor_data_utils import NonTensorWrapper, tolist
-from .policy_evaluation_mp import (
-    OptimalPolicyMessagePassing,
-    ValueIterationMessagePassing,
-)
+from .policy_evaluation_mp import OptimalPolicyMP, ValueIterationMP
 
 
 @singledispatch
@@ -155,13 +152,13 @@ def _(space_data: pyg.data.Data, optimal_values: list[Tensor] | Tensor | None = 
         assert broadcastable(optimal_values.shape, (space_data.num_nodes,))
         setattr(
             space_data,
-            ValueIterationMessagePassing.default_attr_name,
+            ValueIterationMP.default_attr_name,
             optimal_values.view(space_data.num_nodes),
         )
     elif isinstance(optimal_values, list):
         warnings.warn("Ignoring optimal_values given as list, recomputing them.")
 
-    return OptimalPolicyMessagePassing(gamma=space_data.gamma)(space_data)
+    return OptimalPolicyMP(gamma=space_data.gamma)(space_data)
 
 
 def discounted_value(distance_to_goal, gamma):
@@ -210,7 +207,7 @@ def _(env: pyg.data.Data, **kwargs) -> torch.Tensor:
     """
     if hasattr(env, "gamma"):
         kwargs["gamma"] = kwargs.get("gamma", env.gamma)
-    return ValueIterationMessagePassing(**kwargs)(env)
+    return ValueIterationMP(**kwargs)(env)
 
 
 class OptimalValueFunction(torch.nn.Module):
