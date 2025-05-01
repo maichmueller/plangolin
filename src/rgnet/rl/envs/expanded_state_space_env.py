@@ -168,6 +168,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             | Callable[[XState, Sequence[XTransition]], Sequence[float]]
             | None
         ) = None,
+        natural_transitions: bool = False,
     ) -> pyg.data.Data:
         r"""Converts a :obj:`networkx.Graph` or :obj:`networkx.DiGraph` to a
         :class:`torch_geometric.data.Data` instance.
@@ -176,16 +177,6 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             transition_probabilities (tuple[torch.Tensor] | Callable[[XState, Sequence[XTransition]], Sequence[float]] | None):
                 The transition probabilities for each state. If None, uniform transition probabilities are used.
 
-        Examples:
-            >>> edge_index = torch.tensor([
-            ...     [0, 1, 1, 2, 2, 3],
-            ...     [1, 0, 2, 1, 3, 2],
-            ... ])
-            >>> data = Data(edge_index=edge_index, num_nodes=4)
-            >>> g = to_networkx(data)
-            >>> # A `Data` object is returned
-            >>> from_networkx(g)
-            Data(edge_index=[2, 6], num_nodes=4)
         """
         space = self._all_instances[instance_index]
 
@@ -202,13 +193,12 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
         elif isinstance(transition_probabilities, Sequence):
             assert len(transition_probabilities) == len(space)
-            this_instance_probs = transition_probabilities[i]
 
             def transition_probs(s: XState, ts: Sequence[XTransition]):
-                return this_instance_probs[s.index]
+                return transition_probabilities[s.index]
 
         else:
-            transition_probs = transition_probabilities[i]
+            transition_probs = transition_probabilities
 
         # mapping = dict(zip(G.nodes(), range(G.number_of_nodes())))  # this is just state to state-index, i.e. state.index
         # a state space may have multiple forward transitions from each goal state,
@@ -233,9 +223,13 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         data_dict["edge_index"] = edge_index
         data_dict["gamma"] = self.reward_function.gamma
 
-        transitions = self.get_applicable_transitions(
-            space, instances=itertools.repeat(space)
-        )
+        if not natural_transitions:
+            transitions = self.get_applicable_transitions(
+                space, instances=itertools.repeat(space)
+            )
+        else:
+            transitions = (tuple(space.forward_transitions(state)) for state in space)
+
         transition_index = itertools.count(0)
         goal_reward = [float("inf")] * len(space)
         instances = itertools.repeat(space)
@@ -297,20 +291,25 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         return data
 
     def _traverse_space(
-        self, index: int, use_space_directly: bool = True
+        self,
+        index: int,
+        use_space_directly: bool = True,
+        natural_transitions: bool = False,
     ) -> tuple[
         Sequence["XState"], Sequence["XStateSpace"], Sequence[Sequence["XTransition"]]
     ]:
         if use_space_directly:
             # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
             space = self._all_instances[index]
-            return (
-                space,
-                [space] * len(space),
-                self.get_applicable_transitions(
+            if natural_transitions:
+                transitions = list(
+                    tuple(space.forward_transitions(state)) for state in space
+                )
+            else:
+                transitions = self.get_applicable_transitions(
                     space, instances=itertools.repeat(space)
-                ),
-            )
+                )
+            return space, [space] * len(space), transitions
         else:
             traversal_list = self.traverse()
             traversal_td = traversal_list[index]
@@ -331,6 +330,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         ) = None,
         serializable: bool = False,
         use_space_directly: bool = True,
+        natural_transitions: bool = False,
     ) -> nx.MultiDiGraph:
         r"""
         Encode the state space as networkx graph. Each state is a node and each transition
@@ -362,6 +362,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                Otherwise, the environment is used to traverse the space and generate the graph.
                This is significantly faster for large state spaces, since default .traverse() functions
                merely replicate the state space as a tensordict.
+        natural_transitions: bool,
+            If True, the natural transitions of the state space are used.
+            Otherwise, the applicable transitions are used.
+            This preserves the structure of the state space. Has no effect if use_space_directly is False.
         """
 
         if serializable:
@@ -399,7 +403,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         mdp_graph = nx.MultiDiGraph()
 
         states, instances, transitions = self._traverse_space(
-            instance_index, use_space_directly
+            instance_index, use_space_directly, natural_transitions
         )
 
         if transition_probabilities is None:
