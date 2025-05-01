@@ -227,7 +227,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             ),
             dtype=torch.long,
         )
-        group_edge_attrs = ["probs", "reward", "idx"]
+        group_edge_attrs = ["reward", "probs", "idx"]
 
         data_dict: Dict[str, Any] = defaultdict(list)
         data_dict["edge_index"] = edge_index

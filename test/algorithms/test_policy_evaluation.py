@@ -61,11 +61,11 @@ def test_mdp_graph_as_pyg_data(medium_blocks):
     # Check that the probabilities are stored in the edge_attr
     # Note that we cannot use positional comparison of probabilities stored, as the edges order is not guaranteed, i.e.
     # this is not a valid test:
-    assert (pyg_graph.edge_attr[:, 0] == torch.cat(probs_list)).all()
+    assert (pyg_graph.edge_attr[:, 1] == torch.cat(probs_list)).all()
     # Instead, we check that the probabilities are stored in the edge_attr cumulatively and each value is found
     # somewhere (hedge against different terms summing up to the correct value).
-    assert pyg_graph.edge_attr[:, 0].sum() == torch.cat(probs_list).sum() and all(
-        prob in pyg_graph.edge_attr[:, 0] for prob in torch.cat(probs_list)
+    assert pyg_graph.edge_attr[:, 1].sum() == torch.cat(probs_list).sum() and all(
+        prob in pyg_graph.edge_attr[:, 1] for prob in torch.cat(probs_list)
     )
 
 

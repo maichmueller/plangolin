@@ -1,10 +1,12 @@
 from typing import Optional
 
 import torch
-import torch_geometric.data
+import torch_geometric as pyg
 from torch import Tensor
 from torch.nn.functional import l1_loss
 from torch_geometric.nn.conv import MessagePassing
+
+from rgnet.utils.reshape import unsqueeze_right_like
 
 
 # MessagePassing interface defines message_and_aggregate and edge_update, which are
@@ -30,8 +32,8 @@ class PolicyEvaluationMessagePassing(MessagePassing):
 
     Assumes the input Data object has the following attributes:
     - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
-                 edge_attr[:, 0] = transition probabilities
-                 edge_attr[:, 1] = rewards
+                 edge_attr[:, 0] = rewards
+                 edge_attr[:, 1] = transition probabilities
     - node_attr: Tensor of shape [num_nodes] containing the initial state values
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
     """
@@ -53,7 +55,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
         self.difference_threshold = difference_threshold
         self.attr_name = attr_name or self.default_attr_name
 
-    def forward(self, data: torch_geometric.data.Data) -> Tensor:
+    def forward(self, data: pyg.data.Data) -> Tensor:
         if hasattr(data, self.attr_name):
             return getattr(data, self.attr_name)
         values = self._forward(data)
@@ -89,7 +91,7 @@ class PolicyEvaluationMessagePassing(MessagePassing):
         return torch.where(data.goals, prev_values, new_values)
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
-        transition_prob, reward = edge_attr[:, 0], edge_attr[:, 1]
+        reward, transition_prob = edge_attr[:, 0], edge_attr[:, 1]
         return transition_prob * (reward + self.gamma * x_j)
 
 
@@ -117,9 +119,8 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
     We enforce this by setting the transition probabilities to 1.0 actively in the message method.
 
     Assumes the input Data object has the following attributes:
-    - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
-                 edge_attr[:, 0] = transition probabilities
-                 edge_attr[:, 1] = rewards
+    - edge_attr: Tensor of shape [num_edges, 2] containing rewards
+                 edge_attr[:, 0] = rewards
     - node_attr: Tensor of shape [num_nodes] containing the initial state values
     - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
     """
@@ -135,7 +136,7 @@ class ValueIterationMessagePassing(PolicyEvaluationMessagePassing):
         super().__init__(*args, aggr=aggr, **kwargs)
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
-        reward = edge_attr[:, 1]
+        reward = unsqueeze_right_like(edge_attr[:, 0], x_j)
         return reward + self.gamma * x_j
 
 
@@ -180,9 +181,8 @@ class OptimalPolicyMessagePassing(ValueIterationMessagePassing):
         Computes the optimal policy for the given data object.
 
         Assumes the input Data object has the following attributes:
-        - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
-                     edge_attr[:, 0] = (ignored) transition probabilities
-                     edge_attr[:, 1] = rewards
+        - edge_attr: Tensor of shape [num_edges, 2] containing rewards in the first entry
+                     edge_attr[:, 0] = rewards
         """
 
     def _init_values(self, data):

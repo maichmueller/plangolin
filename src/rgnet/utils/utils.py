@@ -135,14 +135,14 @@ def persistent_hash(data: Iterable[Any], sep: str = ",") -> str:
 def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     """
     Convert the networkx graph into a directed pytorch_geometric graph.
-    The transition probabilities are stored in edge_attr[:, 0].
-    The reward for each transition is stored in edge_attr[:, 1].
+    The reward for each transition is stored in edge_attr[:, 0].
+    The transition probabilities are stored in edge_attr[:, 1].
     The node features are stored as usual in graph.x.
     The first dimension is the node value (starting with 0).
     The second node feature dimension is one, if the node is a goal state.
     """
     pyg_graph = torch_geometric.utils.from_networkx(
-        nx_state_space_graph, group_edge_attrs=["probs", "reward", "idx"]
+        nx_state_space_graph, group_edge_attrs=["reward", "probs", "idx"]
     )
     transition_indices = pyg_graph.edge_attr[:, 2]
     expected_transition_indices = torch.arange(transition_indices.max().item() + 1)
