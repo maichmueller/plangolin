@@ -1,18 +1,21 @@
 from test.fixtures import *  # noqa: F401, F403
 from test.supervised.test_data import hetero_data_equal
+from typing import Callable
 
 import mockito
 from torch_geometric.data import HeteroData
 
+from rgnet.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.logging_setup import tqdm
+from rgnet.rl.data.atom_drive import make_atom_ids
+from rgnet.utils import mdp_graph_as_pyg_data
 from xmimir.iw import CollectorHook, IWSearch
 
 
 def validate_drive(drive: AtomDrive, space):
     assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
-    iw_search = IWSearch(2)
     for state in tqdm(space, desc="Validating AtomDrive"):
         num_transitions = space.forward_transition_count(state)
         i = state.index
@@ -26,21 +29,29 @@ def validate_drive(drive: AtomDrive, space):
             assert data.reward.numel() == num_transitions
         expected = encoder.to_pyg_data(encoder.encode(state))
         assert hetero_data_equal(data, expected)
-        # litmus test: any atom in blocksworld/delivery is at most of width 2, so IW(2) should find us all the distances
-        # of the atoms from any state
-        collector = CollectorHook()
-        iw_search.solve(
-            space.successor_generator, start_state=state, novel_hook=collector
+        validate_atom_distances(
+            lambda atom_str: data.atom_distances[atom_str], space, state
         )
-        atom_dists = data.atom_distances
-        for node in collector.nodes:
-            for atom_tuples in node.novelty_trace[-1]:
-                if len(atom_tuples) == 1:
-                    for atom in atom_tuples:
-                        atom_str = str(atom)
-                        assert atom_str in atom_dists
-                        dist = atom_dists[atom_str]
-                        assert (atom_str, dist) == (atom_str, node.depth)
+
+
+def validate_atom_distances(atom_dists: Callable[[str], float], space, state):
+    # litmus test: any atom in blocksworld/delivery is at most of width 2, so IW(2) should find us all the distances
+    # of the atoms from any state
+    collector = CollectorHook()
+    iw_search = IWSearch(2)
+    iw_search.solve(space.successor_generator, start_state=state, novel_hook=collector)
+    state_str = str(state)
+    for node in collector.nodes:
+        for atom_tuples in node.novelty_trace[-1]:
+            if len(atom_tuples) == 1:
+                for atom in atom_tuples:
+                    atom_str = str(atom)
+                    dist = atom_dists(atom_str)
+                    assert (state_str, atom_str, dist) == (
+                        state_str,
+                        atom_str,
+                        node.depth,
+                    )
 
 
 @pytest.mark.parametrize(
@@ -86,3 +97,70 @@ def test_save_and_load(problem, fresh_atomdrive, request):
     mockito.unstub(AtomDrive)
 
     validate_drive(drive, problem[0])
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "small_blocks",
+        "medium_blocks",
+    ],
+)
+def test_atom_dist_mp_module(request, problem):
+    problem = request.getfixturevalue(problem)
+    space = problem[0]
+    env = ExpandedStateSpaceEnv(
+        space,
+        reward_function=UnitReward(gamma=0.9, goal_reward=1.0, regular_reward=1.0),
+        batch_size=1,
+    )
+    pyg_env = env.to_pyg_data(0, natural_transitions=True)
+    pyg_env.atoms_per_state = [list(state.atoms(with_statics=False)) for state in space]
+    mp_module = OptimalAtomValuesMP(atom_to_index_map=make_atom_ids(space), aggr="min")
+    mp_module(pyg_env)
+    for state in space:
+        dist_tensor = getattr(pyg_env, OptimalAtomValuesMP.default_attr_name)[
+            state.index
+        ]
+        validate_atom_distances(
+            lambda atom_str: dist_tensor[mp_module.atom_to_index[atom_str]].item(),
+            space,
+            state,
+        )
+
+
+def test_atom_dist_mp_module_manual_graph():
+    graph = nx.DiGraph()
+    graph.add_node(0, ntype="state")
+    graph.add_node(1, ntype="state")
+    graph.add_node(2, ntype="state")
+    graph.add_node(3, ntype="state")
+    graph.add_edge(0, 1, reward=1.0, probs=0.5, idx=0)
+    graph.add_edge(1, 2, reward=1.0, probs=0.5, idx=1)
+    graph.add_edge(2, 0, reward=1.0, probs=0.5, idx=2)
+    graph.add_edge(0, 3, reward=1.0, probs=0.5, idx=3)
+
+    atom_to_index_map = {
+        "t": 0,
+        "q": 1,
+        "p": 2,
+    }
+    pyg_graph = mdp_graph_as_pyg_data(graph)
+    pyg_graph.atoms_per_state = [["p"], ["q"], ["t"], []]
+    mp_module = OptimalAtomValuesMP(
+        gamma=1.0, atom_to_index_map=atom_to_index_map, aggr="min"
+    )
+    mp_module(pyg_graph)
+    final_distances = pyg_graph[OptimalAtomValuesMP.default_attr_name]
+    expected = torch.tensor(
+        [[2, 1, 0], [1, 0, 2], [0, 2, 1], [torch.inf, torch.inf, torch.inf]],
+        dtype=torch.float,
+    )
+    assert final_distances.shape == expected.shape
+    for i in range(final_distances.shape[0]):
+        for j in range(final_distances.shape[1]):
+            if final_distances[i, j] == torch.inf:
+                assert expected[i, j] == torch.inf
+            else:
+                assert final_distances[i, j] == expected[i, j]
+    assert torch.allclose(final_distances, expected)

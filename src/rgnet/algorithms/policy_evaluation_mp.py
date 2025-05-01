@@ -1,3 +1,4 @@
+import itertools
 from typing import Optional
 
 import torch
@@ -46,10 +47,11 @@ class PolicyEvaluationMP(MessagePassing):
         num_iterations: int = 1_000,
         difference_threshold: float | None = 0.001,
         *,
+        flow="target_to_source",
         attr_name: str | None = None,
         aggr: str = "sum",
     ):
-        super().__init__(aggr=aggr, node_dim=-1, flow="target_to_source")
+        super().__init__(aggr=aggr, node_dim=0, flow=flow)
         self.register_buffer("gamma", torch.as_tensor(gamma))
         self.num_iterations = num_iterations
         self.difference_threshold = difference_threshold
@@ -58,41 +60,59 @@ class PolicyEvaluationMP(MessagePassing):
     def forward(self, data: pyg.data.Data) -> Tensor:
         if hasattr(data, self.attr_name):
             return getattr(data, self.attr_name)
-        values = self._forward(data)
+        values = self._iterate(data)
         setattr(data, self.attr_name, values)
+        self._reset()
         return values
 
-    def _forward(self, data):
+    def _reset(self):
+        """
+        Cleanup method to be called after the forward pass.
+        """
+        pass
+
+    def _iterate(self, data):
         assert isinstance(data.x, torch.Tensor)
         assert data.edge_attr.ndim == 2
         assert data.edge_index.shape[-1] == data.edge_attr.shape[0]
-        values = self._init_values(data)
-        for _ in range(self.num_iterations):
-            new_values: torch.Tensor = self.propagate(
-                edge_index=data.edge_index, edge_attr=data.edge_attr, x=values
+        features = self._init_features(data)
+        edge_indices = data.edge_index
+        layer_count = itertools.count()
+        while True:
+            new_features: torch.Tensor = self.propagate(
+                edge_index=edge_indices, edge_attr=data.edge_attr, x=features, data=data
             )
-            if (
-                self.difference_threshold is not None
-                and l1_loss(values, new_values) < self.difference_threshold
+            if self._break_condition(
+                next(layer_count), features, new_features, data=data
             ):
                 break
-            values = self._apply_new_values(data, values, new_values)
-        return values
+            features = new_features
+        return features
 
-    def _init_values(self, data):
+    def _break_condition(
+        self, layer_nr: int, features: Tensor, new_features: Tensor, **kwargs
+    ):
+        if layer_nr >= self.num_iterations:
+            return True
+        if self.difference_threshold is None:
+            return False
+        feature_infs = torch.isinf(features)
+        new_feature_infs = torch.isinf(new_features)
+        both_not_infs = ~(feature_infs & new_feature_infs)
+        return (
+            l1_loss(features[both_not_infs], new_features[both_not_infs])
+            < self.difference_threshold
+        )
+
+    def _init_features(self, data):
         return torch.zeros_like(data.x)
-
-    def _apply_new_values(self, data, prev_values, new_values):
-        """
-        We have to ensure that goal states stay at the given goal value (0.0 often, but decided by reward func).
-        Environment transitions from goal states would terminate.
-        """
-        assert data.goals.shape == prev_values.shape
-        return torch.where(data.goals, prev_values, new_values)
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
         reward, transition_prob = edge_attr[:, 0], edge_attr[:, 1]
         return transition_prob * (reward + self.gamma * x_j)
+
+    def update(self, inputs: Tensor, x: Tensor, data: pyg.data.Data) -> Tensor:
+        return torch.where(data.goals, x, inputs)
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
@@ -130,7 +150,7 @@ class ValueIterationMP(PolicyEvaluationMP):
     def __init__(
         self,
         *args,
-        aggr: str = "max",
+        aggr: str | None = "max",
         **kwargs,
     ):
         super().__init__(*args, aggr=aggr, **kwargs)
@@ -138,6 +158,9 @@ class ValueIterationMP(PolicyEvaluationMP):
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
         reward = unsqueeze_right_like(edge_attr[:, 0], x_j)
         return reward + self.gamma * x_j
+
+    def update(self, inputs: Tensor) -> Tensor:
+        return inputs
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
@@ -174,7 +197,7 @@ class OptimalPolicyMP(ValueIterationMP):
         )
         self.value_iteration_mp = value_iteration_mp or ValueIterationMP(self.gamma)
 
-    def _forward(self, data: torch_geometric.data.Data) -> Tensor:
+    def _iterate(self, data: pyg.data.Data) -> Tensor:
         """
         Computes the optimal policy for the given data object.
 
@@ -183,11 +206,8 @@ class OptimalPolicyMP(ValueIterationMP):
                      edge_attr[:, 0] = rewards
         """
 
-    def _init_values(self, data):
+    def _init_features(self, data):
         return self.value_iteration_mp(data)
-
-    def _apply_new_values(self, data, prev_values, new_values):
-        return new_values
 
     def aggregate(
         self,
@@ -199,3 +219,143 @@ class OptimalPolicyMP(ValueIterationMP):
         return torch.empty_like(inputs).scatter_reduce(
             0, index, inputs, reduce="amax", include_self=False
         )
+
+
+# noinspection PyMethodOverriding, PyAbstractClass
+class OptimalAtomValuesMP(ValueIterationMP):
+    r"""
+    Implements Atom Distance as a Pytorch Geometric message passing function.
+    Can be executed on cpu or an accelerator.
+
+    Note: Atom Distance follows the formula:
+
+    .. math::
+        \forall p not true in s: d(s, p) = \min_{s'} \{ d(s, s') : p is true in s' \}
+
+    where d(s, p) is the distance from state s to atom p. In a deterministic MDP, actions coincide with successor states.
+
+    We expect an incoming data object to either have pre-initialized x values or to have the attribute atoms_per_state,
+    which is a list[list[XAtom]] of atoms that are true in the respective state.
+    The length of this attribute would have to be the number of states to propagate messages for.
+    """
+
+    default_attr_name = "atom_distances"
+
+    def __init__(
+        self,
+        gamma: float = 1.0,
+        num_iterations: int = 1_000,
+        difference_threshold: float | None = 1e-5,
+        *,
+        known_atom_reward: float = 0.0,
+        atom_to_index_map: dict[str, int],
+        aggr: str = "max",
+        flow="target_to_source",
+        **kwargs,
+    ):
+        super().__init__(
+            gamma,
+            num_iterations,
+            difference_threshold,
+            aggr=aggr,
+            flow=flow,
+            **kwargs,
+        )
+        match aggr:
+            case "min":
+                self.updater_func = torch.min
+                self.sign = 1.0
+            case "max":
+                self.updater_func = torch.max
+                self.sign = -1.0
+            case _:
+                raise ValueError(
+                    f"Unsupported aggregation method '{aggr}'. Supported methods are 'min' (costs) and 'max' (rewards)."
+                )
+        self.init_reward = self.sign * torch.inf
+        self.atom_to_index = atom_to_index_map
+        self.num_atoms = max(atom_to_index_map.values()) + 1
+        self.known_atom_reward = known_atom_reward
+
+    def _init_features(self, data):
+        if not hasattr(data, "atoms_per_state"):
+            raise ValueError(
+                "Data object must have 'atoms_per_state' attribute if features is not pre-initialized."
+            )
+        num_states = data.num_nodes
+        num_atoms = self.num_atoms
+        device = data.edge_index.device
+        features = torch.full(
+            (num_states, num_atoms), self.init_reward, device=device, dtype=torch.float
+        )
+        for state_idx, atom_iterable in enumerate(data.atoms_per_state):
+            atom_list = list(atom_iterable)
+            if not atom_list:
+                continue
+            features[
+                state_idx, [self.atom_to_index[str(atom)] for atom in atom_list]
+            ] = 0.0
+        return features
+
+    def message(
+        self,
+        x_j: Tensor,
+        edge_attr: Tensor,
+    ) -> Tensor:
+        reward = unsqueeze_right_like(edge_attr[:, 0], x_j)
+        return reward + self.gamma * x_j
+
+    def aggregate(
+        self,
+        inputs: Tensor,
+        index: Tensor,
+        ptr: Optional[Tensor] = None,
+        dim_size: Optional[int] = None,
+    ) -> Tensor:
+        """
+        PyG's aggregation module calls scatter into a new torch.zeros tensor. Any target index not
+        mentioned in `index` will not aggregate any values and will hence be set to the existing
+        value at the tensor to write to, i.e. the 0-tensor. This will see any values that reflect
+        our init_reward (i.e. +- inf) be set to 0.0, which casts errors into future message-passes.
+        By ensuring that every index is mentioned in the aggregation with a value from our init_reward
+        we can ensure that the aggregation will not be arbitrarly set to 0.0.
+        Note this only works for the min/max aggregation, as the sum aggregation would result in infs then.
+        """
+        extended_inputs = torch.cat(
+            (inputs, torch.full_like(inputs, self.init_reward)), dim=0
+        )
+        extended_index = torch.cat(
+            (index, torch.arange(dim_size, device=index.device, dtype=torch.int)), dim=0
+        )
+        return super().aggregate(extended_inputs, extended_index, ptr, dim_size)
+
+    def update(self, inputs: Tensor, x: Tensor = None) -> Tensor:
+        return self.updater_func(inputs, x)
+
+
+if __name__ == "__main__":
+    import networkx as nx
+
+    graph = nx.DiGraph()
+    graph.add_node(0, ntype="state")
+    graph.add_node(1, ntype="state")
+    graph.add_node(2, ntype="state")
+    graph.add_edge(0, 1, reward=1.0, probs=0.5, idx=0)
+    graph.add_edge(1, 2, reward=1.0, probs=0.5, idx=1)
+    graph.add_edge(2, 0, reward=1.0, probs=0.5, idx=2)
+
+    atom_to_index_map = {
+        "t": 0,
+        "q": 1,
+        "p": 2,
+    }
+    from rgnet.utils import mdp_graph_as_pyg_data
+
+    pyg_graph = mdp_graph_as_pyg_data(graph)
+    pyg_graph.atoms_per_state = [["p"], ["q"], ["t"]]
+    mp_module = OptimalAtomValuesMP(atom_to_index_map=atom_to_index_map, aggr="min")
+    mp_module(pyg_graph)
+    final_distances = pyg_graph[OptimalAtomValuesMP.default_attr_name]
+    expected = torch.tensor([[2, 1, 0], [1, 0, 2], [0, 2, 1]], dtype=torch.float)
+    assert final_distances.shape == expected.shape
+    assert torch.allclose(final_distances, expected)
