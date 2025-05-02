@@ -24,12 +24,19 @@ class RewardFunction:
         """
         if deadend_reward is None and gamma is None:
             raise ValueError("Either deadend_reward or gamma has to be set.")
-        if deadend_reward is not None:
-            self.deadend_reward = deadend_reward
-            self.gamma = 1.0 / deadend_reward + 1.0
-        else:
-            self.deadend_reward = 1.0 / (gamma - 1.0)
+        self.deadend_reward = deadend_reward
+        self.gamma = gamma
+        if self.deadend_reward is None:
             self.gamma = gamma
+            if gamma == 1.0:
+                self.deadend_reward = -float("inf")
+            else:
+                self.deadend_reward = 1.0 / (gamma - 1.0)
+        else:
+            if deadend_reward != -float("inf"):
+                self.gamma = 1.0 / deadend_reward + 1.0
+            else:
+                self.gamma = 1.0
 
     @abc.abstractmethod
     def __call__(
