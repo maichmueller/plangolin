@@ -3,7 +3,7 @@ from test.fixtures import *  # noqa: F401, F403
 
 import torch.utils.data
 
-from rgnet.rl.thundeRL.collate import transitions_batching_collate_fn
+from rgnet.rl.thundeRL.collate import to_transitions_batch
 
 
 def test(tmp_path, medium_blocks, fresh_flashdrive_medium_blocks):
@@ -12,7 +12,7 @@ def test(tmp_path, medium_blocks, fresh_flashdrive_medium_blocks):
 
     loader = torch.utils.data.DataLoader(
         fresh_flashdrive_medium_blocks,
-        collate_fn=transitions_batching_collate_fn,
+        collate_fn=to_transitions_batch,
         batch_size=25,
     )
     batches = [batch for batch in loader]

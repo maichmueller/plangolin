@@ -8,7 +8,7 @@ from torchrl.objectives import ValueEstimators
 from rgnet.models import HeteroGNN, PyGHeteroModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.losses import ActorCriticLoss
-from rgnet.rl.thundeRL.collate import transitions_batching_collate_fn
+from rgnet.rl.thundeRL.collate import to_transitions_batch
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
@@ -36,7 +36,7 @@ def test_training_step(fresh_flashdrive_medium_blocks, medium_blocks):
     batch = [fresh_flashdrive_medium_blocks[i] for i in range(BATCH_SIZE)]
     batch[0].done = torch.full_like(batch[0].done, fill_value=True)
     batch[0].reward = torch.full_like(batch[0].reward, fill_value=0.0)
-    batched_tuple = transitions_batching_collate_fn(batch)
+    batched_tuple = to_transitions_batch(batch)
     real_num_successors: torch.Tensor = batched_tuple[2]
     total_successors = real_num_successors.sum().item()
 

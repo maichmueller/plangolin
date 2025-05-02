@@ -13,12 +13,12 @@ from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
+import rgnet.rl.thundeRL.collate as collate  # noqa: F401
 from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
-from rgnet.rl.thundeRL.collate import transitions_batching_collate_fn
 from rgnet.utils.utils import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -36,6 +36,7 @@ class ThundeRLDataModule(LightningDataModule):
         batch_size: int,
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
+        collate_fn: Callable = collate.to_transitions_batch,
         drive_type: type[BaseDrive] = FlashDrive,
         batch_size_validation: Optional[int] = None,
         num_workers_train: int = 6,
@@ -64,6 +65,7 @@ class ThundeRLDataModule(LightningDataModule):
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
         self.drive_kwargs = drive_kwargs or dict()
+        self.collate_fn = collate_fn
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
@@ -227,7 +229,7 @@ class ThundeRLDataModule(LightningDataModule):
                 ]
             )
             # Account for deadend state labels being -1 (not working with bincount usage inside `ImbalancedSampler`)
-            # Adding +1 to each distance (label) doesnt change the relative class counts, so does not change the sampling
+            # Adding +1 to each distance (label) doesn't change the relative class counts, so does not change the sampling
             class_tensor = class_tensor + 1
             return ImbalancedSampler(dataset=class_tensor)
         else:
@@ -258,11 +260,11 @@ class ThundeRLDataModule(LightningDataModule):
             shuffle=not self.balance_by_attr,
             num_workers=self.num_workers_train,
             persistent_workers=self.num_workers_train > 0,
+            collate_fn=self.collate_fn,
             pin_memory=True,
         )
         return DataLoader(
             self.dataset,
-            collate_fn=transitions_batching_collate_fn,
             **(defaults | kwargs),
         )
 
@@ -272,14 +274,14 @@ class ThundeRLDataModule(LightningDataModule):
             batch_size=self.batch_size_validation,
             shuffle=False,
             num_workers=self.num_workers_val,
-            # as we have multiple loader each individually should get fewer workers
+            # as we have multiple loader, each individually should get fewer workers
             persistent_workers=False,  # when True validation memory usage increases a lot with every dataloader.
+            collate_fn=self.collate_fn,
             pin_memory=True,
         )
         return [
             DataLoader(
                 dataset,
-                collate_fn=transitions_batching_collate_fn,
                 **(defaults | kwargs),
             )
             for dataset in self.validation_sets
