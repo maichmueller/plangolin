@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import tempfile
 from enum import Enum, auto
 from functools import cache, cached_property
 from itertools import chain
@@ -729,10 +730,22 @@ class XState(MimirWrapper[State]):
         )
 
     def satisfied_literals(self, literals: Iterable[XLiteral]) -> Iterable[XLiteral]:
-        return (lit for lit in literals if self.base.literal_holds(lit.base))
+        return (lit for lit in literals if self._literal_holds(lit))
 
     def unsatisfied_literals(self, literals: Iterable[XLiteral]) -> Iterable[XLiteral]:
-        return (lit for lit in literals if not self.base.literal_holds(lit.base))
+        return (lit for lit in literals if not self._literal_holds(lit))
+
+    def _literal_holds(self, literal: XLiteral) -> bool:
+        if not literal.is_hollow:
+            return self.base.literal_holds(literal.base)
+        atom = literal.atom
+        matches_any_atom = any(
+            map(atom.semantic_eq, self.fluent_atoms)
+            or any(map(atom.semantic_eq, self.derived_atoms))
+        )
+        if literal.is_negated:
+            return not matches_any_atom
+        return matches_any_atom
 
     def __str__(self):
         return (
@@ -916,6 +929,7 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
 class XSuccessorGenerator(MimirWrapper[StateRepository]):
     action_generator: XActionGenerator
     grounder: Grounder
+    problem: XProblem
 
     def __init__(
         self,
@@ -926,17 +940,14 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
         if isinstance(grounder, XProblem):
             grounder = Grounder(grounder.base, grounder.repositories)
         self.grounder = grounder
+        self.problem = XProblem(
+            grounder.get_problem(), self.grounder.get_pddl_repositories()
+        )
         self.action_generator = action_generator or XActionGenerator(grounder)
         state_repository = state_repository or StateRepository(
             LiftedAxiomEvaluator(grounder.get_axiom_grounder())
         )
         super().__init__(state_repository)
-
-    @property
-    def problem(self):
-        return XProblem(
-            self.grounder.get_problem(), self.grounder.get_pddl_repositories()
-        )
 
     @property
     def initial_state(self) -> XState:

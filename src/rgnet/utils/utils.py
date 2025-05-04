@@ -17,6 +17,7 @@ import torch
 import torch_geometric
 
 import xmimir as xmi
+from xmimir import StateType
 
 
 def get_colors(graph: nx.Graph):
@@ -160,7 +161,7 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     # inf as default to trigger errors if logic did not hold
     goal_reward = [float("inf")] * pyg_graph.num_nodes
     for i, (node, attr) in enumerate(nx_state_space_graph.nodes.data()):
-        if attr["ntype"] == "goal":
+        if attr["ntype"] == StateType.GOAL:
             is_goal_state[i] = True
             _, _, goal_reward[i] = next(
                 iter(nx_state_space_graph.out_edges(node, data="reward"))

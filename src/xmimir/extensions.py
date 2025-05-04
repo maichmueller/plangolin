@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from itertools import chain
 from pathlib import Path
 from typing import Generator, Iterable, Union
@@ -54,4 +55,11 @@ def gather_objects(atoms: Iterable[XAtom] | Generator) -> set[Object]:
     return set(chain.from_iterable(atom.objects for atom in atoms))
 
 
-__all__ = ["parse", "gather_objects"]
+class StateType(Enum):
+    DEFAULT = 0
+    GOAL = 1
+    INITIAL = 2
+    DEADEND = 3
+
+
+__all__ = ["parse", "gather_objects", "StateType"]
