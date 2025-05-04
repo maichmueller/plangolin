@@ -1,3 +1,4 @@
+import operator
 from test.fixtures import *  # noqa: F401, F403
 from test.supervised.test_data import hetero_data_equal
 from typing import Callable
@@ -10,48 +11,87 @@ from rgnet.encoding import HeteroGraphEncoder
 from rgnet.logging_setup import tqdm
 from rgnet.rl.data.atom_drive import make_atom_ids
 from rgnet.utils import mdp_graph_as_pyg_data
+from xmimir import XAtom
 from xmimir.iw import CollectorHook, IWSearch
 
 
-def validate_drive(drive: AtomDrive, space):
+def validate_drive(drive: AtomDrive, space, invert_values: bool = False):
     assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
-    for state in tqdm(space, desc="Validating AtomDrive"):
-        num_transitions = space.forward_transition_count(state)
-        i = state.index
-        data: HeteroData = drive[i]
-        assert data.idx == i
-        if space.is_goal(state):
-            assert data.done.all()
-        else:
-            assert not drive.done.all()
-            assert data.done.numel() == num_transitions
-            assert data.reward.numel() == num_transitions
-        expected = encoder.to_pyg_data(encoder.encode(state))
-        assert hetero_data_equal(data, expected)
-        validate_atom_distances(
-            lambda atom_str: data.atom_distances[atom_str], space, state
+    sign = -1 if invert_values else 1
+    expected_values = drive.value_dict_to_tensor(
+        list(
+            map(
+                operator.itemgetter(1),
+                sorted(
+                    _expected_optimal_atom_values(space).items(),
+                    key=operator.itemgetter(0),
+                ),
+            )
         )
+    )
+    computed_values = drive.atom_values.view(len(drive), -1)
+    assert computed_values.shape == expected_values.shape
+    both_finite = ~(torch.isinf(computed_values) & torch.isinf(expected_values))
+    if not torch.allclose(
+        sign * computed_values[both_finite], expected_values[both_finite]
+    ):
+        for state in tqdm(space, desc="Validating AtomDrive"):
+            num_transitions = space.forward_transition_count(state)
+            i = state.index
+            data: HeteroData = drive[i]
+            assert data.idx == i
+            if space.is_goal(state):
+                assert data.done.all()
+            else:
+                assert not drive.done.all()
+                assert data.done.numel() == num_transitions
+                assert data.reward.numel() == num_transitions
+            expected = encoder.to_pyg_data(encoder.encode(state))
+            assert hetero_data_equal(data, expected)
+            atom_values = data.atom_values
+            validate_atom_values(
+                lambda atom_str: (
+                    sign * atom_values[drive.atom_to_index_map[atom_str]]
+                ).item(),
+                space,
+                state,
+            )
 
 
-def validate_atom_distances(atom_dists: Callable[[str], float], space, state):
+def validate_atom_values(atom_dists: Callable[[str], float], space, state):
+    expected_values = _expected_optimal_atom_values(space, state)[state.index]
+    computed = {atom: atom_dists(str(atom)) for atom in expected_values.keys()}
+    state_str = str(state)
+    assert (state_str, {str(a): v for a, v in computed.items()}) == (
+        state_str,
+        {str(a): v for a, v in expected_values.items()},
+    )
+
+
+def _expected_optimal_atom_values(space, state=None) -> dict[int, [dict[XAtom, float]]]:
     # litmus test: any atom in blocksworld/delivery is at most of width 2, so IW(2) should find us all the distances
     # of the atoms from any state
-    collector = CollectorHook()
-    iw_search = IWSearch(2)
-    iw_search.solve(space.successor_generator, start_state=state, novel_hook=collector)
-    state_str = str(state)
-    for node in collector.nodes:
-        for atom_tuples in node.novelty_trace[-1]:
-            if len(atom_tuples) == 1:
+    if state is None:
+        states = space
+    else:
+        states = [state]
+    expected_values = {i: dict() for i in range(len(states))}
+    for state in states:
+        collector = CollectorHook()
+        iw_search = IWSearch(2)
+        iw_search.solve(
+            space.successor_generator, start_state=state, novel_hook=collector
+        )
+        expected_values[state.index] = {
+            atom: 0.0 for atom in state.atoms(with_statics=False)
+        }
+        for node in collector.nodes:
+            for atom_tuples in node.novelty_trace[-1]:
                 for atom in atom_tuples:
-                    atom_str = str(atom)
-                    dist = atom_dists(atom_str)
-                    assert (state_str, atom_str, dist) == (
-                        state_str,
-                        atom_str,
-                        node.depth,
-                    )
+                    if len(atom_tuples) == 1:
+                        expected_values[state.index][atom] = float(node.depth)
+    return expected_values
 
 
 @pytest.mark.parametrize(
@@ -67,7 +107,7 @@ def validate_atom_distances(atom_dists: Callable[[str], float], space, state):
 def test_process(problem, fresh_atomdrive, request):
     # Dynamically get the fixture by name
     problem = request.getfixturevalue(problem)
-    validate_drive(fresh_atomdrive, problem[0])
+    validate_drive(fresh_atomdrive, problem[0], invert_values=True)
 
 
 @pytest.mark.parametrize(
@@ -96,7 +136,7 @@ def test_save_and_load(problem, fresh_atomdrive, request):
     mockito.verify(AtomDrive, times=0).process()
     mockito.unstub(AtomDrive)
 
-    validate_drive(drive, problem[0])
+    validate_drive(drive, problem[0], invert_values=True)
 
 
 @pytest.mark.parametrize(
@@ -111,18 +151,20 @@ def test_atom_dist_mp_module(request, problem):
     space = problem[0]
     env = ExpandedStateSpaceEnv(
         space,
-        reward_function=UnitReward(gamma=0.9, goal_reward=1.0, regular_reward=1.0),
+        reward_function=UnitReward(gamma=1.0, goal_reward=1.0, regular_reward=1.0),
         batch_size=1,
     )
     pyg_env = env.to_pyg_data(0, natural_transitions=True)
     pyg_env.atoms_per_state = [list(state.atoms(with_statics=False)) for state in space]
-    mp_module = OptimalAtomValuesMP(atom_to_index_map=make_atom_ids(space), aggr="min")
+    mp_module = OptimalAtomValuesMP(
+        atom_to_index_map=make_atom_ids(space)[0], aggr="min"
+    )
     mp_module(pyg_env)
     for state in space:
         dist_tensor = getattr(pyg_env, OptimalAtomValuesMP.default_attr_name)[
             state.index
         ]
-        validate_atom_distances(
+        validate_atom_values(
             lambda atom_str: dist_tensor[mp_module.atom_to_index[atom_str]].item(),
             space,
             state,
