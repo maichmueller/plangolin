@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import functools
 import hashlib
 import logging
 import os
@@ -178,3 +180,21 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     if hasattr(nx_state_space_graph.graph, "gamma"):
         pyg_graph.gamma = nx_state_space_graph.graph["gamma"]
     return pyg_graph
+
+
+@functools.wraps
+def copy_return(func):
+    """
+    Decorator to copy the return value of a function.
+    This is useful for functions that return a tensor, as it ensures that the tensor is copied to the CPU.
+    """
+
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if hasattr(result, "clone") and callable(result.clone):
+            return result.clone()
+        else:
+            copy.copy(result)
+        return result
+
+    return wrapper
