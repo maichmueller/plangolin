@@ -23,13 +23,18 @@ from rgnet.utils.utils import persistent_hash
 
 
 @dataclass(frozen=True)
-class GenericDriveMetadata:
+class BaseDriveMetadata:
     class_: type
     encoder_factory: EncoderFactory
     reward_function: RewardFunction
     domain_content: str
     problem_content: str
     space_options: Optional[Mapping[str, Any]]
+
+
+@dataclass(frozen=True)
+class BaseEnvAuxData:
+    pyg_env: Data
 
 
 class BaseDrive(InMemoryDataset):
@@ -43,7 +48,7 @@ class BaseDrive(InMemoryDataset):
         encoder_factory: Optional[EncoderFactory] = None,
         *,
         transform: Callable[[HeteroData | Data], HeteroData | Data] = None,
-        store_pyg_graph: bool = True,
+        save_aux_data: bool = True,
         log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
@@ -75,7 +80,7 @@ class BaseDrive(InMemoryDataset):
         self.desc: Optional[str] = None
         self.env = env
         self.space_options = space_options
-        self.store_pyg_graph = store_pyg_graph
+        self.save_aux_data = save_aux_data
         self.show_progress = show_progress
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
         metadata_hash = persistent_hash(self.metadata.__dict__.values())
@@ -86,19 +91,18 @@ class BaseDrive(InMemoryDataset):
         if self.metadata_path.exists():
             # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
             # data will align with our expectations.
-            with open(self.metadata_path, "rb") as file:
-                loaded_metadata, self.desc = pickle.load(file)
+            loaded_metadata, self.desc, *_ = self._load_metadata()
             if mismatch_desc := self._metadata_misaligned(loaded_metadata):
                 logging.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
-        if self.store_pyg_graph:
-            self.pyg_graph_path = Path(root_dir) / (
+        if self.save_aux_data:
+            self.aux_data_path = Path(root_dir) / (
                 str(splitext(self.processed_file_names[0])[0]) + ".graph.pt"
             )
         else:
-            self.pyg_graph_path = None
+            self.aux_data_path = None
 
         super().__init__(
             root=str(root_dir.absolute()),
@@ -117,17 +121,18 @@ class BaseDrive(InMemoryDataset):
         return self.desc
 
     @property
-    def pyg_graph_data(self):
-        if self.pyg_graph_path is not None:
-            with open(self.pyg_graph_path, "rb") as file:
-                mdp_graph = pickle.load(file)
-            return mdp_graph
+    def env_aux_data(self):
+        if self.aux_data_path is not None and self.aux_data_path.exists():
+            with open(self.aux_data_path, "rb") as file:
+                aux_data = pickle.load(file)
+            return aux_data
         warnings.warn(
-            f"Drive object has no MDP graph path set ({self.pyg_graph_path=}). Cannot load graph."
+            f"Drive object has no auxiliary data path set ({self.aux_data_path = }) or "
+            f"the data does not exist ({self.aux_data_path.exists() = }. "
         )
         return None
 
-    def _metadata_misaligned(self, meta: GenericDriveMetadata) -> str:
+    def _metadata_misaligned(self, meta: BaseDriveMetadata) -> str:
         if self.__class__ != meta.class_:
             return f"Class: given={self.__class__} != loaded={meta.class_}"
         if (
@@ -146,8 +151,8 @@ class BaseDrive(InMemoryDataset):
         return ""
 
     @property
-    def metadata(self) -> GenericDriveMetadata:
-        return GenericDriveMetadata(
+    def metadata(self) -> BaseDriveMetadata:
+        return BaseDriveMetadata(
             class_=self.__class__,
             encoder_factory=self.encoder_factory,
             reward_function=self.reward_function,
@@ -192,14 +197,15 @@ class BaseDrive(InMemoryDataset):
                 reset=True,
             )
         self._set_desc(space)
+
+        if self.save_aux_data:
+            aux = self._make_env_aux_data(env)
+            with open(self.aux_data_path, "wb") as file:
+                pickle.dump(aux, file)
+
         data_list = self._build(env)
 
-        if self.store_pyg_graph:
-            with open(self.metadata_path, "wb") as file:
-                pickle.dump((self.metadata, self.desc), file)
-            pyg_graph_data = env.to_pyg_data(0)
-            with open(self.pyg_graph_path, "wb") as file:
-                pickle.dump(pyg_graph_data, file)
+        self._save_metadata(self.desc)
 
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
@@ -207,6 +213,21 @@ class BaseDrive(InMemoryDataset):
         )
         del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
+
+    def _make_env_aux_data(self, env: ExpandedStateSpaceEnv) -> BaseEnvAuxData:
+        return BaseEnvAuxData(env.to_pyg_data(0))
+
+    def _save_metadata(self, *extras):
+        with open(self.metadata_path, "wb") as file:
+            pickle.dump((self.metadata, *extras), file)
+
+    def _load_metadata(
+        self,
+    ) -> tuple[BaseDriveMetadata] | tuple[BaseDriveMetadata, Any, ...]:
+        with open(self.metadata_path, "rb") as file:
+            loaded_metadata, *extras = pickle.load(file)
+
+        return (loaded_metadata, *extras)
 
     def _set_desc(self, space: xmi.XStateSpace):
         self.desc = f"{self.__class__.__name__}({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"

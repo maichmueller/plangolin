@@ -11,11 +11,11 @@ from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
-from .drive import BaseDrive, GenericDriveMetadata
+from .drive import BaseDrive, BaseDriveMetadata
 
 
 @dataclass(frozen=True)
-class FlashDriveMetadata(GenericDriveMetadata):
+class FlashDriveMetadata(BaseDriveMetadata):
     iw_search: IWSearch | None
 
 
