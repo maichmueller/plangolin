@@ -73,7 +73,7 @@ class PolicyEvaluationMP(MessagePassing):
 
     def _iterate(self, data):
         assert isinstance(data.x, torch.Tensor)
-        assert data.edge_attr.ndim == 2
+        assert data.edge_attr.ndim >= 2
         assert data.edge_index.shape[-1] == data.edge_attr.shape[0]
         features = self._init_features(data)
         edge_indices = data.edge_index
@@ -99,8 +99,9 @@ class PolicyEvaluationMP(MessagePassing):
         feature_infs = torch.isinf(features)
         new_feature_infs = torch.isinf(new_features)
         both_not_infs = ~(feature_infs & new_feature_infs)
+        bc_features, bc_new_features = torch.broadcast_tensors(features, new_features)
         return (
-            l1_loss(features[both_not_infs], new_features[both_not_infs])
+            l1_loss(bc_features[both_not_infs], bc_new_features[both_not_infs])
             < self.difference_threshold
         )
 
@@ -112,7 +113,7 @@ class PolicyEvaluationMP(MessagePassing):
         return transition_prob * (reward + self.gamma * x_j)
 
     def update(self, inputs: Tensor, x: Tensor, data: pyg.data.Data) -> Tensor:
-        return torch.where(data.goals, x, inputs)
+        return torch.where(unsqueeze_right_like(data.goals, inputs), x, inputs)
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
@@ -239,7 +240,7 @@ class OptimalAtomValuesMP(ValueIterationMP):
     The length of this attribute would have to be the number of states to propagate messages for.
     """
 
-    default_attr_name = "atom_distances"
+    default_attr_name = "atom_values"
 
     def __init__(
         self,
@@ -302,7 +303,7 @@ class OptimalAtomValuesMP(ValueIterationMP):
         x_j: Tensor,
         edge_attr: Tensor,
     ) -> Tensor:
-        reward = unsqueeze_right_like(edge_attr[:, 0], x_j)
+        reward = unsqueeze_right_like(edge_attr[..., 0], x_j)
         return reward + self.gamma * x_j
 
     def aggregate(
@@ -315,14 +316,23 @@ class OptimalAtomValuesMP(ValueIterationMP):
         """
         PyG's aggregation module calls scatter into a new torch.zeros tensor. Any target index not
         mentioned in `index` will not aggregate any values and will hence be set to the existing
-        value at the tensor to write to, i.e. the 0-tensor. This will see any values that reflect
-        our init_reward (i.e. +- inf) be set to 0.0, which casts errors into future message-passes.
-        By ensuring that every index is mentioned in the aggregation with a value from our init_reward
-        we can ensure that the aggregation will not be arbitrarly set to 0.0.
-        Note this only works for the min/max aggregation, as the sum aggregation would result in infs then.
+        value at the tensor to write to, i.e., the 0-tensor. This will see any values that reflect
+        our init_reward (i.e., +- inf) be set to 0.0, which casts errors into future message-passes.
+        By ensuring that every index is mentioned in the aggregation with a value from our `init_reward`,
+        we can ensure that the aggregation will not be set to 0.0 by default.
+        Note this only works for the min/max aggregation, as the sum aggregation would result in inf's then.
         """
         extended_inputs = torch.cat(
-            (inputs, torch.full_like(inputs, self.init_reward)), dim=0
+            (
+                inputs,
+                torch.full(
+                    (dim_size, inputs.size(1)),
+                    self.init_reward,
+                    device=inputs.device,
+                    dtype=inputs.dtype,
+                ),
+            ),
+            dim=0,
         )
         extended_index = torch.cat(
             (index, torch.arange(dim_size, device=index.device, dtype=torch.int)), dim=0
