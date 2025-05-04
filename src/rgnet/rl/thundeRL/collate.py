@@ -56,10 +56,8 @@ def to_atom_values_batch(
     Returns:
         batch: A Batch object containing the atom distances as a pyg.Batch object.
     """
-    states_batch = to_states_batch(
-        data_list, exclude_keys=["targets", "atom_distances"]
-    )
-    atom_values = torch.tensor([data.atom_distances for data in data_list])
+    states_batch = to_states_batch(data_list, exclude_keys=["targets", "atom_values"])
+    atom_values = torch.tensor([data.atom_values for data in data_list])
     return states_batch, atom_values
 
 
