@@ -191,7 +191,7 @@ class TestPolicyEvaluationValidation:
         spy2(validator.message_passing[0].forward)
         validator.compute_values(probs, 0)
         verify(validator.message_passing[0]).forward(
-            arg_that(lambda data: (data.edge_attr[:, 0] == torch.cat(probs)).all())
+            arg_that(lambda data: (data.edge_attr[:, 1] == torch.cat(probs)).all())
         )
 
     def test_validation_epoch_end(

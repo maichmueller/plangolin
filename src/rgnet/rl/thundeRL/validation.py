@@ -524,7 +524,7 @@ class PolicyEvaluationValidation(ValidationCallback):
                 case ExpandedStateSpaceEnv():
                     pyg_graph = env.to_pyg_data(0)
                 case BaseDrive():
-                    pyg_graph = env.pyg_graph_data
+                    pyg_graph = env.env_aux_data
                 case _:
                     raise TypeError(
                         f"Unsupported environment type {type(env)}. "
@@ -566,12 +566,12 @@ class PolicyEvaluationValidation(ValidationCallback):
         flat_probs = torch.cat(probs_list)
         graph: pyg.data.Data = self._graphs[dataloader_idx]
         assert (
-            flat_probs.shape == graph.edge_attr[:, 0].shape
-        ), f"Found mismatching shapes {flat_probs.shape=} and {graph.edge_attr[:, 0].shape=}"
+            flat_probs.shape == graph.edge_attr[:, 1].shape
+        ), f"Found mismatching shapes {flat_probs.shape=} and {graph.edge_attr[:, 1].shape=}"
         assert (
             flat_probs.device == graph.edge_attr.device
         ), f"Found mismatching devices {flat_probs.device=} and {graph.edge_attr.device=}"
-        graph.edge_attr[:, 0] = flat_probs
+        graph.edge_attr[:, 1] = flat_probs
         return self.message_passing[dataloader_idx](graph)
 
     def forward(
