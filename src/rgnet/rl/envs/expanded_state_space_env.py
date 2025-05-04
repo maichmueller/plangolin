@@ -1,6 +1,7 @@
 import abc
 import itertools
 from collections import defaultdict
+from copy import copy
 from functools import cache
 from pathlib import Path
 from typing import (
@@ -22,9 +23,13 @@ from tensordict import tensordict
 from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
-from rgnet.rl.envs.planning_env import InstanceReplacementStrategy, PlanningEnvironment
 from rgnet.rl.reward import RewardFunction, UnitReward
-from xmimir import XState, XStateSpace, XTransition
+from rgnet.utils.reshape import unsqueeze_right_like
+from rgnet.utils.utils import copy_return
+from xmimir import StateType, XLiteral, XProblem, XState, XStateSpace, XTransition
+
+from .planning_env import InstanceReplacementStrategy, PlanningEnvironment
+from .successor_env import SuccessorEnvironment
 
 
 class ResetStrategy(metaclass=abc.ABCMeta):
@@ -98,15 +103,15 @@ def _serialized_action_info(transition):
     return action_data
 
 
-def _node_type(instance: XStateSpace, state: XState):
-    if state.is_goal:
-        return "goal"
+def _state_type(instance: XStateSpace, state: XState, goal: tuple[XLiteral, ...] = ()):
+    if state.is_goal(goal):
+        return StateType.GOAL
     elif instance.initial_state == state:
-        return "initial"
+        return StateType.INITIAL
     elif instance.is_deadend(state):
-        return "deadend"
+        return StateType.DEADEND
     else:
-        return "default"
+        return StateType.DEFAULT
 
 
 class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
@@ -132,6 +137,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             **kwargs,
         )
 
+    @property
+    def spaces(self):
+        return self._all_instances
+
     def transitions_for(
         self, active_instance: xmi.XStateSpace, state: xmi.XState
     ) -> List[xmi.XTransition]:
@@ -156,9 +165,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                 reset_strategy=IteratingReset(),
                 reward_function=self.reward_function,
             ).reset(autoreset=False)
-            for active_instance in (spaces or self._all_instances)
+            for active_instance in (spaces or self.spaces)
         ]
 
+    @copy_return
     @cache
     def to_pyg_data(
         self,
@@ -169,9 +179,10 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             | None
         ) = None,
         natural_transitions: bool = False,
+        problems: tuple[XProblem, ...] | None = None,
     ) -> pyg.data.Data:
         r"""Converts a :obj:`networkx.Graph` or :obj:`networkx.DiGraph` to a
-        :class:`torch_geometric.data.Data` instance.
+        :class:`torch_geometric.data.Data` instance_list.
 
         :params:
             transition_probabilities (tuple[torch.Tensor] | Callable[[XState, Sequence[XTransition]], Sequence[float]] | None):
@@ -204,11 +215,15 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         # a state space may have multiple forward transitions from each goal state,
         # but our envs only return a single placeholder transition for termination
         number_of_extra_goal_out_transitions = (
-            sum(
-                space.forward_transition_count(goal)
-                for goal in space.goal_states_iter()
+            0
+            if natural_transitions
+            else (
+                sum(
+                    space.forward_transition_count(goal)
+                    for goal in space.goal_states_iter()
+                )
+                - space.goal_count
             )
-            - space.goal_count
         )
         edge_index = torch.empty(
             (
@@ -230,29 +245,92 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         else:
             transitions = (tuple(space.forward_transitions(state)) for state in space)
 
-        transition_index = itertools.count(0)
-        goal_reward = [float("inf")] * len(space)
-        instances = itertools.repeat(space)
-        for state, instance, state_transitions in zip(space, instances, transitions):
-            t_probs: Sequence[float] = transition_probs(state, state_transitions)
-            reward, _ = self.get_reward_and_done(
-                state_transitions, instances=[space] * len(state_transitions)
+        if problems:
+            successor_gen = space.successor_generator
+            successor_gens = []
+            for problem in problems:
+                successor_gen_copy = copy(successor_gen)
+                successor_gen_copy.problem = problem
+                successor_gens.append(successor_gen_copy)
+            aux_env = SuccessorEnvironment(
+                successor_gens, reward_function=self.reward_function, batch_size=1
             )
+            instance_iter = itertools.repeat(successor_gens)
+            problem_iter = itertools.repeat(problems)
+        else:
+            aux_env = None
+            problem_iter = itertools.repeat([space.problem])
+            instance_iter = itertools.repeat([space])
+        transition_index = itertools.count(0)
+        nr_instances = len(next(instance_iter))
+        goal_rewards = torch.empty((len(space), nr_instances), dtype=torch.float)
+        query_env = aux_env or self
+        for state, instance_list, problem_list, state_transitions in zip(
+            space, instance_iter, problem_iter, transitions
+        ):
+            attr_shape = (-1, nr_instances)
+            rewards: torch.Tensor = torch.cat(
+                [
+                    query_env.get_reward_and_done(
+                        state_transitions,
+                        instances=[instance] * len(state_transitions),
+                    )[0].view(1, -1)
+                    for instance in instance_list
+                ],
+                dim=0,
+            ).T
+            t_probs: torch.Tensor = unsqueeze_right_like(
+                torch.tensor(
+                    transition_probs(state, state_transitions), dtype=torch.float
+                ),
+                rewards,
+            ).expand_as(rewards)
             transition_indices = list(
                 next(transition_index) for _ in range(len(state_transitions))
             )
-            data_dict["dist"].append(instance.goal_distance(state))
-            data_dict["ntype"].append(_node_type(instance, state))
-            is_goal_state = instance.is_goal(state)
+            dist = torch.tensor(
+                [
+                    (
+                        instance.goal_distance(state)
+                        if isinstance(instance, XStateSpace)
+                        else torch.nan
+                    )
+                    for instance in instance_list
+                ],
+                dtype=torch.float,
+            ).view(attr_shape)
+            node_type = torch.tensor(
+                [
+                    (
+                        _state_type(instance, state, problem.goal()).value
+                        if isinstance(instance, XStateSpace)
+                        else -1
+                    )
+                    for instance, problem in zip(instance_list, problem_list)
+                ],
+                dtype=torch.int,
+            ).view(attr_shape)
+            is_goal_state = torch.tensor(
+                [query_env.is_goal(instance, state) for instance in instance_list],
+                dtype=torch.bool,
+            )
+            goal_rewards[state.index] = torch.where(
+                is_goal_state, rewards.max(dim=0)[0], -torch.inf
+            ).view(attr_shape)
+            data_dict["dist"].append(dist)
+            data_dict["ntype"].append(node_type)
+            is_goal_state = space.is_goal(state)
             data_dict["goals"].append(is_goal_state)
-            if is_goal_state:
-                goal_reward[state.index] = float(reward)
-            data_dict["reward"].extend(reward)
-            data_dict["probs"].extend(t_probs)
+            data_dict["reward"].append(rewards)
+            data_dict["probs"].append(t_probs)
             data_dict["action"].extend(
                 _serialized_action_info(t) for t in state_transitions
             )
-            data_dict["idx"].extend(transition_indices)
+            data_dict["idx"].append(
+                unsqueeze_right_like(
+                    torch.tensor(transition_indices, dtype=torch.int), rewards
+                ).expand_as(rewards)
+            )
 
             edge_index[0, transition_indices] = state.index
             edge_index[1, transition_indices] = torch.tensor(
@@ -261,7 +339,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
         for key, value in data_dict.items():
             if isinstance(value, (tuple, list)) and isinstance(value[0], torch.Tensor):
-                data_dict[key] = torch.stack(value, dim=0)
+                data_dict[key] = torch.cat(value, dim=0).squeeze(-1)
             else:
                 try:
                     data_dict[key] = torch.as_tensor(value)
@@ -275,7 +353,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             xs = []
             for key in group_edge_attrs:
                 x = data[key]
-                x = x.view(-1, 1) if x.dim() <= 1 else x
+                x = x.unsqueeze(-1) if x.dim() <= 2 else x
                 xs.append(x)
                 del data[key]
             data.edge_attr = torch.cat(xs, dim=-1)
@@ -283,9 +361,9 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         # goal states have the value of their reward (typically 0, but could be arbitrary);
         # the rest is initialized to 0.
         data.x = torch.where(
-            data.goals,
-            torch.tensor(goal_reward, dtype=torch.float),
-            torch.zeros((len(space),), dtype=torch.float),
+            unsqueeze_right_like(data.goals, goal_rewards),
+            goal_rewards,
+            torch.zeros((len(space), nr_instances)),
         )
         data.num_nodes = len(space)
         return data
@@ -300,7 +378,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
     ]:
         if use_space_directly:
             # we sidestep the env-logic of using the .traverse() function to have significantly faster graph generation
-            space = self._all_instances[index]
+            space = self.spaces[index]
             if natural_transitions:
                 transitions = list(
                     tuple(space.forward_transitions(state)) for state in space
@@ -381,7 +459,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                 atom_str = ", ".join(map(str, state.atoms(with_statics=False)))
                 graph.add_node(
                     state.index,
-                    ntype=_node_type(instance, state),
+                    ntype=_state_type(instance, state),
                     atoms=f"[{atom_str}]",
                     dist=instance.goal_distance(state),
                 )
@@ -396,7 +474,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             ):
                 graph.add_node(
                     state,
-                    ntype=_node_type(instance, state),
+                    ntype=_state_type(instance, state),
                     dist=instance.goal_distance(state),
                 )
 
