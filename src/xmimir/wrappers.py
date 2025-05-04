@@ -426,9 +426,61 @@ class XProblem(MimirWrapper[Problem]):
                 for a, b in zip(self.objects, other.objects)
             )
             and self.semantic_eq_sequences(
-                tuple(self.initial_atoms()), tuple(other.initial_atoms()), ordered=False
+                tuple(self.initial_literals()),
+                tuple(other.initial_literals()),
+                ordered=False,
             )
             and self.semantic_eq_sequences(self.goal(), other.goal(), ordered=False)
+        )
+
+
+class CustomProblem(XProblem):
+    def __init__(
+        self,
+        problem: XProblem,
+        goal: tuple[XLiteral, ...] = (),
+        initial: tuple[XLiteral, ...] = (),
+        name: str = "",
+        filepath: Path | str = "",
+    ):
+        super().__init__(problem.base, problem.repositories)
+        self._goal = goal or super().goal()
+        self._initial = initial or tuple(super().initial_atoms())
+        self._name = name or (super().name + "_custom")
+        self._filepath = filepath or (
+            Path(tempfile.gettempdir())
+            / (
+                Path(super().filepath).stem
+                + f"{hash((self._goal, self._initial, self._name))}.pddl"
+            )
+        )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def filepath(self) -> str:
+        return self._filepath
+
+    @cache
+    def goal(self, *category: XCategory) -> tuple[XLiteral, ...]:
+        if not category:
+            return self._goal
+        return tuple(filter(lambda atom: atom.category in category, self._goal))
+
+    def initial_literals(self) -> Iterable[XLiteral]:
+        """
+        Get the initial literals of the problem definition.
+        """
+        return self._initial
+
+    def initial_atoms(self) -> Iterable[XAtom]:
+        return (l.atom for l in self._initial)
+
+    def __hash__(self):
+        return hash(
+            (super().__hash__(), self._goal, self._initial, self._name, self._filepath)
         )
 
 
