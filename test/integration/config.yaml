@@ -4,6 +4,7 @@ data:
   batch_size: 26
   parallel: False
   balance_by_attr: ''
+  collate_fn: rgnet.rl.thundeRL.to_transitions_batch
 
 encoder:
   class_path: HeteroGraphEncoder

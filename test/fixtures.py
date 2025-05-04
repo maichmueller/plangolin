@@ -259,7 +259,7 @@ def make_fresh_flashdrive(
     return drive
 
 
-def make_fresh_atomdrive(tmp_path, domain, problem, force_reload=True):
+def make_fresh_atomdrive(tmp_path, domain, problem, force_reload=True, **reward_kwargs):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
     data_dir = source_dir / "pddl_instances" / domain
     problem_path = data_dir / problem
@@ -267,7 +267,7 @@ def make_fresh_atomdrive(tmp_path, domain, problem, force_reload=True):
     drive = AtomDrive(
         problem_path=problem_path,
         domain_path=domain_path,
-        reward_function=UnitReward(gamma=0.99),
+        reward_function=UnitReward(**(reward_kwargs | dict(gamma=1.0))),
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),

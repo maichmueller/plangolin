@@ -1,4 +1,4 @@
-from test.fixtures import small_blocks
+from test.fixtures import large_blocks, medium_blocks, small_blocks  # noqa: F401
 from typing import List, Tuple
 
 import pytest
