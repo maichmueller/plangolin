@@ -80,7 +80,7 @@ def test_siw(problem, width):
     successor_gen = xmi.XSuccessorGenerator(problem)
     state = siw(successor_gen.initial_state, decomposition, successor_gen, width)
 
-    assert state.is_goal
+    assert state.is_goal()
 
 
 def siw(

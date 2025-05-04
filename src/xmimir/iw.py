@@ -213,7 +213,7 @@ class IWSearch:
                 return not any(state.unsatisfied_literals(goal))
 
         else:
-            goal_check = lambda state: state.is_goal
+            goal_check = lambda state: state.is_goal()
 
         visit_queue: deque[ExpansionNode] = deque(
             [ExpansionNode(start_state, [], [], 0)]

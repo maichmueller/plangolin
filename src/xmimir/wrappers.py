@@ -657,9 +657,9 @@ class XState(MimirWrapper[State]):
         """
         return self.base.get_index()
 
-    @cached_property
-    def is_goal(self) -> bool:
-        return not any(self.unsatisfied_literals(self.problem.goal()))
+    @cache
+    def is_goal(self, goal: tuple[XLiteral, ...] = ()) -> bool:
+        return not any(self.unsatisfied_literals(goal or self.problem.goal()))
 
     @cached_property
     def is_initial(self) -> bool:

@@ -92,14 +92,16 @@ def _test_rollout_soundness(
         for batch_idx in range(0, batch_size):
             current_state = batched_curr_state[batch_idx][time_step]
             transitions = list(space.forward_transitions(current_state))
-            non_goal_transitions_filter = lambda t: not t.source.is_goal
+            non_goal_transitions_filter = lambda t: not t.source.is_goal()
             assert list(
                 filter(
                     non_goal_transitions_filter,
                     batched_transitions[batch_idx][time_step],
                 )
             ) == list(filter(non_goal_transitions_filter, transitions))
-            if not (transition := batched_actions[batch_idx][time_step]).source.is_goal:
+            if not (
+                transition := batched_actions[batch_idx][time_step]
+            ).source.is_goal():
                 assert transition in transitions
             if time_step == rollout_length - 1:
                 if set_truncated:
