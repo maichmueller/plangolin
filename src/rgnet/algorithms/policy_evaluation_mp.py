@@ -110,6 +110,10 @@ class PolicyEvaluationMP(MessagePassing):
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
         reward, transition_prob = edge_attr[:, 0], edge_attr[:, 1]
+        reward, transition_prob = (
+            unsqueeze_right_like(reward, x_j),
+            unsqueeze_right_like(transition_prob, x_j),
+        )
         return transition_prob * (reward + self.gamma * x_j)
 
     def update(self, inputs: Tensor, x: Tensor, data: pyg.data.Data) -> Tensor:
