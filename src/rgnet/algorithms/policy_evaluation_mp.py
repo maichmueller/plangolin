@@ -359,7 +359,7 @@ if __name__ == "__main__":
         "q": 1,
         "p": 2,
     }
-    from rgnet.utils import mdp_graph_as_pyg_data
+    from rgnet.algorithms import mdp_graph_as_pyg_data
 
     pyg_graph = mdp_graph_as_pyg_data(graph)
     pyg_graph.atoms_per_state = [["p"], ["q"], ["t"]]

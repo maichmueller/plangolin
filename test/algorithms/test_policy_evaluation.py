@@ -4,10 +4,14 @@ from test.fixtures import fresh_flashdrive, medium_blocks  # noqa: F401, F403
 import pytest
 import torch
 
-from rgnet.algorithms import PolicyEvaluationMP, bellman_optimal_values, optimal_policy
+from rgnet.algorithms import (
+    PolicyEvaluationMP,
+    bellman_optimal_values,
+    mdp_graph_as_pyg_data,
+    optimal_policy,
+)
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
-from rgnet.utils import mdp_graph_as_pyg_data
 
 
 @pytest.mark.parametrize(

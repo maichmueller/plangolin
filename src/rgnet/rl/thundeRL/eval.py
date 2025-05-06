@@ -23,6 +23,7 @@ from torch import Tensor
 from torchrl.envs.utils import set_exploration_type
 
 import xmimir as xmi
+from rgnet.algorithms import mdp_graph_as_pyg_data
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.logging_setup import tqdm
 from rgnet.models import PyGHeteroModule
@@ -39,7 +40,6 @@ from rgnet.rl.envs import (
     SuccessorEnvironment,
 )
 from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
-from rgnet.rl.policy_evaluation import mdp_graph_as_pyg_data
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
 from rgnet.utils.object_embeddings import ObjectEmbedding
