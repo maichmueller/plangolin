@@ -18,9 +18,23 @@ from typing import (
     Union,
 )
 
+from jinja2 import Template
 from multimethod import multimethod
 from pymimir import *
 from pymimir.hints import *  # because PyCharm needs some help
+
+atom_str_template = Template(
+    "({{ predicate.name if predicate is not string and predicate.name is defined else predicate }}"
+    "{% if objects %}"
+    "{% for obj in objects %}"
+    " {% if obj is string %}{{ obj }}"
+    "{% elif obj is mapping %}"
+    "{% for k, v in obj.items() %}{{ k }}={{ v }} {% endfor %}"
+    "{% elif obj.get_name is defined %}{{ obj.get_name() }}"
+    "{% else %}{{ obj }}{% endif %}"
+    "{% endfor %}"
+    "{% endif %})"
+)
 
 
 class XCategory(Enum):
@@ -227,8 +241,7 @@ class XAtom(MimirWrapper[GroundAtom]):
             return str(
                 self.base
             )  # we assume that a XYZGroundAtom is represented as (predicate_name obj1 obj2 ...)
-        obj_section = " ".join(obj.get_name() for obj in self.objects)
-        return f"({self.predicate.name} {obj_section})"
+        return atom_str_template.render(predicate=self.predicate, objects=self.objects)
 
 
 class XLiteral(MimirWrapper[GroundLiteral]):
@@ -1256,4 +1269,5 @@ __all__ = [
     "XActionGenerator",
     "XSuccessorGenerator",
     "XSearchResult",
+    "atom_str_template",
 ]

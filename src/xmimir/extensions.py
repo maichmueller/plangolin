@@ -55,6 +55,22 @@ def gather_objects(atoms: Iterable[XAtom] | Generator) -> set[Object]:
     return set(chain.from_iterable(atom.objects for atom in atoms))
 
 
+def parse_atom_string(atom_str: str):
+    # Basic parse for form: (predicate arg1 arg2 ...)
+    atom_str = atom_str.strip()
+    assert atom_str.startswith("(") and atom_str.endswith(")")
+    parts = atom_str[1:-1].split()
+    predicate = parts[0]
+    objects = []
+    for part in parts[1:]:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            objects.append({k: v})
+        else:
+            objects.append(part)
+    return predicate, objects
+
+
 class StateType(Enum):
     DEFAULT = 0
     GOAL = 1
@@ -62,4 +78,4 @@ class StateType(Enum):
     DEADEND = 3
 
 
-__all__ = ["parse", "gather_objects", "StateType"]
+__all__ = ["parse", "gather_objects", "StateType", "parse_atom_string"]

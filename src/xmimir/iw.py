@@ -15,8 +15,9 @@ from multimethod import multimethod
 
 from rgnet.logging_setup import tqdm
 from rgnet.utils.misc import env_aware_cpu_count
-from xmimir.extensions import *
-from xmimir.wrappers import *
+
+from .extensions import *
+from .wrappers import *
 
 __all__ = [
     "Novelty",
