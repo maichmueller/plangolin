@@ -19,7 +19,7 @@ def validate_drive(drive: AtomDrive, space, invert_values: bool = False):
     assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
     sign = -1 if invert_values else 1
-    expected_values = drive.value_dict_to_tensor(
+    expected_values = drive.atom_value_dict_to_tensor(
         list(
             map(
                 operator.itemgetter(1),

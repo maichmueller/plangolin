@@ -46,10 +46,17 @@ class AtomDrive(BaseDrive):
     AtomDrive stores for each state s their optimal distance to any atom p, i.e., a value function V(p | s).
     """
 
-    def __init__(self, *args, distance_based_atom_values: bool = False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        distance_based_atom_values: bool = False,
+        store_values_as_tensor: bool = True,
+        **kwargs,
+    ):
         self._atom_to_index_map: dict[str, int] = None
         self._index_to_atom_map: dict[int, str] = None
         self.distance_based_atom_values = distance_based_atom_values
+        self.store_values_as_tensor = store_values_as_tensor
         super().__init__(*args, **kwargs)
 
     @cached_property
@@ -99,8 +106,12 @@ class AtomDrive(BaseDrive):
         batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
         states = list(space)
         atom_values = self._compute_atom_dists(env, states)
-        if isinstance(atom_values, list):
-            atom_values = self.value_dict_to_tensor(atom_values)
+        if self.store_values_as_tensor:
+            if isinstance(atom_values, list):
+                atom_values = self.atom_value_dict_to_tensor(atom_values)
+        else:
+            if isinstance(atom_values, torch.Tensor):
+                atom_values = self.atom_tensor_to_dict(atom_values)
 
         transitions = env.get_applicable_transitions(states)
         iterator = zip(states, atom_values, transitions)
@@ -122,7 +133,23 @@ class AtomDrive(BaseDrive):
         )
         return batched_data
 
-    def value_dict_to_tensor(
+    def atom_tensor_to_dict(self, atom_tensor: torch.Tensor) -> list[dict[str, float]]:
+        atom_id_map = self.atom_to_index_map
+        atom_ids = torch.tensor(list(atom_id_map.values()), dtype=torch.int)
+        assert (
+            atom_ids == torch.arange(atom_ids.min().item(), atom_ids.max().item() + 1)
+        ).all()
+        atom_values = []
+        if atom_tensor.ndim == 1:
+            atom_tensor = atom_tensor.unsqueeze(0)
+        for state_atom_values in atom_tensor:
+            atom_value_dict = {}
+            for j, value in enumerate(state_atom_values):
+                atom_value_dict[self.index_to_atom_map[j]] = value.item()
+            atom_values.append(atom_value_dict)
+        return atom_values
+
+    def atom_value_dict_to_tensor(
         self, atom_values: Sequence[dict[XAtom, float]]
     ) -> torch.Tensor:
         atom_id_map = self.atom_to_index_map
