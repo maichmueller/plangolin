@@ -14,7 +14,7 @@ import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
 from rgnet.rl.reward.uniform_reward import FlatReward
-from rgnet.utils.utils import broadcastable
+from rgnet.utils.misc import broadcastable
 from xmimir import XState, XStateSpace
 
 from ..rl.non_tensor_data_utils import NonTensorWrapper, tolist

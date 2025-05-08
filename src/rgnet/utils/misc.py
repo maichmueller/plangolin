@@ -8,16 +8,16 @@ import os
 import pathlib
 import time
 from datetime import timedelta
-from functools import cache
+from functools import singledispatch
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Reversible, Tuple
+from typing import Any, Callable, Iterable, List, Reversible, Tuple, Union
 
 import networkx as nx
 import torch
-import torch_geometric
+from tensordict import NonTensorData, NonTensorStack
+from torch_geometric.data import Batch
 
 import xmimir as xmi
-from xmimir import StateType
 
 
 def get_colors(graph: nx.Graph):
@@ -134,55 +134,6 @@ def persistent_hash(data: Iterable[Any], sep: str = ",") -> str:
     return str(metadata_hash_hexa)
 
 
-@cache
-def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
-    """
-    Convert the networkx graph into a directed pytorch_geometric graph.
-    The reward for each transition is stored in edge_attr[:, 0].
-    The transition probabilities are stored in edge_attr[:, 1].
-    The node features are stored as usual in graph.x.
-    The first dimension is the node value (starting with 0).
-    The second node feature dimension is one, if the node is a goal state.
-    """
-    pyg_graph = torch_geometric.utils.from_networkx(
-        nx_state_space_graph, group_edge_attrs=["reward", "probs", "idx"]
-    )
-    transition_indices = pyg_graph.edge_attr[:, 2]
-    expected_transition_indices = torch.arange(transition_indices.max().item() + 1)
-    if (transition_indices.int() != expected_transition_indices).any():
-        # we have to maintain the order of the edges as they are returned by a traversal of the state space.
-        graph_clone = pyg_graph.clone()
-        sorted_transition_indices = torch.argsort(graph_clone.edge_attr[:, 2])
-        pyg_graph.edge_index = graph_clone.edge_index[:, sorted_transition_indices]
-        pyg_graph.edge_attr = graph_clone.edge_attr[sorted_transition_indices, :]
-    transition_indices = pyg_graph.edge_attr[:, 2]
-    assert (transition_indices.int() == expected_transition_indices).all()
-    is_goal_state = [False] * pyg_graph.num_nodes
-    # inf as default to trigger errors if logic did not hold
-    goal_reward = [float("inf")] * pyg_graph.num_nodes
-    for i, (node, attr) in enumerate(nx_state_space_graph.nodes.data()):
-        if attr["ntype"] == StateType.GOAL:
-            is_goal_state[i] = True
-            _, _, goal_reward[i] = next(
-                iter(nx_state_space_graph.out_edges(node, data="reward"))
-            )
-
-    pyg_graph.goals = torch.tensor(
-        is_goal_state,
-        dtype=torch.bool,
-    )
-    # goal states have the value of their reward (typically 0, but could be arbitrary);
-    # the rest is initialized to 0.
-    pyg_graph.x = torch.where(
-        pyg_graph.goals,
-        torch.tensor(goal_reward, dtype=torch.float),
-        torch.zeros((pyg_graph.num_nodes,)),
-    )
-    if hasattr(nx_state_space_graph.graph, "gamma"):
-        pyg_graph.gamma = nx_state_space_graph.graph["gamma"]
-    return pyg_graph
-
-
 @functools.wraps
 def copy_return(func):
     """
@@ -199,3 +150,75 @@ def copy_return(func):
         return result
 
     return wrapper
+
+
+@singledispatch
+def num_nodes_per_entry(
+    data: Batch, node_type: str = None
+) -> dict[str, torch.Tensor] | torch.Tensor:
+    """
+    Returns the number of nodes per graph-entry in the batch.
+
+    :param data: The batch of graphs.
+    :param node_type: The node type to count. If None, counts all node types.
+    """
+    if hasattr(data, "batch_dict"):
+        batch_dict = data.batch_dict
+        if node_type is None:
+            return {
+                ntype: _num_nodes_per_entry(batch[ntype])
+                for ntype, batch in batch_dict.items()
+            }
+        else:
+            return _num_nodes_per_entry(batch_dict[node_type])
+    elif hasattr(data, "batch"):
+        return _num_nodes_per_entry(data.batch)
+    else:
+        raise ValueError("No batch attribute found in data")
+
+
+@num_nodes_per_entry.register(torch.Tensor)
+def _num_nodes_per_entry(batch: torch.Tensor) -> torch.Tensor:
+    num_entries = batch.max().item() + 1
+    out = torch.zeros(
+        num_entries,
+        dtype=torch.long,
+        device=batch.device,
+    )
+    return out.scatter_add_(0, batch, torch.ones_like(batch, dtype=torch.long))
+
+
+NonTensorWrapper = Union[NonTensorData, NonTensorStack]
+
+
+def as_non_tensor_stack(sequence: Iterable) -> NonTensorStack:
+    """
+    Wrap every element of the list in a NonTensorData and stacks them into a
+    NonTensorDataStack. We do not use torch.stack() in order to avoid getting
+    NonTensorData returned, which is the case if all elements of the list are equal.
+    """
+    return NonTensorStack(*(NonTensorData(x) for x in sequence))
+
+
+@singledispatch
+def tolist(input_, **kwargs) -> List:
+    return list(input_)
+
+
+@tolist.register(list)
+def _(input_: list, *, ensure_copy: bool = False, **kwargs) -> List:
+    if ensure_copy:
+        return input_.copy()
+    return input_
+
+
+@tolist.register(NonTensorStack)
+@tolist.register(NonTensorData)
+@tolist.register(torch.Tensor)
+def _(input_: NonTensorWrapper, **kwargs) -> List:
+    return input_.tolist()
+
+
+@tolist.register(Batch)
+def _(input_: Batch, **kwargs) -> List:
+    return input_.to_data_list()

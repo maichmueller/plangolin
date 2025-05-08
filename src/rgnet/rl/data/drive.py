@@ -19,7 +19,7 @@ from rgnet.rl.envs.expanded_state_space_env import (
     IteratingReset,
 )
 from rgnet.rl.reward import RewardFunction
-from rgnet.utils.utils import persistent_hash
+from rgnet.utils.misc import persistent_hash
 
 
 @dataclass(frozen=True)

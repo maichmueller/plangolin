@@ -24,8 +24,8 @@ from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
 from rgnet.rl.reward import RewardFunction, UnitReward
+from rgnet.utils.misc import copy_return
 from rgnet.utils.reshape import unsqueeze_right_like
-from rgnet.utils.utils import copy_return
 from xmimir import StateType, XLiteral, XProblem, XState, XStateSpace, XTransition
 
 from .planning_env import InstanceReplacementStrategy, PlanningEnvironment

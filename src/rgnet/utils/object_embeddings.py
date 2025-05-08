@@ -109,6 +109,41 @@ class ObjectEmbedding:
             requires_grad=self.dense_embedding.requires_grad,
         )
 
+    def to(self, device: torch.device) -> ObjectEmbedding:
+        """
+        Move the object embedding to the specified device.
+        """
+        self.dense_embedding = self.dense_embedding.to(device)
+        self.padding_mask = self.padding_mask.to(device)
+        return self
+
+    def cpu(self):
+        """
+        Move the object embedding to the CPU.
+        """
+        self.dense_embedding = self.dense_embedding.cpu()
+        self.padding_mask = self.padding_mask.cpu()
+        return self
+
+    def clone(self) -> ObjectEmbedding:
+        """
+        Clone the object embedding.
+        """
+        # shortcut the __init__ logic which only verifies the tensor shapes needlessly in this case
+        obj = ObjectEmbedding.__new__(ObjectEmbedding)
+        obj.dense_embedding = self.dense_embedding.clone()
+        obj.padding_mask = self.padding_mask.clone()
+        return obj
+
+    def detach(self) -> ObjectEmbedding:
+        """
+        Detach the object embedding from the computation graph.
+        """
+        return ObjectEmbedding(
+            self.dense_embedding.detach(),
+            self.padding_mask.detach(),
+        )
+
     @staticmethod
     def embeddings_is_close(
         embeddings: TensorDict | ObjectEmbedding, other: TensorDict | ObjectEmbedding

@@ -8,7 +8,7 @@ from torch_geometric.loader import DataLoader
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.supervised.data import MultiInstanceSupervisedSet
-from rgnet.utils.utils import broadcastable
+from rgnet.utils.misc import broadcastable
 
 
 def hetero_data_equal(data: HeteroData, expected: HeteroData):

@@ -20,7 +20,7 @@ from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import BaseDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.utils.utils import KeyAwareDefaultDict
+from rgnet.utils.misc import KeyAwareDefaultDict
 
 
 class ValidationCallback(torch.nn.Module, Callback):

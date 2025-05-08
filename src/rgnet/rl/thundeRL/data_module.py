@@ -19,7 +19,7 @@ from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
-from rgnet.utils.utils import env_aware_cpu_count
+from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
 
