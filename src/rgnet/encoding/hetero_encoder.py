@@ -85,7 +85,9 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         # Edge label = position in atom
 
         for obj in self._contained_objects(items):
-            graph.add_node(self.node_factory(obj), type=self.obj_type_id)
+            graph.add_node(
+                self.node_factory(obj), type=self.obj_type_id, name=obj.get_name()
+            )
 
         atom_or_literal: XAtom | XLiteral
         for atom_or_literal in items:
@@ -114,8 +116,12 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         del graph.graph["encoding"]
         del graph.graph["state"]
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)
-        for node, node_type in nx.get_node_attributes(graph, "type").items():
-            nodes_dict[node_type].append(node)
+        object_names: List[str] = []
+        for node, node_data in graph.nodes(data=True):
+            ntype = node_data["type"]
+            nodes_dict[ntype].append(node)
+            if ntype == self.obj_type_id:
+                object_names.append(node_data["name"])
 
         node_idx_dict: Dict[NodeType, Dict[Node, int]] = {
             ntype: {node: i for i, node in enumerate(nodes)}
@@ -123,6 +129,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         }
 
         data = HeteroData()
+        data.object_names = object_names
         # Create x_dict, the feature matrix for each node type We don't have any
         # features for nodes, so we just create a zero tensor In order to be
         # independent of the model, we create a tensor of size 1 for object nodes and
@@ -182,7 +189,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         Node names are the concatenation of the type and the index in the feature matrix.
         Edge labels are the position in the atom.
         The returned graph is not the exact same as one returned by encode, but isomorphic.
-        :param data: HetereData object encoded with this encoder.
+        :param data: HeteroData object encoded with this encoder.
         :return: The networkx graph as described above.
         """
         graph = self._graph_t(encoding=self)
@@ -190,8 +197,11 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         obj_type: str = self.obj_type_id
         # Every node needs a unique name, but obj-names are lost, therefore we use the
         # index in the feature matrix together with the type.
+        obj_names = data.object_names
         for obj_idx in range(data.x_dict[obj_type].shape[0]):
-            graph.add_node(f"{obj_type}[{obj_idx}]", type=obj_type)
+            graph.add_node(
+                f"{obj_type}[{obj_idx}]", type=obj_type, name=obj_names[obj_idx]
+            )
 
         for predicate in self.arity_dict.keys():
             for pred_idx in range(data.x_dict[predicate].shape[0]):

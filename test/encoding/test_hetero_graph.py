@@ -89,11 +89,45 @@ def test_consistent_order_of_objects(small_blocks):
     successors = [
         encoder.to_pyg_data(encoder.encode(target)) for _, target, _ in successors
     ]
-    # We know which node 'a' is because the goal is on(a,b) so there should be one edge with attribute 0 from object-node a to atom-node on_g(a,b).
+    # We know which node `a` is because the goal is `on(a,b)`,
+    # so there should be one edge with attribute 0 from object-node `a` to atom-node `on_g(a,b)`.
     successor_edge_indices = [obj_to_on_g_edge_index(g) for g in successors]
     assert all(
         (obj_0_on_g_index == successor_edge_index).all()
         for successor_edge_index in successor_edge_indices
+    )
+
+
+def test_consistent_object_node_to_names(small_blocks, medium_blocks):
+    space, domain, medium_problem = small_blocks
+    space2, domain2, medium_problem2 = medium_blocks
+    encoder = HeteroGraphEncoder(domain)
+    initial = space.initial_state
+    initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
+    successors = [
+        encoder.to_pyg_data(encoder.encode(target))
+        for _, target, _ in space.forward_transitions(initial)
+    ]
+    initial = space2.initial_state
+    initial_pyg2 = encoder.to_pyg_data(encoder.encode(initial))
+    successors2 = [
+        encoder.to_pyg_data(encoder.encode(target))
+        for _, target, _ in space2.forward_transitions(initial)
+    ]
+    assert all(
+        (initial_pyg.object_names == successor.object_names) for successor in successors
+    )
+    assert all(
+        initial_pyg.object_names == successor.object_names for successor in successors
+    )
+    assert all(
+        (initial_pyg2.object_names == successor2.object_names)
+        for successor2 in successors2
+    )
+    assert initial_pyg.object_names != initial_pyg2.object_names and any(
+        successor.object_names != successor2.object_names
+        for successor in successors
+        for successor2 in successors2
     )
 
 
@@ -115,9 +149,13 @@ def validate_hetero_data(data: HeteroData, encoder: HeteroGraphEncoder):
         outgoing_edges_by_atom = defaultdict(int)
         for pos in range(arity):
             # Check that every atom has exactly arity many outgoing edges
-            dest_indices = edge_index_dict[(encoder.obj_type_id, str(pos), node_type)][
-                1
-            ]
+            dest_indices = edge_index_dict[
+                (
+                    encoder.obj_type_id,
+                    str(pos),
+                    node_type,
+                )
+            ][1]
             for dst_index in dest_indices:
                 incoming_edges_by_atom[dst_index.item()] += 1
                 assert dst_index.item() in allowed_atom_indices
