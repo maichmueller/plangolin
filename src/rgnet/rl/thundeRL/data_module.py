@@ -37,7 +37,9 @@ class ThundeRLDataModule(LightningDataModule):
         encoder_factory: Callable[[Domain], GraphEncoderBase],
         *,
         collate_fn: Callable = collate.to_transitions_batch,
+        collate_kwargs: Optional[Dict[str, Any]] = None,
         drive_type: type[BaseDrive] = FlashDrive,
+        drive_kwargs: Optional[Dict[str, Any]] = None,
         batch_size_validation: Optional[int] = None,
         num_workers_train: int = 6,
         num_workers_validation: int = 2,
@@ -45,7 +47,6 @@ class ThundeRLDataModule(LightningDataModule):
         balance_by_attr: str = "distance_to_goal",
         max_cpu_count: Optional[int] = None,
         exit_after_processing: bool = False,
-        drive_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -65,7 +66,13 @@ class ThundeRLDataModule(LightningDataModule):
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
         self.drive_kwargs = drive_kwargs or dict()
-        self.collate_fn = collate_fn
+        self.collate_fn = (
+            collate_fn
+            if collate_kwargs is None
+            else lambda *args, **kwargs: collate_fn(
+                *args, **(collate_kwargs.update(**kwargs) or {})
+            )
+        )
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
