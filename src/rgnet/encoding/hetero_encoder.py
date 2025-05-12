@@ -11,7 +11,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
-from xmimir import XAtom, XDomain, XLiteral, XPredicate
+from xmimir import XAtom, XDomain, XLiteral, XPredicate, atom_str_template
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .node_factory import Node, NodeFactory
@@ -199,26 +199,75 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         # index in the feature matrix together with the type.
         obj_names = data.object_names
         for obj_idx in range(data.x_dict[obj_type].shape[0]):
-            graph.add_node(
-                f"{obj_type}[{obj_idx}]", type=obj_type, name=obj_names[obj_idx]
-            )
+            graph.add_node(obj_names[obj_idx], type=obj_type, name=obj_names[obj_idx])
 
-        for predicate in self.arity_dict.keys():
-            for pred_idx in range(data.x_dict[predicate].shape[0]):
-                graph.add_node(f"{predicate}[{pred_idx}]", type=predicate)
         edge_types = set()
-        for src, rel, dst in data.edge_types:
-            if (src, rel, dst) in edge_types:
-                raise ValueError(f"Duplicate edge type found ({src}, {rel}, {dst}).")
-            if (dst, rel, src) in edge_types:
+        predicates = set()
+        for edge_type in data.edge_types:
+            src, rel, dst = edge_type
+            predicates.add(src)
+            predicates.add(dst)
+        predicates.discard(self.obj_type_id)
+        if predicates - (
+            self.arity_dict.keys()
+            | {
+                f"{pred}{self.node_factory.goal_suffix}"
+                for pred in self.arity_dict.keys()
+            }
+            | {
+                f"{self.node_factory.negation_prefix}{pred}{self.node_factory.goal_suffix}"
+                for pred in self.arity_dict.keys()
+            }
+            | {
+                f"{self.node_factory.negation_prefix}{pred}"
+                for pred in self.arity_dict.keys()
+            }
+        ):
+            raise ValueError(
+                f"Graph predicates are not a subset of the encoder's domain predicates: "
+                f"({predicates} != {self.arity_dict.keys()})"
+            )
+        atoms = defaultdict(dict)
+        for edge_type in data.edge_types:
+            if edge_type in edge_types:
+                raise ValueError(f"Duplicate edge type found ({edge_type}).")
+            if edge_type in edge_types:
                 continue
-            edge_types.add((src, rel, dst))
-            src_tensor, dst_tensor = data.edge_index_dict[src, rel, dst]
+            edge_types.add(edge_type)
+            src_tensor, dst_tensor = data.edge_index_dict[edge_type]
+            src, rel, dst = edge_type
             for src_idx, dst_idx in zip(src_tensor, dst_tensor):
-                print(f"{src}[{src_idx}]", f"{dst}[{dst_idx}]", int(rel))
+                if src != self.obj_type_id:
+                    src_idx = src_idx.item()
+                    atoms[(src, src_idx)][int(rel)] = obj_names[dst_idx.item()]
+                elif dst != self.obj_type_id:
+                    dst_idx = dst_idx.item()
+                    atoms[(dst, dst_idx)][int(rel)] = obj_names[src_idx.item()]
+                else:
+                    raise ValueError(
+                        f"Both src and dst are objects: {edge_type=}, {src_idx=}, {dst_idx=}."
+                    )
+        for (predicate, atom_idx), obj_dict in atoms.items():
+            pos_obj_tuples = sorted(obj_dict.items(), key=operator.itemgetter(0))
+            is_goal = predicate.endswith(self.node_factory.goal_suffix)
+            is_negated = predicate.startswith(self.node_factory.negation_prefix)
+            predicate_name = predicate[
+                len(self.node_factory.negation_prefix) * is_negated : len(predicate)
+                - (len(self.node_factory.goal_suffix) * is_goal)
+            ]
+            atom_str = (
+                (self.node_factory.negation_prefix if is_negated else "")
+                + atom_str_template.render(
+                    predicate=predicate_name,
+                    objects=[obj for pos, obj in pos_obj_tuples],
+                )
+                + (self.node_factory.goal_suffix if is_goal else "")
+            )
+            graph.add_node(atom_str, type=predicate)
+            for pos, obj in pos_obj_tuples:
                 graph.add_edge(
-                    f"{src}[{src_idx}]",
-                    f"{dst}[{dst_idx}]",
-                    position=int(rel),
+                    atom_str,
+                    obj,
+                    position=int(pos),
                 )
         return self._graph_t(graph)
