@@ -64,7 +64,7 @@ def batched_permutations(
     num_rows = x.shape[0]
     if arity == 1:
         # no need to permute
-        perms_iter = itertools.batched(range(x.shape[0]), batch_size or x.shape[0])
+        perms_iter = itertools.batched(range(x.shape[0]), batch_size or num_rows)
     else:
         if with_replacement:
             perms_iter = itertools.product(range(num_rows), repeat=arity)

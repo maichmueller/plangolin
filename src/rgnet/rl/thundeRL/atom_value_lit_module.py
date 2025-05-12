@@ -10,7 +10,6 @@ from torch_geometric.data import Batch
 from rgnet.models.atom_valuator import AtomValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.thundeRL.validation import ValidationCallback
-from rgnet.utils.misc import num_nodes_per_entry
 
 
 class OutputInfo(NamedTuple):
@@ -61,9 +60,8 @@ class AtomValueLearningModule(lightning.LightningModule):
             with_info = self.assert_output
         # embeddings shape: (batch_size * avg_object_count_per_state, embedding_size)
         embeddings, batch_info = self.gnn(states_batch)
-        num_objects = num_nodes_per_entry(states_batch, "obj")
         return self.atom_valuator(
-            embeddings, num_objects, states_batch.object_names, with_info=with_info
+            embeddings, batch_info, states_batch.object_names, with_info=with_info
         )
 
     def training_step(

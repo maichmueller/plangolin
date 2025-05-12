@@ -144,9 +144,13 @@ def test_save_and_load(problem, fresh_atomdrive, request):
     [
         "small_blocks",
         "medium_blocks",
+        "small_delivery_1_pkgs",
+        "small_delivery_2_pkgs",
     ],
 )
 def test_atom_dist_mp_module(request, problem):
+    import time
+
     problem = request.getfixturevalue(problem)
     space = problem[0]
     env = ExpandedStateSpaceEnv(
@@ -154,12 +158,17 @@ def test_atom_dist_mp_module(request, problem):
         reward_function=UnitReward(gamma=1.0, goal_reward=1.0, regular_reward=1.0),
         batch_size=1,
     )
+    start = time.time()
     pyg_env = env.to_pyg_data(0, natural_transitions=True)
+    print(f"Time taken for pyg_env conversion: {time.time() - start:.2f} seconds")
     pyg_env.atoms_per_state = [list(state.atoms(with_statics=False)) for state in space]
+    device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
     mp_module = OptimalAtomValuesMP(
         atom_to_index_map=make_atom_ids(space)[0], aggr="min"
-    )
-    mp_module(pyg_env)
+    ).to(device)
+    start = time.time()
+    mp_module(pyg_env.to(device))
+    print(f"Time taken for MP module: {time.time() - start:.2f} seconds")
     for state in space:
         dist_tensor = getattr(pyg_env, OptimalAtomValuesMP.default_attr_name)[
             state.index
