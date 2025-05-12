@@ -3,6 +3,27 @@ from typing import Callable, Generator, Generic, NamedTuple, Sequence, TypeVar
 
 import torch
 
+try:
+    from itertools import batched
+except ImportError:
+    from collections.abc import Iterable, Iterator
+    from itertools import islice
+    from typing import List, TypeVar
+
+    U = TypeVar("U")
+
+    def batched(iterable: Iterable[U], n: int) -> Iterator[List[U]]:
+        """Batch data into lists of length n. The last batch may be shorter.
+
+        Sufficiently equivalent to itertools.batched, available in Python 3.12+.
+        """
+        if n <= 0:
+            raise ValueError("n must be > 0")
+        it = iter(iterable)
+        while batch := list(islice(it, n)):
+            yield batch
+
+
 T = TypeVar("T")
 
 
@@ -64,7 +85,7 @@ def batched_permutations(
     num_rows = x.shape[0]
     if arity == 1:
         # no need to permute
-        perms_iter = itertools.batched(range(x.shape[0]), batch_size or num_rows)
+        perms_iter = batched(range(x.shape[0]), batch_size or num_rows)
     else:
         if with_replacement:
             perms_iter = itertools.product(range(num_rows), repeat=arity)
