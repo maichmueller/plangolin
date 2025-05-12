@@ -9,7 +9,7 @@ from torchrl.envs import Transform, TransformedEnv
 
 from rgnet.rl.embedding.embedding_module import EmbeddingModule
 from rgnet.rl.envs import PlanningEnvironment
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper
+from rgnet.utils.misc import NonTensorWrapper
 
 
 class EmbeddingTransform(Transform):

@@ -14,10 +14,9 @@ import xmimir as xmi
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.reward import UnitReward
 from rgnet.rl.reward.uniform_reward import FlatReward
-from rgnet.utils.misc import broadcastable
+from rgnet.utils.misc import NonTensorWrapper, broadcastable, tolist
 from xmimir import XState, XStateSpace
 
-from ..rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from .mdp_to_pyg import mdp_graph_as_pyg_data
 from .policy_evaluation_mp import OptimalPolicyMP, ValueIterationMP
 

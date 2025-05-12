@@ -1,6 +1,6 @@
 from tensordict import NonTensorStack
 
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack
 
 
 def test_as_non_tensor_stack():

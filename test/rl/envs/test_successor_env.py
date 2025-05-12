@@ -6,8 +6,8 @@ import torch
 
 import xmimir as xmi
 from rgnet.rl.envs import SuccessorEnvironment
-from rgnet.rl.non_tensor_data_utils import tolist
 from rgnet.rl.reward import UnitReward
+from rgnet.utils.misc import tolist
 
 
 def create_successor_env(

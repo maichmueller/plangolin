@@ -5,7 +5,7 @@ from typing import Dict, List
 from tensordict import NestedKey
 from tensordict.nn import TensorDictModule
 
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
+from rgnet.utils.misc import NonTensorWrapper, as_non_tensor_stack, tolist
 from xmimir import XState, XStateSpace, XTransition
 
 

@@ -7,7 +7,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 import xmimir as xmi
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack
 
 
 class SupervisedValueLoss(torch.nn.Module):

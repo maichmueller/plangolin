@@ -12,7 +12,7 @@ from tensordict import NonTensorStack
 
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import tolist
+from rgnet.utils.misc import tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 

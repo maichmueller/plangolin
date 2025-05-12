@@ -39,9 +39,9 @@ from rgnet.rl.envs import (
     PlanningEnvironment,
     SuccessorEnvironment,
 )
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
 from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
+from rgnet.utils.misc import as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
 

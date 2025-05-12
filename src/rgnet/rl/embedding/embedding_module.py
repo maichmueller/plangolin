@@ -7,12 +7,11 @@ from torch_geometric.nn import Aggregation
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models import HeteroGNN
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
+from rgnet.utils.misc import NonTensorWrapper, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 
 class EmbeddingModule(torch.nn.Module):
-
     def __init__(
         self,
         encoder: HeteroGraphEncoder,

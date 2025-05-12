@@ -9,7 +9,7 @@ from torch.distributions import Categorical
 from torchrl.envs.utils import ExplorationType, exploration_type
 
 import xmimir as xmi
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack
 
 try:
     from enum import StrEnum  # Available in Python 3.11+

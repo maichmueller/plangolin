@@ -20,7 +20,7 @@ from rgnet.rl.losses.all_actions_estimator import (
     EnvironmentBasedRewardProvider,
     KeyBasedProvider,
 )
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 

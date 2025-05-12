@@ -17,8 +17,8 @@ from rgnet.rl.data import FlashDrive
 from rgnet.rl.data.atom_drive import AtomDrive
 from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
 from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, tolist
 from rgnet.rl.reward import UnitReward
+from rgnet.utils.misc import NonTensorWrapper, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 

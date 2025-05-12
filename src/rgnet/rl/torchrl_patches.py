@@ -2,7 +2,7 @@ import torch
 from tensordict import NonTensorData, NonTensorStack
 from tensordict.base import NO_DEFAULT
 
-from rgnet.rl.non_tensor_data_utils import tolist
+from rgnet.utils.misc import tolist
 
 
 def patched_stack_non_tensor(list_of_non_tensor, dim=0):

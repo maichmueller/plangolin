@@ -19,8 +19,8 @@ from rgnet.rl.envs.expanded_state_space_env import (
     WeightedRandomReset,
 )
 from rgnet.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack, tolist
 from rgnet.rl.rollout_collector import RolloutCollector, build_from_spaces
+from rgnet.utils.misc import as_non_tensor_stack, tolist
 from xmimir import XStateSpace
 
 

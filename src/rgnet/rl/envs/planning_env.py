@@ -13,8 +13,8 @@ from torchrl.data import Bounded, Categorical, Composite, NonTensor
 from torchrl.envs import EnvBase
 
 import xmimir as xmi
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack
 from rgnet.rl.reward import RewardFunction
+from rgnet.utils.misc import NonTensorWrapper, as_non_tensor_stack
 
 InstanceType = TypeVar("InstanceType")
 

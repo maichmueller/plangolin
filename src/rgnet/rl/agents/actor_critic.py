@@ -18,7 +18,7 @@ from torchrl.modules.tensordict_module import ValueOperator
 import xmimir as xmi
 from rgnet.models.hetero_gnn import simple_mlp
 from rgnet.rl.embedding import EmbeddingModule
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
+from rgnet.utils.misc import NonTensorWrapper, as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import (
     ObjectEmbedding,
     ObjectPoolingModule,

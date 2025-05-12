@@ -14,7 +14,7 @@ import torch_geometric.nn.aggr
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.embedding import EmbeddingModule, build_embedding_and_gnn
-from rgnet.rl.non_tensor_data_utils import tolist
+from rgnet.utils.misc import tolist
 
 
 def one_hot_embedding(

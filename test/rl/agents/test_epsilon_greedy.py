@@ -7,7 +7,7 @@ import torch
 
 from rgnet.rl.agents import EGreedyModule, EpsilonAnnealing
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack
 
 
 def test_step_epsilon():

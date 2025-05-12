@@ -13,8 +13,8 @@ from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.losses import AllActionsLoss, CriticLoss
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 from rgnet.rl.thundeRL.validation import ValidationCallback
+from rgnet.utils.misc import as_non_tensor_stack
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
 

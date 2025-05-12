@@ -12,8 +12,8 @@ import torch
 from tensordict import LazyStackedTensorDict, TensorDict
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.non_tensor_data_utils import as_non_tensor_stack
 from rgnet.rl.thundeRL.validation import CriticValidation, ProbsCollector
+from rgnet.utils.misc import as_non_tensor_stack
 
 
 @pytest.mark.parametrize(

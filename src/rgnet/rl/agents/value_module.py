@@ -8,7 +8,7 @@ from torch_geometric.nn import MLP
 import xmimir as xmi
 from rgnet.rl.agents.actor_critic import embed_transition_targets
 from rgnet.rl.embedding import EmbeddingModule
-from rgnet.rl.non_tensor_data_utils import NonTensorWrapper, as_non_tensor_stack, tolist
+from rgnet.utils.misc import NonTensorWrapper, as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
