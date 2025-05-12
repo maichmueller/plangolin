@@ -1,5 +1,6 @@
 import itertools
-from typing import Callable, Generator, Generic, NamedTuple, Sequence, TypeVar
+from dataclasses import dataclass
+from typing import Callable, Generator, Generic, Sequence, TypeVar
 
 import torch
 
@@ -27,13 +28,14 @@ except ImportError:
 T = TypeVar("T")
 
 
-class PermutedData(Generic[T], NamedTuple):
+@dataclass(slots=True, frozen=True)
+class PermutedData(Generic[T]):
     permutation: tuple[int, ...]
     data: T | torch.Tensor
-    arity: int
 
 
-class PermutedDataBatch(Generic[T], NamedTuple):
+@dataclass(slots=True, frozen=True)
+class PermutedDataBatch(Generic[T]):
     permutations: list[tuple[int, ...]]
     data: list[T | torch.Tensor]
     arity: int
@@ -43,7 +45,7 @@ def batched_permutations(
     x: torch.Tensor | Sequence[T],
     arity: int,
     batch_size: int | None = 1,
-    transform: Callable[[T | torch.Tensor], T | torch.Tensor] = lambda x: x,
+    transform: Callable[[list[T] | torch.Tensor], list[T] | torch.Tensor] = lambda x: x,
     with_replacement: bool = False,
 ) -> Generator[PermutedDataBatch[T], None, None]:
     """
@@ -66,7 +68,7 @@ def batched_permutations(
     """
 
     def yield_batch(batch_: list[PermutedData[T]]) -> PermutedDataBatch[T]:
-        perms, data, _ = zip(*batch_)
+        perms, data = zip(*map(lambda elem: (elem.permutation, elem.data), batch_))
         return PermutedDataBatch(perms, data, arity=arity)
 
     def sliceit(data: torch.Tensor | T, indices: Sequence[int]) -> T | torch.Tensor:
@@ -98,7 +100,6 @@ def batched_permutations(
             PermutedData(
                 perm,
                 transform(permuted),
-                arity,
             )
         )
         if batch_size is not None:
