@@ -177,7 +177,7 @@ def num_nodes_per_entry(
         raise ValueError("No batch attribute found in data")
 
 
-@num_nodes_per_entry.register(torch.Tensor)
+@num_nodes_per_entry.register
 def _num_nodes_per_entry(batch: torch.Tensor) -> torch.Tensor:
     num_entries = batch.max().item() + 1
     out = torch.zeros(

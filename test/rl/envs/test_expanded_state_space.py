@@ -1,4 +1,4 @@
-from test.fixtures import medium_blocks, multi_instance_env, small_blocks  # noqa: F401
+from test.fixtures import *  # noqa: F401, F403
 from typing import List
 
 import pytest
@@ -168,6 +168,22 @@ def test_partial_reset(multi_instance_env):
         dict(spaces=["small_blocks", "medium_blocks"], batch_size=1),
         dict(spaces=["small_blocks", "medium_blocks"], batch_size=2),
         dict(spaces=["small_blocks", "medium_blocks"], batch_size=3),
+        dict(
+            spaces=[
+                "small_blocks",
+                "small_delivery_1_pkgs",
+                "small_delivery_2_pkgs",
+            ],
+            batch_size=1,
+        ),
+        dict(
+            spaces=[
+                "small_delivery_1_pkgs",
+                "small_blocks",
+                "small_delivery_2_pkgs",
+            ],
+            batch_size=5,
+        ),
     ],
     indirect=True,
 )
