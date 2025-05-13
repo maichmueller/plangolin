@@ -1,20 +1,16 @@
 import dataclasses
-import warnings
 from argparse import Namespace
-from itertools import chain
 from os import PathLike
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, Literal, Optional, Sequence, Type, Union
 
 import lightning
-import torch
 from jsonargparse import lazy_instance
 from lightning import Trainer
 from lightning.pytorch.cli import (
     ArgsType,
     LightningArgumentParser,
     LightningCLI,
-    OptimizerCallable,
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
@@ -32,7 +28,6 @@ from rgnet.encoding.base_encoder import EncoderFactory
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
@@ -40,7 +35,6 @@ from rgnet.rl.losses import (  # noqa: F401
     AllActionsValueEstimator,
     CriticLoss,
 )
-from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
 from rgnet.rl.reward import RewardFunction, UnitReward
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 
@@ -54,50 +48,6 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
     ProbsStoreCallback,
 )
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
-
-
-class OptimizerSetup:
-    def __init__(
-        self,
-        agent: ActorCritic,
-        optimizer: OptimizerCallable,  # already partly initialized from cli
-        gnn: Optional[torch.nn.Module] = None,
-        lr_actor: Optional[float] = None,
-        lr_critic: Optional[float] = None,
-        lr_embedding: Optional[float] = None,
-    ):
-        lr_parameters: List[Dict] = []  # parameter-specific learning rate
-        plain_parameter: List = []  # no specific learning rate
-        if agent.embedding_module is None and gnn is None:
-            warnings.warn("No parameter for the embedding found.")
-            gnn_params = []
-        elif agent.embedding_module is not None:
-            gnn_params = agent.embedding_module.gnn.parameters()
-        else:
-            gnn_params = gnn.parameters()
-        for specific_lr, params in [
-            (
-                lr_actor,
-                chain(
-                    agent.actor_net_probs.parameters(),
-                    agent.actor_objects_net.parameters(),
-                ),
-            ),
-            (lr_critic, agent.value_operator.parameters()),
-            (lr_embedding, gnn_params),
-        ]:
-            if specific_lr and params:
-                lr_parameters.append(
-                    {
-                        "params": params,
-                        "lr": specific_lr,
-                    }
-                )
-            elif params:
-                plain_parameter.extend(params)
-        if plain_parameter:
-            lr_parameters.append({"params": plain_parameter})
-        self.optimizer = optimizer(lr_parameters)
 
 
 @dataclasses.dataclass
@@ -124,25 +74,6 @@ class ValueEstimatorConfig:
     ):
         self.gamma = gamma
         self.estimator_type = estimator_type
-
-
-def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):
-    """
-    We need to configure the estimator after the loss was instantiated via make_value_estimator.
-    This is why we have the estimator and loss as separate keys and link them together for
-    configuring `model.loss`.
-    """
-    hyperparameter = dict()
-    if estimator_config.estimator_type == "AllActionsValueEstimator":
-        hyperparameter["reward_done_provider"] = KeyBasedProvider(
-            reward_key=PolicyGradientLitModule.default_keys.all_rewards,
-            done_key=PolicyGradientLitModule.default_keys.all_dones,
-        )
-    hyperparameter["shifted"] = True
-    hyperparameter["gamma"] = estimator_config.gamma
-
-    loss.make_value_estimator(estimator_config.estimator_type, **hyperparameter)
-    return loss
 
 
 @dataclasses.dataclass
@@ -288,13 +219,6 @@ class ThundeRLCLI(LightningCLI):
             "data_layout.input_data", "data.input_data", apply_on="instantiate"
         )
 
-        # Model links
-        parser.link_arguments(
-            "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"
-        )
-        parser.link_arguments(
-            "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
-        )
         # Trainer / logger links
         parser.link_arguments(
             source="data_layout.output_data.out_dir",

@@ -15,7 +15,7 @@ from torch_geometric.data import Batch, HeteroData
 import rgnet
 from rgnet.rl.data import FlashDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.thundeRL import ThundeRLCLI
+from rgnet.rl.thundeRL import PolicyGradientCLI
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -29,7 +29,7 @@ def cli_main():
     logging.getLogger().setLevel(logging.INFO)
     torch.set_float32_matmul_precision("medium")
     torch.multiprocessing.set_sharing_strategy("file_system")
-    cli = ThundeRLCLI()
+    cli = PolicyGradientCLI()
     return cli
 
 
@@ -81,12 +81,12 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule,
+        rgnet.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule,
         "training_step",
         training_step_mock,
     )
     cli = cli_main()
-    mockito.unstub(rgnet.rl.thundeRL.policy_gradient_lit_module.PolicyGradientLitModule)
+    mockito.unstub(rgnet.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule)
     return cli
 
 

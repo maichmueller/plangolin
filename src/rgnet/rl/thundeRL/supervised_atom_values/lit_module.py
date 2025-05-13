@@ -17,7 +17,7 @@ class OutputInfo(NamedTuple):
     atom: str
 
 
-class AtomValueLearningModule(lightning.LightningModule):
+class AtomValuesLitModule(lightning.LightningModule):
     def __init__(
         self,
         gnn: Union[PyGModule, PyGHeteroModule],

@@ -1,9 +1,7 @@
 import dataclasses
 import warnings
-from argparse import Namespace
 from itertools import chain
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 import torch
 from lightning import Trainer
@@ -13,7 +11,6 @@ from lightning.pytorch.cli import (
     OptimizerCallable,
     SaveConfigCallback,
 )
-from lightning.pytorch.loggers import WandbLogger
 from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
@@ -214,6 +211,12 @@ class PolicyGradientCLI(ThundeRLCLI):
         parser.link_arguments(
             "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
         )
+        parser.link_arguments(
+            "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"
+        )
+        parser.link_arguments(
+            "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
+        )
 
         # Loss links
         parser.link_arguments(
@@ -322,33 +325,3 @@ class PolicyGradientCLI(ThundeRLCLI):
             return self._instantiate_trainer(trainer_config, extra_callbacks)
 
         return super().instantiate_trainer(**kwargs)
-
-    def convert_to_nested_dict(self, config: Namespace):
-        """Lightning converts nested namespaces to strings"""
-        mapping: Dict = vars(config).copy()
-        for key, item in mapping.items():
-            if isinstance(item, Namespace):
-                mapping[key] = self.convert_to_nested_dict(item)
-            if isinstance(item, Sequence) and not isinstance(item, str):
-                mapping[key] = [
-                    (
-                        sequence_item
-                        if not isinstance(sequence_item, Namespace)
-                        else self.convert_to_nested_dict(sequence_item)
-                    )
-                    for sequence_item in item
-                ]
-
-        return mapping
-
-    def before_fit(self):
-        self.trainer.logger.log_hyperparams(
-            self.convert_to_nested_dict(self.config["fit"])
-        )
-        wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
-        if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
-            self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
-        if wandb_extra.log_code:  # save everything inside src/rgnet
-            self.trainer.logger.experiment.log_code(
-                str((Path(__file__) / ".." / ".." / "..").resolve())
-            )

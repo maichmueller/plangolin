@@ -1,7 +1,5 @@
 import dataclasses
-import warnings
 from argparse import Namespace
-from itertools import chain
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
@@ -15,8 +13,6 @@ from lightning.pytorch.cli import (
 )
 from lightning.pytorch.loggers import WandbLogger
 
-from rgnet.algorithms import bellman_optimal_values, optimal_policy
-
 # avoids specifying full class_path for encoder in cli
 from rgnet.encoding import (  # noqa: F401
     ColorGraphEncoder,
@@ -27,7 +23,7 @@ from rgnet.encoding import (  # noqa: F401
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl.agents import ActorCritic
+from rgnet.models.atom_valuator import AtomValuator
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
@@ -37,7 +33,6 @@ from rgnet.rl.losses import (  # noqa: F401
 )
 from rgnet.rl.thundeRL.cli_config import ThundeRLCLI
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
-from rgnet.rl.thundeRL.policy_gradient.lit_module import PolicyGradientLitModule
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
@@ -50,36 +45,24 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
 )
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
+from .lit_module import AtomValuesLitModule
+
 
 class OptimizerSetup:
     def __init__(
         self,
-        agent: ActorCritic,
+        valuator: AtomValuator,
+        gnn: Optional[torch.nn.Module],
         optimizer: OptimizerCallable,  # already partly initialized from cli
-        gnn: Optional[torch.nn.Module] = None,
-        lr_actor: Optional[float] = None,
-        lr_critic: Optional[float] = None,
+        lr_valuator: Optional[float] = None,
         lr_embedding: Optional[float] = None,
     ):
         lr_parameters: List[Dict] = []  # parameter-specific learning rate
         plain_parameter: List = []  # no specific learning rate
-        if agent.embedding_module is None and gnn is None:
-            warnings.warn("No parameter for the embedding found.")
-            gnn_params = []
-        elif agent.embedding_module is not None:
-            gnn_params = agent.embedding_module.gnn.parameters()
-        else:
-            gnn_params = gnn.parameters()
+
         for specific_lr, params in [
-            (
-                lr_actor,
-                chain(
-                    agent.actor_net_probs.parameters(),
-                    agent.actor_objects_net.parameters(),
-                ),
-            ),
-            (lr_critic, agent.value_operator.parameters()),
-            (lr_embedding, gnn_params),
+            (lr_valuator, valuator.parameters()),
+            (lr_embedding, gnn.parameters()),
         ]:
             if specific_lr and params:
                 lr_parameters.append(
@@ -126,7 +109,7 @@ class AtomValuesCLI(ThundeRLCLI):
         run: bool = True,
     ) -> None:
         super().__init__(
-            PolicyGradientLitModule,
+            AtomValuesLitModule,
             ThundeRLDataModule,
             save_config_callback,
             save_config_kwargs,
@@ -144,105 +127,15 @@ class AtomValuesCLI(ThundeRLCLI):
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
+        parser.add_class_arguments(AtomValuator, "atom_valuator", as_positional=True)
 
         #################################### Validation callback links ##############################
 
-        # CriticValidation
         parser.link_arguments(
-            source="agent.value_operator",
-            target="model.validation_hooks.init_args.value_operator",
-            apply_on="instantiate",
+            "model.gnn",
+            "optimizer_setup.gnn",
         )
         parser.link_arguments(
-            source="data.validation_datasets",
-            target="model.validation_hooks.init_args.discounted_optimal_values",
-            compute_fn=lambda datasets: {
-                i: bellman_optimal_values(flashdrive.env_aux_data.pyg_env)
-                for i, flashdrive in enumerate(datasets)
-            },
-            apply_on="instantiate",
+            "model.atom_valuator",
+            "optimizer_setup.valuator",
         )
-        # PolicyValidation
-        parser.link_arguments(
-            source="data.validation_datasets",
-            target="model.validation_hooks.init_args.optimal_policy_dict",
-            compute_fn=lambda datasets: {
-                i: optimal_policy(flashdrive.env_aux_data.pyg_env)
-                for i, flashdrive in enumerate(datasets)
-            },
-            apply_on="instantiate",
-        )
-        # ProbsStoreCallback
-        parser.link_arguments(
-            source="data_layout.output_data.out_dir",
-            target="model.validation_hooks.init_args.save_dir",
-            apply_on="instantiate",
-        )
-
-        # PolicyEvaluationValidation
-        parser.link_arguments(
-            source="data.validation_datasets",
-            target="model.validation_hooks.init_args.envs",
-            apply_on="instantiate",
-        )
-        parser.link_arguments(
-            "estimator_config.gamma",
-            "model.validation_hooks.init_args.gamma",
-            apply_on="instantiate",
-        )
-
-    def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
-        """
-        We need to add the validation callbacks of the model to the trainer.
-        The problem is that we have a list of callbacks, and we can't extend
-        the list of callbacks provided via the config using jsonargparse.
-        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
-        Therefore, we manually add our model callbacks to the extra callbacks.
-        """
-        if (
-            isinstance(self.model, PolicyGradientLitModule)
-            and self.model.validation_hooks
-        ):
-            model_callbacks = self.model.validation_hooks
-            extra_callbacks = [
-                self._get(self.config_init, c)
-                for c in self._parser(self.subcommand).callback_keys
-            ]
-            extra_callbacks.extend(model_callbacks)
-            trainer_config = {
-                **self._get(self.config_init, "trainer", default={}),
-                **kwargs,
-            }
-            return self._instantiate_trainer(trainer_config, extra_callbacks)
-
-        return super().instantiate_trainer(**kwargs)
-
-    def convert_to_nested_dict(self, config: Namespace):
-        """Lightning converts nested namespaces to strings"""
-        mapping: Dict = vars(config).copy()
-        for key, item in mapping.items():
-            if isinstance(item, Namespace):
-                mapping[key] = self.convert_to_nested_dict(item)
-            if isinstance(item, Sequence) and not isinstance(item, str):
-                mapping[key] = [
-                    (
-                        sequence_item
-                        if not isinstance(sequence_item, Namespace)
-                        else self.convert_to_nested_dict(sequence_item)
-                    )
-                    for sequence_item in item
-                ]
-
-        return mapping
-
-    def before_fit(self):
-        self.trainer.logger.log_hyperparams(
-            self.convert_to_nested_dict(self.config["fit"])
-        )
-        wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
-        if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
-            self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
-        if wandb_extra.log_code:  # save everything inside src/rgnet
-            self.trainer.logger.experiment.log_code(
-                str((Path(__file__) / ".." / ".." / "..").resolve())
-            )
