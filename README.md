@@ -1,4 +1,6 @@
 # RGNet
+![build-develop](https://git.rwth-aachen.de/i6/general/rgnet/badges/develop/pipeline.svg)
+![build-main](https://git.rwth-aachen.de/i6/general/rgnet/badges/develop/pipeline.svg)
 
 An open source library for Machine Learning on Planning problems.
 Core concepts include
