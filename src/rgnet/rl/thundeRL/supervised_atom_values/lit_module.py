@@ -64,78 +64,113 @@ class AtomValueLearningModule(lightning.LightningModule):
             embeddings, batch_info, states_batch.object_names, with_info=with_info
         )
 
+    @staticmethod
+    def _assert_output(
+        out_by_predicate: dict[str, Tensor],
+        output_info: dict[str, list[OutputInfo]],
+        predicate_to_state_idx: dict[str, list[tuple[int, str]]],
+    ):
+        for predicate, expected_output_info in predicate_to_state_idx.keys():
+            assert expected_output_info == output_info[predicate], (
+                "Batched output information does not match target information. The data is malaligned. "
+                "Check the data-collate function for the batch building logic per predicate for deviations "
+                "from the logic within this module."
+            )
+            assert out_by_predicate[predicate].shape[0] == len(expected_output_info), (
+                "Batched output information batch size does not match target information batch size. "
+                "The data is malaligned. "
+                "Check the data-collate function for the batch building logic per predicate for deviations "
+                "from the logic within this module."
+            )
+
     def training_step(
         self,
         batch: Batch,
         targets: dict[str, Tensor],
         predicate_to_state_idx: dict[str, list[tuple[int, str]]],
     ) -> STEP_OUTPUT:
-        out_by_predicate = self(batch)
+        out_by_predicate = self(batch, with_info=self.assert_output)
         if self.assert_output:
-            out_by_predicate, output_info = out_by_predicate
-            for predicate in targets.keys():
-                assert predicate_to_state_idx[predicate] == output_info[predicate], (
-                    "Batched output information does not match target information. The data is malaligned. "
-                    "Check the data-collate function for the batch building logic per predicate for deviations "
-                    "from the logic within this module."
-                )
+            self._assert_output(*out_by_predicate, predicate_to_state_idx)
         assert out_by_predicate.keys() == targets.keys()
-        loss, loss_by_predicate = self._compute_loss(out_by_predicate, targets)
+        loss, norm_loss, loss_by_predicate = self._compute_loss(
+            out_by_predicate, targets
+        )
         self.log(
-            "train/" + "direct_l1 (unused)",
-            sum(
-                map(torch.detach, loss_by_predicate.values()),
-                torch.tensor(0, device=self.device),
-            )
-            .sum()
-            .item(),
+            "train/" + f"direct_l1{' (unused)' if self.normalize_loss else ''}",
+            loss.item(),
             batch_size=batch[0].batch_size,
         )
         self.log(
-            "train/" + "normalized_l1", loss.item(), batch_size=batch[0].batch_size
+            "train/" + f"normalized_l1{' (unused)' if not self.normalize_loss else ''}",
+            norm_loss.item(),
+            batch_size=batch[0].batch_size,
         )
-        return loss
+        if self.normalize_loss:
+            return norm_loss
+        else:
+            return loss
 
     def _compute_loss(
         self,
         out_by_predicate: dict[str, Tensor],
         targets: dict[str, Tensor],
-    ) -> tuple[Tensor, dict[str, Tensor]]:
+    ) -> tuple[Tensor, Tensor, dict[str, Tensor]]:
         loss_by_predicate: dict[str, Tensor] = dict()
         for predicate, target_values in targets.keys():
             out = out_by_predicate[predicate]
             l1loss = torch.abs(out - target_values)
             loss_by_predicate[predicate] = l1loss
         # Normalize the loss by the square root of the target values.
-        # This diminishes the weight of atoms with large values (e.g. when they are distances).
+        # This diminishes the weight of atoms with large values (e.g., when they are distances).
         loss = torch.zeros(1, device=self.device)
-        if self.normalize_loss:
-            for predicate, target_values in targets.items():
-                loss += loss_by_predicate[predicate] / target_values.abs().sqrt()
-        else:
-            for pred_loss in loss_by_predicate.values():
-                loss += pred_loss
-        return loss, loss_by_predicate
+        norm_loss = torch.zeros(1, device=self.device)
+        nr_predicates = len(loss_by_predicate)
+        for predicate, target_values in targets.items():
+            pred_loss = loss_by_predicate[predicate]
+            # Take the mean for each predicate individually, since `sum` we would skew the loss towards higher arity
+            # predicates. Higher arity predicates will have more atoms (permutations) to compute the loss for and
+            # thus more loss values to sum up.
+            # The mean per predicate will ensure that the atom count does not emphasize one predicate over another.
+            avg_pred_loss = loss_by_predicate[predicate].mean()
+            loss_by_predicate[predicate] = avg_pred_loss
+            loss += avg_pred_loss
+            # Normalize the loss by the square root of the target values.
+            norm_loss += (pred_loss / target_values.detach().abs().sqrt()).mean()
+        return loss / nr_predicates, norm_loss / nr_predicates, loss_by_predicate
 
     def validation_step(
         self,
         batch: Batch,
         targets: dict[str, Tensor],
-        predicate_to_state_idx: dict[str, list[tuple[int, str]]],
+        *args,
         batch_idx=None,
         dataloader_idx=0,
+        **kwargs,
     ):
         estimated_values = self(batch, with_info=False)
-        loss, _ = self._compute_loss(estimated_values, targets, predicate_to_state_idx)
+        loss, norm_loss, loss_per_predicate = self._compute_loss(
+            estimated_values, targets
+        )
         for hook in self.validation_hooks:
             optional_metrics = hook(
-                loss,
+                norm_loss if self.normalize_loss else loss,
                 batch_idx=batch_idx,
                 dataloader_idx=dataloader_idx,
             )
+            optional_metrics_2 = hook(
+                loss_per_predicate, batch_idx=batch_idx, dataloader_idx=dataloader_idx
+            )
+            metrics = dict()
             if optional_metrics is None:
-                continue
-            for key, value in optional_metrics.items():
+                if optional_metrics_2 is not None:
+                    metrics = optional_metrics_2
+            else:
+                if optional_metrics_2 is not None:
+                    metrics = {**optional_metrics, **optional_metrics_2}
+                else:
+                    metrics = optional_metrics
+            for key, value in metrics.items():
                 self.log("validation/" + key, value, batch_size=batch[0].batch_size)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
