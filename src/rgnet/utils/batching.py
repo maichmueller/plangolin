@@ -16,7 +16,7 @@ except ImportError:
     def batched(iterable: Iterable[U], n: int) -> Iterator[List[U]]:
         """Batch data into lists of length n. The last batch may be shorter.
 
-        Sufficiently equivalent to itertools.batched, available in Python 3.12+.
+        Equivalent enough to itertools.batched, available in Python 3.12+.
         """
         if n <= 0:
             raise ValueError("n must be > 0")
@@ -33,12 +33,20 @@ class PermutedData(Generic[T]):
     permutation: tuple[int, ...]
     data: T | torch.Tensor
 
+    def __iter__(self):
+        yield self.permutation
+        yield self.data
+
 
 @dataclass(slots=True, frozen=True)
 class PermutedDataBatch(Generic[T]):
     permutations: list[tuple[int, ...]]
     data: list[T | torch.Tensor]
     arity: int
+
+    def __iter__(self):
+        for perm, data in zip(self.permutations, self.data):
+            yield PermutedData(perm, data)
 
 
 def batched_permutations(
@@ -68,7 +76,7 @@ def batched_permutations(
     """
 
     def yield_batch(batch_: list[PermutedData[T]]) -> PermutedDataBatch[T]:
-        perms, data = zip(*map(lambda elem: (elem.permutation, elem.data), batch_))
+        perms, data = zip(*batch_)
         return PermutedDataBatch(perms, data, arity=arity)
 
     def sliceit(data: torch.Tensor | T, indices: Sequence[int]) -> T | torch.Tensor:
@@ -81,7 +89,7 @@ def batched_permutations(
         case torch.Tensor():
             assert x.ndim >= 2, f"Input must be at least 2D tensor. Given {x.ndim=}."
         case Sequence():
-            ...
+            pass
         case _:
             raise ValueError("Input must be at least 2D tensor or a sequence.")
     num_rows = x.shape[0]

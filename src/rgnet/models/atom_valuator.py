@@ -55,7 +55,7 @@ class AtomValuator(torch.nn.Module):
             p.name: p.base.get_index() for p in self.predicates_dict.values()
         }
         self.max_arity = max(self.arity_dict.values())
-        self.atom_valuators = PatchedModuleDict(
+        self.valuator_by_predicate = PatchedModuleDict(
             {
                 # One Module per predicate
                 # For a predicate p(o_1,...,o_k) the corresponding Module gets k object
@@ -140,12 +140,12 @@ class AtomValuator(torch.nn.Module):
         if with_info is None:
             with_info = self.assert_output
         num_objects = num_nodes_per_entry(batch_info)
-        obj_embeddings_per_state: tuple[Tensor, ...] = torch.split(
+        object_emb_per_state: tuple[Tensor, ...] = torch.split(
             embeddings, tolist(num_objects)
         )
         predicate_out = dict()
         output_info: dict[str, list[OutputInfo]] = dict()
-        pooled_embbeding_batch = self.state_aggr(embeddings, batch_info)
+        pooled_emb_batch = self.state_aggr(embeddings, batch_info)
         for arity in self.arity_to_predicates.keys():
             if arity == 0:
                 # there are no objects in the predicate,
@@ -154,71 +154,63 @@ class AtomValuator(torch.nn.Module):
                     predicate_out[predicate], output_info[predicate] = (
                         self._forward_predicate(
                             predicate,
-                            pooled_embbeding_batch,
-                            range(len(obj_embeddings_per_state)),
+                            pooled_emb_batch,
+                            range(len(object_emb_per_state)),
                             itertools.repeat([]),
                             with_info=with_info,
                         )
                     )
             else:
-                flattened_permuted_embeddings = []
+                flattened_permuted_emb = []
                 objects_per_atom = []
                 state_association = []
                 repeated_state_aggr_emb = []
                 for state_index, (
                     state_object_names,
-                    state_object_embeddings,
+                    state_object_embs,
                     state_aggr_emb,
                 ) in enumerate(
-                    zip(object_names, obj_embeddings_per_state, pooled_embbeding_batch)
+                    zip(object_names, object_emb_per_state, pooled_emb_batch)
                 ):
-                    for object_permutation_batch in batched_permutations(
-                        state_object_embeddings,
+                    for object_permut_batch in batched_permutations(
+                        state_object_embs,
                         arity,
                         batch_size=1,
                         with_replacement=True,  # allow repeated objects in atoms as args, e.g. on(a a), (= b b), etc.
                     ):
-                        nr_perms = len(object_permutation_batch.permutations)
+                        nr_perms = len(object_permut_batch.permutations)
                         state_association.extend([state_index] * nr_perms)
                         repeated_state_aggr_emb.extend(
                             [state_aggr_emb.view(1, -1)] * nr_perms
                         )
                         for (
-                            permutation_indices,
-                            stacked_object_embeddings,
-                        ) in zip(
-                            object_permutation_batch.permutations,
-                            object_permutation_batch.data,
-                        ):
+                            permut_indices,
+                            stacked_object_emb,
+                        ) in object_permut_batch:
                             objects_per_atom.append(
-                                tuple(
-                                    state_object_names[index]
-                                    for index in permutation_indices
-                                )
+                                [state_object_names[index] for index in permut_indices]
                             )
-                            flattened_permuted_embeddings.append(
-                                stacked_object_embeddings.view(1, -1)
+                            flattened_permuted_emb.append(
+                                stacked_object_emb.view(1, -1)
                             )
-                batched_permuted_embeds = torch.cat(
-                    flattened_permuted_embeddings, dim=0
-                )
+                batched_permuted_emb = torch.cat(flattened_permuted_emb, dim=0)
                 batched_repeated_state_aggr = torch.cat(repeated_state_aggr_emb, dim=0)
                 assert (
-                    batched_permuted_embeds.shape[0]
+                    batched_permuted_emb.shape[0]
                     == batched_repeated_state_aggr.shape[0]
                 ), (
                     f"Batch size mismatch between permuted embeddings and repeated state aggregation. "
-                    f"Given: {batched_permuted_embeds.shape=}, {batched_repeated_state_aggr.shape=}"
+                    f"Given: {batched_permuted_emb.shape=}, {batched_repeated_state_aggr.shape=}"
                 )
-                batched_permuted_embeds = torch.cat(
-                    (batched_repeated_state_aggr, batched_permuted_embeds), dim=1
+                batched_permuted_emb = torch.cat(
+                    (batched_repeated_state_aggr, batched_permuted_emb), dim=1
                 )
 
                 for predicate in self.arity_to_predicates[arity]:
                     predicate_out[predicate], output_info[predicate] = (
                         self._forward_predicate(
                             predicate,
-                            batched_permuted_embeds,
+                            batched_permuted_emb,
                             state_association,
                             objects_per_atom,
                             with_info=with_info,
@@ -240,7 +232,7 @@ class AtomValuator(torch.nn.Module):
         atom_objects: Iterable[Sequence[str]] | None = None,
         with_info: bool = False,
     ):
-        mlp = self.atom_valuators[predicate]
+        mlp = self.valuator_by_predicate[predicate]
         with torch.cuda.stream(self.stream_for(predicate)):
             predicate_out = mlp(batched_permutations)
         if with_info:
