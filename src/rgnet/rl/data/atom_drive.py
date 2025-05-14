@@ -1,4 +1,3 @@
-import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
@@ -13,7 +12,6 @@ import xmimir as xmi
 from rgnet.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
 from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.reward import UnitReward
 from xmimir import XAtom, XCategory, XState, XStateSpace
 from xmimir.wrappers import CustomProblem, XLiteral
 
@@ -81,17 +79,6 @@ class AtomDrive(BaseDrive):
         self,
         env: ExpandedStateSpaceEnv,
     ) -> List[HeteroData]:
-        if (
-            isinstance(env.reward_function, UnitReward)
-            and env.reward_function.goal_reward != env.reward_function.regular_reward
-        ):
-            goal_reward = env.reward_function.goal_reward
-            regular_reward = env.reward_function.regular_reward
-            warnings.warn(
-                f"The reward function is not unit, but AtomDrive assumes it is ({goal_reward=}, {regular_reward=}). "
-                "For the value computation to be correct, the reward function would have to consider each atom "
-                "individually as a goal and send messages around with rewards for each of these cases. In this case, we simply use "
-            )
         space: xmi.XStateSpace = env.active_instances[0]
         encoder = self.encoder_factory(space.problem.domain)
         nr_states: int = len(space)
@@ -113,7 +100,9 @@ class AtomDrive(BaseDrive):
             if isinstance(atom_values, torch.Tensor):
                 atom_values = self.atom_tensor_to_dict(atom_values)
 
-        transitions = env.get_applicable_transitions(states)
+        transitions = env.get_applicable_transitions(
+            states, instances=[space] * len(states)
+        )
         iterator = zip(states, atom_values, transitions)
         if self.show_progress:
             iterator = tqdm(iterator, total=nr_states, desc="Encoding states")
