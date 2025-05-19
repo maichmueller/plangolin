@@ -5,6 +5,7 @@ from . import (
     embedding,
     envs,
     losses,
+    reward,
     thundeRL,
     torchrl_patches,
     trainer,
