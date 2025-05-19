@@ -41,9 +41,9 @@ def problem_setup(
     domain_name, problem
 ) -> tuple[xmi.XStateSpace, xmi.XDomain, xmi.XProblem]:
     # Pycharm usually executes tests with .../test as working directory
-    source_dir = "" if os.getcwd().endswith("/test") else "test/"
-    domain_path = f"{source_dir}pddl_instances/{domain_name}/domain.pddl"
-    problem_path = f"{source_dir}pddl_instances/{domain_name}/{problem}.pddl"
+    source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
+    domain_path = source_dir / "pddl_instances" / domain_name / "domain.pddl"
+    problem_path = source_dir / "pddl_instances" / domain_name / f"{problem}.pddl"
     space = xmi.XStateSpace(domain_path, problem_path)
     return space, space.problem.domain, space.problem
 
@@ -74,6 +74,16 @@ def medium_blocks():
 @pytest.fixture(scope="session")
 def large_blocks():
     return problem_setup("blocks", "large")
+
+
+@pytest.fixture(scope="session")
+def medium_spanner():
+    return problem_setup("spanner", "medium")
+
+
+@pytest.fixture(scope="session")
+def small_spanner():
+    return problem_setup("spanner", "small")
 
 
 @pytest.fixture(scope="session")

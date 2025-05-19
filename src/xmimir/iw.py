@@ -16,8 +16,8 @@ from multimethod import multimethod
 from rgnet.logging_setup import tqdm
 from rgnet.utils.misc import env_aware_cpu_count
 
-from .extensions import *
-from .wrappers import *
+# from .extensions import *
+from xmimir.wrappers import *
 
 __all__ = [
     "Novelty",
@@ -441,6 +441,14 @@ class IWStateSpace(XStateSpace):
         return transitions
 
     def _build_mp(self):
+        if not Path(self.problem.domain.filepath).exists():
+            raise FileNotFoundError(
+                f"Domain file {self.problem.domain.filepath} does not exist."
+            )
+        if not Path(self.problem.filepath).exists():
+            raise FileNotFoundError(
+                f"Problem file {self.problem.filepath} does not exist."
+            )
         start_time = datetime.fromtimestamp(time.time())
         num_states = len(self)
         indices = list(range(num_states))
@@ -588,9 +596,9 @@ class IWStateSpace(XStateSpace):
                         self.state_info[current_state].distance_to_goal + 1
                     )
                     visit_queue.append(predecessor_state)
-        assert sum(is_expanded) == len(
-            is_expanded
-        ), f"Not all states were expanded. Indices left unexpanded: {[i for i, v in enumerate(is_expanded) if not v]}"
+        assert sum(is_expanded) == (
+            len(self) - self.deadend_count
+        ), f"Not all non-deadend states were expanded. Indices left unexpanded: {[i for i, v in enumerate(is_expanded) if not v]}"
 
     def _compute_iw_initial_distances(self):
         """
@@ -625,7 +633,9 @@ class IWStateSpace(XStateSpace):
                         self.state_info[current_state].distance_from_initial + 1
                     )
                     visit_queue.append(successor_state)
-        assert sum(is_expanded) == len(is_expanded), "Not all states were expanded."
+        assert sum(is_expanded) == len(
+            is_expanded
+        ), f"Not all states were expanded. Indices left unexpanded: {[i for i, v in enumerate(is_expanded) if not v]}"
 
     def __getstate__(self):
         infos = [None] * len(self.state_info)
@@ -729,10 +739,12 @@ class IWStateSpace(XStateSpace):
 if __name__ == "__main__":
     import os
 
-    source_dir = "" if os.getcwd().endswith("/test") else "test/"
-    domain_filepath = f"{source_dir}pddl_instances/blocks/domain.pddl"
-    problem_filepath = f"{source_dir}pddl_instances/blocks/medium.pddl"
-    # problem_path = f"{source_dir}pddl_instances/blocks/iw/largish_unbound_goal.pddl"
+    source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
+    # domain = "blocks"
+    domain = "spanner"
+    problem = "small"
+    domain_filepath = source_dir / "pddl_instances" / domain / "domain.pddl"
+    problem_filepath = source_dir / "pddl_instances" / domain / f"{problem}.pddl"
     start = datetime.fromtimestamp(time.time())
     state_space = XStateSpace(domain_filepath, problem_filepath)
     iw_space = IWStateSpace(
@@ -740,6 +752,7 @@ if __name__ == "__main__":
         IWSearch(1),
         state_space,
         n_cpus=mp.cpu_count(),
+        # n_cpus=1,
         chunk_size=300,
     )
     elapsed = datetime.fromtimestamp(time.time()) - start
