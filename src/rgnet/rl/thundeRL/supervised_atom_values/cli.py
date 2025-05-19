@@ -1,48 +1,14 @@
 import dataclasses
-from argparse import Namespace
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 import torch
-from lightning import Trainer
-from lightning.pytorch.cli import (
-    ArgsType,
-    LightningArgumentParser,
-    OptimizerCallable,
-    SaveConfigCallback,
-)
-from lightning.pytorch.loggers import WandbLogger
-
-# avoids specifying full class_path for encoder in cli
-from rgnet.encoding import (  # noqa: F401
-    ColorGraphEncoder,
-    DirectGraphEncoder,
-    GraphEncoderBase,
-    HeteroGraphEncoder,
-)
+from lightning.pytorch.cli import OptimizerCallable
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.models.atom_valuator import AtomValuator
-from rgnet.rl.data_layout import InputData
-from rgnet.rl.losses import (  # noqa: F401
-    ActorCriticLoss,
-    AllActionsLoss,
-    AllActionsValueEstimator,
-    CriticLoss,
-)
-from rgnet.rl.thundeRL.cli_config import ThundeRLCLI
-from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
-
-# Import before the cli makes it possible to specify only the class and not the
-# full class path for model.validation_hooks in the cli config.
-from rgnet.rl.thundeRL.validation import (  # noqa: F401
-    CriticValidation,
-    PolicyEntropy,
-    PolicyValidation,
-    ProbsCollector,
-    ProbsStoreCallback,
-)
+from rgnet.rl.thundeRL.cli_config import *
+from xmimir import XCategory, XPredicate
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
 from .lit_module import AtomValuesLitModule
@@ -85,11 +51,10 @@ class WandbExtraParameter:
     log_code: bool = False  # whether to save the code as wandb artifact
 
 
-def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str]]:
-    if input_data.validation_problems is None:
-        return None
-
-    return {i: p.name for i, p in enumerate(input_data.validation_problems)}
+@dataclasses.dataclass
+class CollateKwargs:
+    predicates: Optional[List[XPredicate]] = None
+    unreachable_atom_value: float = float("inf")
 
 
 class AtomValuesCLI(ThundeRLCLI):
@@ -127,15 +92,55 @@ class AtomValuesCLI(ThundeRLCLI):
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
-        parser.add_class_arguments(AtomValuator, "atom_valuator", as_positional=True)
-
+        parser.add_class_arguments(CollateKwargs, "collate_kwargs", as_positional=True)
         #################################### Validation callback links ##############################
 
         parser.link_arguments(
             "model.gnn",
             "optimizer_setup.gnn",
+            apply_on="instantiate",
         )
         parser.link_arguments(
-            "model.atom_valuator",
-            "optimizer_setup.valuator",
+            "model.atom_valuator", "optimizer_setup.valuator", apply_on="instantiate"
         )
+        parser.link_arguments(
+            "model.gnn.hidden_size",
+            "model.atom_valuator.init_args.feature_size",
+            apply_on="parse",
+        )
+        parser.link_arguments(
+            "optimizer_setup.optimizer", "model.optim", apply_on="instantiate"
+        )
+        parser.link_arguments(
+            "data_layout.input_data.domain",
+            "model.atom_valuator.init_args.predicates",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "collate_kwargs",
+            "data.collate_kwargs",
+            apply_on="instantiate",
+            compute_fn=lambda collate_kwargs: dataclasses.asdict(collate_kwargs),
+        )
+        parser.link_arguments(
+            "data_layout.input_data.domain",
+            "collate_kwargs.predicates",
+            apply_on="instantiate",
+            compute_fn=lambda domain: [
+                XPredicate.make_hollow(
+                    category=pred.category, name=pred.name, arity=pred.arity
+                )
+                for pred in domain.predicates(XCategory.fluent, XCategory.derived)
+            ],  # needed to be made hollow so that the collate function can pickle the predicates
+        )
+
+        # # validation hooks
+        # parser.link_arguments(
+        #     "data_layout.input_data.domain",
+        #     "model.validation_hooks.init_args.predicates",
+        #     apply_on="instantiate",
+        #     compute_fn=lambda domain: [
+        #         pred.name
+        #         for pred in domain.predicates(XCategory.fluent, XCategory.derived)
+        #     ],
+        # )

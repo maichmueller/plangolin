@@ -1,10 +1,12 @@
 import dataclasses
+import logging
 from argparse import Namespace
 from os import PathLike
 from pathlib import Path
 from typing import Any, Callable, Dict, Literal, Optional, Sequence, Type, Union
 
 import lightning
+import torch
 from jsonargparse import lazy_instance
 from lightning import Trainer
 from lightning.pytorch.cli import (
@@ -28,6 +30,7 @@ from rgnet.encoding.base_encoder import EncoderFactory
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
+from rgnet.rl.data import AtomDrive, FlashDrive  # noqa: F401
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
@@ -35,7 +38,7 @@ from rgnet.rl.losses import (  # noqa: F401
     AllActionsValueEstimator,
     CriticLoss,
 )
-from rgnet.rl.reward import RewardFunction, UnitReward
+from rgnet.rl.reward import *  # noqa: F401
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
 
 # Import before the cli makes it possible to specify only the class and not the
@@ -47,6 +50,7 @@ from rgnet.rl.thundeRL.validation import (  # noqa: F401
     ProbsCollector,
     ProbsStoreCallback,
 )
+from rgnet.utils.misc import env_aware_cpu_count
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
 
@@ -283,3 +287,14 @@ class ThundeRLCLI(LightningCLI):
             self.trainer.logger.experiment.log_code(
                 str((Path(__file__) / ".." / ".." / "..").resolve())
             )
+
+    def before_instantiate_classes(self):
+        num_threads = self.config.fit.get("data.max_cpu_count", None)
+        limited_num_threads = env_aware_cpu_count()
+        num_threads = (
+            min(num_threads, limited_num_threads)
+            if num_threads
+            else limited_num_threads
+        )
+        torch.set_num_threads(num_threads)
+        logging.info(f"[CLI] Set torch cpu threads to {num_threads}.")

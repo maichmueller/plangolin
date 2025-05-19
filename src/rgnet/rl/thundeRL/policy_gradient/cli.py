@@ -1,18 +1,9 @@
-import dataclasses
 import warnings
 from itertools import chain
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 import torch
-from lightning import Trainer
-from lightning.pytorch.cli import (
-    ArgsType,
-    LightningArgumentParser,
-    OptimizerCallable,
-    SaveConfigCallback,
-)
-from torchrl.envs.utils import ExplorationType
-from torchrl.objectives import ValueEstimators
+from lightning.pytorch.cli import OptimizerCallable
 
 from rgnet.algorithms import bellman_optimal_values, optimal_policy
 
@@ -27,7 +18,6 @@ from rgnet.encoding import (  # noqa: F401
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.rl.agents import ActorCritic
-from rgnet.rl.data_layout import InputData
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
     AllActionsLoss,
@@ -35,8 +25,7 @@ from rgnet.rl.losses import (  # noqa: F401
     CriticLoss,
 )
 from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
-from rgnet.rl.thundeRL.cli_config import ThundeRLCLI
-from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
+from rgnet.rl.thundeRL.cli_config import *
 from rgnet.rl.thundeRL.policy_gradient.lit_module import PolicyGradientLitModule
 
 # Import before the cli makes it possible to specify only the class and not the
