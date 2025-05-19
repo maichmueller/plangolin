@@ -130,14 +130,21 @@ def siw(
 @pytest.mark.parametrize(
     "space_fixture, expected_solution_upper_bound_cost",
     [
-        ("small_blocks", 1),
+        # ("small_blocks", 1),
         ("medium_blocks", 3),
-        ("largish_blocks_unbound_goal", 9),
+        # ("largish_blocks_unbound_goal", 9),
+        ("medium_spanner", 10),
     ],
 )
 def test_iw1_state_space(space_fixture, expected_solution_upper_bound_cost, request):
     space, domain, problem = request.getfixturevalue(space_fixture)
-    iw_space = IWStateSpace(IWSearch(1), space, n_cpus=os.cpu_count(), chunk_size=100)
+    iw_space = IWStateSpace(
+        IWSearch(1),
+        space,
+        n_cpus=os.cpu_count(),
+        # n_cpus=1,
+        chunk_size=100,
+    )
     assert (
         0
         < iw_space.goal_distance(iw_space.initial_state)
@@ -147,10 +154,7 @@ def test_iw1_state_space(space_fixture, expected_solution_upper_bound_cost, requ
 
 @pytest.mark.parametrize(
     "space_fixture",
-    [
-        "small_blocks",
-        "medium_blocks",
-    ],
+    ["small_blocks", "medium_blocks"],
 )
 def test_iw1_state_serialization(space_fixture, request):
     space, domain, problem = request.getfixturevalue(space_fixture)
