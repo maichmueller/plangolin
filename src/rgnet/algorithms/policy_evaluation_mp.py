@@ -57,6 +57,13 @@ class PolicyEvaluationMP(MessagePassing):
         self.difference_threshold = difference_threshold
         self.attr_name = attr_name or self.default_attr_name
 
+    @property
+    def device(self):
+        """
+        Returns the device of the module.
+        """
+        return self.gamma.device
+
     def forward(self, data: pyg.data.Data) -> Tensor:
         if hasattr(data, self.attr_name):
             return getattr(data, self.attr_name)
@@ -285,7 +292,7 @@ class OptimalAtomValuesMP(ValueIterationMP):
     def _init_features(self, data):
         if not hasattr(data, "atoms_per_state"):
             raise ValueError(
-                "Data object must have 'atoms_per_state' attribute if features is not pre-initialized."
+                "Data object must have 'atoms_per_state' attribute if `features` is not pre-initialized."
             )
         num_states = data.num_nodes
         num_atoms = self.num_atoms

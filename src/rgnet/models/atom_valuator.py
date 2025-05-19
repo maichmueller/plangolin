@@ -8,7 +8,7 @@ from torch_geometric.nn.resolver import activation_resolver
 
 from rgnet.utils.batching import batched_permutations
 from rgnet.utils.misc import num_nodes_per_entry, tolist
-from xmimir import XDomain, XPredicate
+from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import atom_str_template
 
 from .hetero_gnn import simple_mlp
@@ -28,14 +28,14 @@ class AtomValuator(torch.nn.Module):
         predicate_module_factory: (
             Callable[[XPredicate, int], torch.nn.Module] | None
         ) = None,
-        state_aggr: str = "sum",
+        pooling: str = "sum",
         activation: str = "mish",
         feature_size: int = 64,
         assert_output: bool = False,
     ):
         super().__init__()
         if isinstance(predicates, XDomain):
-            predicates = predicates.predicates()
+            predicates = predicates.predicates(XCategory.fluent, XCategory.derived)
         self.predicates_dict = {p.name: p for p in predicates}
         self.arity_dict: dict[str, int] = {
             p.name: p.arity for p in self.predicates_dict.values()
@@ -80,18 +80,18 @@ class AtomValuator(torch.nn.Module):
                 for pred, arity in self.arity_dict.items()
             }
         )
-        match state_aggr:
+        match pooling:
             case "sum":
-                self.state_aggr = torch_geometric.nn.global_add_pool
+                self.pooling = torch_geometric.nn.global_add_pool
             case "add":
-                self.state_aggr = torch_geometric.nn.global_add_pool
+                self.pooling = torch_geometric.nn.global_add_pool
             case "mean":
-                self.state_aggr = torch_geometric.nn.global_mean_pool
+                self.pooling = torch_geometric.nn.global_mean_pool
             case "max":
-                self.state_aggr = torch_geometric.nn.global_max_pool
+                self.pooling = torch_geometric.nn.global_max_pool
             case _:
                 raise ValueError(
-                    f"Unknown state aggregation function: {state_aggr}. "
+                    f"Unknown state pooling function: {pooling}. "
                     f"Choose from [sum, add, max, mean]."
                 )
         self.feature_size = feature_size
@@ -145,7 +145,7 @@ class AtomValuator(torch.nn.Module):
         )
         predicate_out = dict()
         output_info: dict[str, list[OutputInfo]] = dict()
-        pooled_emb_batch = self.state_aggr(embeddings, batch_info)
+        pooled_emb_batch = self.pooling(embeddings, batch_info)
         for arity in self.arity_to_predicates.keys():
             if arity == 0:
                 # there are no objects in the predicate,
