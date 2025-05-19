@@ -110,6 +110,7 @@ class ExpansionNode(NamedTuple):
     trace: List[XTransition]
     novelty_trace: List[List[tuple[XAtom, ...]]]
     depth: int
+    effective_width: int
 
 
 class ExpansionStrategy:
@@ -168,13 +169,27 @@ class CollectorHook:
 
 
 class IWSearch:
+    """
+    Performs an Iterative Width Search IW(k) of a specific expansion strategy and width k.
+
+    Note that we follow the more recent definition of IW(k) as in the paper:
+        https://www.jair.org/index.php/jair/article/view/15581
+    """
+
     def __init__(
         self,
         width: int,
         expansion_strategy: ExpansionStrategy = InOrderExpansion(),
+        depth_1_is_novel: bool = True,
     ):
+        """
+        :param width: The width of the search.
+        :param expansion_strategy: The strategy to use for expanding nodes.
+        :param depth_1_is_novel: If True, every state at the first depth is always considered novel.
+        """
         self.width = width
         self.expansion_strategy = expansion_strategy
+        self.depth_1_is_novel: bool = depth_1_is_novel and width > 0
 
     def __eq__(self, other):
         if not isinstance(other, type(self)):
@@ -198,7 +213,7 @@ class IWSearch:
         novel_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         goal_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         expansion_budget: int = float("inf"),
-    ) -> List[XTransition] | None:
+    ) -> List[ExpansionNode]:
         if novelty_condition is None:
             novelty_condition = Novelty(self.width, successor_generator.problem)
 
@@ -217,9 +232,15 @@ class IWSearch:
             goal_check = lambda state: state.is_goal()
 
         visit_queue: deque[ExpansionNode] = deque(
-            [ExpansionNode(start_state, [], [], 0)]
+            [ExpansionNode(start_state, [], [], 0, 0)]
         )
-        goal_traces = []
+        start_is_goal = goal_check(start_state)
+        if start_is_goal:
+            goal_traces = [visit_queue[0]]
+            if stop_on_goal:
+                return goal_traces
+        else:
+            goal_traces = []
         iteration = 0
         current_depth = 0
         nodes: List[ExpansionNode] = []
@@ -235,6 +256,7 @@ class IWSearch:
                     visit_queue,
                     novelty_condition,
                     successor_generator,
+                    stop_on_goal=stop_on_goal,
                     goal_check=goal_check,
                     novel_hook=novel_hook,
                     goal_hook=goal_hook,
@@ -267,33 +289,52 @@ class IWSearch:
         visit_queue: deque[ExpansionNode],
         novelty_condition: Novelty,
         successor_generator: XSuccessorGenerator,
+        stop_on_goal: bool,
         novel_hook: Callable[[ExpansionNode], None],
         goal_hook: Callable[[ExpansionNode], None],
         goal_check: Callable[[XState], bool],
     ) -> list[ExpansionNode]:
         goal_nodes = []
-        for state, trace, novel_sets_trace, depth in self.expansion_strategy.consume(
-            nodes
-        ):
+        for (
+            state,
+            trace,
+            novel_sets_trace,
+            depth,
+            effective_width,
+        ) in self.expansion_strategy.consume(nodes):
             for action, child_state in successor_generator.successors(state):
                 pos_effect_atoms = tuple(action.effects(positive=True))
                 if not pos_effect_atoms:
                     continue
-                if novel_check := novelty_condition.test(child_state, pos_effect_atoms):
-                    child_trace = trace + [
-                        XTransition.make_hollow(state, action, child_state)
-                    ]
-                    child_novel_sets_trace = novel_sets_trace + [
-                        novel_check.novel_tuples
-                    ]
-                    child_node = ExpansionNode(
-                        child_state, child_trace, child_novel_sets_trace, depth + 1
-                    )
+                novel_check = novelty_condition.test(child_state, pos_effect_atoms)
+                is_novel = novel_check or (depth == 0 and self.depth_1_is_novel)
+                is_goal = goal_check(child_state)
+                if not (is_goal or is_novel):
+                    continue
+                if effective_width == -1:
+                    # we are already on a path of width potentially higher than k
+                    child_novelty = -1
+                elif depth == 0 and self.depth_1_is_novel and not novel_check:
+                    # override the child novelty, since the actual child's novelty is higher than our width,
+                    # so we cannot guarantee that this path has width <= k
+                    child_novelty = -1
+                else:
+                    child_novelty = max(effective_width, novel_check.novelty)
+                child_node = ExpansionNode(
+                    child_state,
+                    trace + [XTransition.make_hollow(state, action, child_state)],
+                    novel_sets_trace + [novel_check.novel_tuples],
+                    depth + 1,
+                    child_novelty,
+                )
+                if is_novel:
                     novel_hook(child_node)
                     visit_queue.append(child_node)
-                    if goal_check(child_state):
-                        goal_hook(child_node)
-                        goal_nodes.append(child_node)
+                if is_goal:
+                    goal_hook(child_node)
+                    goal_nodes.append(child_node)
+                    if stop_on_goal:
+                        return goal_nodes
         return goal_nodes
 
 
@@ -740,19 +781,19 @@ if __name__ == "__main__":
     import os
 
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
-    # domain = "blocks"
-    domain = "spanner"
-    problem = "small"
+    domain = "blocks"
+    # domain = "spanner"
+    problem = "medium"
     domain_filepath = source_dir / "pddl_instances" / domain / "domain.pddl"
     problem_filepath = source_dir / "pddl_instances" / domain / f"{problem}.pddl"
     start = datetime.fromtimestamp(time.time())
     state_space = XStateSpace(domain_filepath, problem_filepath)
     iw_space = IWStateSpace(
         # IWSearch(2),
-        IWSearch(1),
+        IWSearch(2, depth_1_is_novel=False),
         state_space,
-        n_cpus=mp.cpu_count(),
-        # n_cpus=1,
+        # n_cpus=mp.cpu_count(),
+        n_cpus=1,
         chunk_size=300,
     )
     elapsed = datetime.fromtimestamp(time.time()) - start

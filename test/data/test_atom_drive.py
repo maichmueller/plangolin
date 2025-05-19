@@ -79,9 +79,12 @@ def _expected_optimal_atom_values(space, state=None) -> dict[int, [dict[XAtom, f
     expected_values = {i: dict() for i in range(len(states))}
     for state in states:
         collector = CollectorHook()
-        iw_search = IWSearch(2)
+        iw_search = IWSearch(2, depth_1_is_novel=False)
         iw_search.solve(
-            space.successor_generator, start_state=state, novel_hook=collector
+            space.successor_generator,
+            start_state=state,
+            novel_hook=collector,
+            stop_on_goal=False,
         )
         expected_values[state.index] = {
             atom: 0.0 for atom in state.atoms(with_statics=False)
@@ -186,10 +189,10 @@ def test_atom_dist_mp_module_manual_graph():
     graph.add_node(1, ntype="state")
     graph.add_node(2, ntype="state")
     graph.add_node(3, ntype="state")
-    graph.add_edge(0, 1, reward=1.0, probs=0.5, idx=0)
-    graph.add_edge(1, 2, reward=1.0, probs=0.5, idx=1)
-    graph.add_edge(2, 0, reward=1.0, probs=0.5, idx=2)
-    graph.add_edge(0, 3, reward=1.0, probs=0.5, idx=3)
+    graph.add_edge(0, 1, reward=1.0, probs=0.5, done=False, idx=0)
+    graph.add_edge(1, 2, reward=1.0, probs=0.5, done=False, idx=1)
+    graph.add_edge(2, 0, reward=1.0, probs=0.5, done=False, idx=2)
+    graph.add_edge(0, 3, reward=1.0, probs=0.5, done=False, idx=3)
 
     atom_to_index_map = {
         "t": 0,
