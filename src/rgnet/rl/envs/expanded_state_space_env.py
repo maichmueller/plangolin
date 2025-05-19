@@ -211,8 +211,8 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
         else:
             transition_probs = transition_probabilities
-
-        # mapping = dict(zip(G.nodes(), range(G.number_of_nodes())))  # this is just state to state-index, i.e. state.index
+        device = "cpu"
+        # this is just state to state-index, i.e. state.index
         # a state space may have multiple forward transitions from each goal state,
         # but our envs only return a single placeholder transition for termination
         number_of_extra_goal_out_transitions = (
@@ -232,6 +232,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                 space.total_transition_count - number_of_extra_goal_out_transitions,
             ),
             dtype=torch.long,
+            device=device,
         )
         group_edge_attrs = ["reward", "probs", "done", "idx"]
 
@@ -264,28 +265,35 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             instance_iter = itertools.repeat([space])
         transition_index = itertools.count(0)
         nr_instances = len(next(instance_iter))
-        goal_rewards = torch.empty((len(space), nr_instances), dtype=torch.float)
+        goal_rewards = torch.empty(
+            (len(space), nr_instances), dtype=torch.float, device=device
+        )
         query_env = aux_env or self
         for state, instance_list, problem_list, state_transitions in zip(
             space, instance_iter, problem_iter, transitions
         ):
             attr_shape = (-1, nr_instances)
-            rewards: torch.Tensor = torch.cat(
-                [
-                    query_env.get_reward_and_done(
-                        state_transitions,
-                        instances=[instance] * len(state_transitions),
-                    )[0].view(1, -1)
+            rewards, done = zip(
+                *(
+                    map(
+                        lambda t: t.to(device).view(1, -1),
+                        query_env.get_reward_and_done(
+                            state_transitions,
+                            instances=[instance] * len(state_transitions),
+                        ),
+                    )
                     for instance in instance_list
-                ],
-                dim=0,
-            ).T
-            t_probs: torch.Tensor = unsqueeze_right_like(
-                torch.tensor(
-                    transition_probs(state, state_transitions), dtype=torch.float
-                ),
-                rewards,
-            ).expand_as(rewards)
+                )
+            )
+            rewards, done = map(lambda d: torch.cat(d, dim=0).T, (rewards, done))
+            t_probs: torch.Tensor = (
+                unsqueeze_right_like(
+                    transition_probs(state, state_transitions).float(),
+                    rewards,
+                )
+                .to(device)
+                .expand_as(rewards)
+            )
             transition_indices = list(
                 next(transition_index) for _ in range(len(state_transitions))
             )
@@ -299,6 +307,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                     for instance in instance_list
                 ],
                 dtype=torch.float,
+                device=device,
             ).view(attr_shape)
             node_type = torch.tensor(
                 [
@@ -310,10 +319,12 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                     for instance, problem in zip(instance_list, problem_list)
                 ],
                 dtype=torch.int,
+                device=device,
             ).view(attr_shape)
             is_goal_state = torch.tensor(
                 [query_env.is_goal(instance, state) for instance in instance_list],
                 dtype=torch.bool,
+                device=device,
             )
             goal_rewards[state.index] = torch.where(
                 is_goal_state, rewards.max(dim=0)[0], -torch.inf
@@ -331,12 +342,16 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             data_dict["idx"].append(
                 unsqueeze_right_like(
                     torch.tensor(transition_indices, dtype=torch.int), rewards
-                ).expand_as(rewards)
+                )
+                .to(device)
+                .expand_as(rewards)
             )
 
             edge_index[0, transition_indices] = state.index
             edge_index[1, transition_indices] = torch.tensor(
-                [t.target.index for t in state_transitions], dtype=torch.long
+                [t.target.index for t in state_transitions],
+                dtype=torch.long,
+                device=device,
             )
 
         for key, value in data_dict.items():
@@ -344,7 +359,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                 data_dict[key] = torch.cat(value, dim=0).squeeze(-1)
             else:
                 try:
-                    data_dict[key] = torch.as_tensor(value)
+                    data_dict[key] = torch.as_tensor(value, device=device)
                 except KeyboardInterrupt:
                     raise KeyboardInterrupt
                 except Exception:
@@ -365,7 +380,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         data.x = torch.where(
             unsqueeze_right_like(data.goals, goal_rewards),
             goal_rewards,
-            torch.zeros((len(space), nr_instances)),
+            torch.zeros((len(space), nr_instances), device=device),
         )
         data.num_nodes = len(space)
         return data
