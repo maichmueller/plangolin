@@ -1,7 +1,7 @@
 import itertools
 from collections import deque
 from math import ceil
-from test.fixtures import expanded_state_space_env, medium_blocks, small_blocks
+from test.fixtures import *  # noqa: F401, F403
 from typing import List
 
 import mockito

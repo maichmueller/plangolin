@@ -1,4 +1,4 @@
-from test.fixtures import medium_blocks
+from test.fixtures import *  # noqa: F401, F403
 from typing import List
 
 import mockito
