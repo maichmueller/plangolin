@@ -19,6 +19,7 @@ from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
+from rgnet.rl.thundeRL.collate import StatefulCollater
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -44,7 +45,7 @@ class ThundeRLDataModule(LightningDataModule):
         num_workers_train: int = 6,
         num_workers_validation: int = 2,
         parallel: bool = True,
-        balance_by_attr: str = "distance_to_goal",
+        balance_by_attr: str = "",
         max_cpu_count: Optional[int] = None,
         exit_after_processing: bool = False,
     ) -> None:
@@ -66,18 +67,32 @@ class ThundeRLDataModule(LightningDataModule):
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
         self.drive_kwargs = drive_kwargs or dict()
-        self.collate_fn = (
-            collate_fn
-            if collate_kwargs is None
-            else lambda *args, **kwargs: collate_fn(
-                *args, **(collate_kwargs.update(**kwargs) or {})
-            )
-        )
+        self.collate_fn = collate_fn
+        self.collate_kwargs = collate_kwargs or dict()
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
         # defaulted, to be overridden by trainer on setup
         self.device = torch.device("cpu")
+
+    def _make_collate(self):
+        kwargs = self.collate_kwargs.copy()
+        from_datamodule = kwargs.pop("from_datamodule", None)
+        if from_datamodule is not None:
+            assert isinstance(from_datamodule, dict)
+            for key, attr in from_datamodule.items():
+                if isinstance(attr, str):
+                    kwargs[key] = getattr(self, attr)
+                elif isinstance(attr, list):
+                    obj = self
+                    for nested_attr in attr:
+                        obj = getattr(obj, nested_attr)
+                    kwargs[key] = obj
+                else:
+                    raise ValueError(
+                        f"Invalid type for attribute '{key}': {type(attr)}. Expected str or list."
+                    )
+        return StatefulCollater(self.collate_fn, **kwargs)
 
     def get_env(self, problem: Path | int) -> ExpandedStateSpaceEnv:
         try:
@@ -235,9 +250,11 @@ class ThundeRLDataModule(LightningDataModule):
                     for dataset in self.train_datasets
                 ]
             )
-            # Account for deadend state labels being -1 (not working with bincount usage inside `ImbalancedSampler`)
-            # Adding +1 to each distance (label) doesn't change the relative class counts, so does not change the sampling
-            class_tensor = class_tensor + 1
+            # Account for deadend state labels being -1 (values <0 are incompatible with bincount inside `ImbalancedSampler`)
+            # Adding the min to each distance (label) doesn't change the relative class counts, so does not change the sampling
+
+            if (min_label := class_tensor.min()) < 0:
+                class_tensor = class_tensor + (-min_label)
             return ImbalancedSampler(dataset=class_tensor)
         else:
             return None
@@ -267,7 +284,7 @@ class ThundeRLDataModule(LightningDataModule):
             shuffle=not self.balance_by_attr,
             num_workers=self.num_workers_train,
             persistent_workers=self.num_workers_train > 0,
-            collate_fn=self.collate_fn,
+            collate_fn=self._make_collate(),
             pin_memory=True,
         )
         return DataLoader(
@@ -283,7 +300,7 @@ class ThundeRLDataModule(LightningDataModule):
             num_workers=self.num_workers_val,
             # as we have multiple loader, each individually should get fewer workers
             persistent_workers=False,  # when True validation memory usage increases a lot with every dataloader.
-            collate_fn=self.collate_fn,
+            collate_fn=self._make_collate(),
             pin_memory=True,
         )
         return [

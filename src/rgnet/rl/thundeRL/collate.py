@@ -1,12 +1,13 @@
 import itertools
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 import torch
 from torch import Tensor
 from torch_geometric.data import Batch, Data, HeteroData
 
-from xmimir import XPredicate
-from xmimir.wrappers import atom_str_template
+from rgnet.utils.batching import batched_permutations
+from xmimir import XDomain, XPredicate
+from xmimir.wrappers import XCategory, atom_str_template
 
 
 def to_states_batch(
@@ -48,50 +49,47 @@ def to_transitions_batch(
 
 def to_atom_values_batch(
     data_list: list[Data | HeteroData],
-    predicates: Sequence[XPredicate],
+    predicates: Sequence[XPredicate] | XDomain,
     unreachable_atom_value: float,
     **kwargs,
 ) -> tuple[Batch, dict[str, Tensor], dict[str, list[tuple[int, str]]]]:
     """
     Collate function for batching atom distances in PyTorch Geometric.
 
-    Args:
-        data_list (list): List of data objects to be batched.
-        **kwargs: Additional keyword arguments.
+
+    :params: data_list (list): List of data objects to be batched.
+    :params: predicates (Sequence[XPredicate]): List of predicates to be used for atom values.
+    :params: unreachable_atom_value (float): Value to be used for unreachable atoms.
 
     Returns:
         batch: A Batch object containing the atom distances as a pyg.Batch object.
     """
+    if isinstance(predicates, XDomain):
+        predicates = predicates.predicates(XCategory.fluent, XCategory.derived)
     states_batch = to_states_batch(data_list, exclude_keys=["targets", "atom_values"])
     target_atom_values = dict()
     target_state_association = dict()
     for arity in sorted(set(p.arity for p in predicates)):
         atom_objects_of_arity = []
-        state_association = []
-        for data_idx, data_entry in enumerate(data_list):
-            object_names = data_entry.object_names
-            for object_permutation_batch in batched_permutations(
-                object_names,
-                arity,
-                batch_size=1,
-            ):
-                state_association.extend([data_idx] * len(object_permutation_batch))
-                for (
-                    permutation_indices,
-                    object_permutation,
-                    _,
-                ) in object_permutation_batch:
-                    atom_objects_of_arity.append(
-                        tuple(object_names[index] for index in permutation_indices)
+        if arity == 0:
+            atom_objects_of_arity = [[None]] * len(data_list)
+        else:
+            for data_idx, data_entry in enumerate(data_list):
+                object_names = data_entry.object_names
+                object_permutation_batch = next(
+                    batched_permutations(
+                        object_names, arity, batch_size=None, with_replacement=True
                     )
+                )
+                atom_objects_of_arity.append(object_permutation_batch.data)
         for predicate in sorted(p.name for p in predicates if p.arity == arity):
             target_values = []
             association = []
-            for data in data_list:
+            for data_idx, (data, atom_objects_permutations) in enumerate(
+                zip(data_list, atom_objects_of_arity)
+            ):
                 atom_values = data.atom_values
-                for state_index, objects in zip(
-                    state_association, atom_objects_of_arity
-                ):
+                for objects in atom_objects_permutations:
                     atom = atom_str_template.render(
                         predicate=predicate, objects=objects
                     )
@@ -101,7 +99,7 @@ def to_atom_values_batch(
                         if value not in (float("inf"), float("-inf"))
                         else unreachable_atom_value
                     )
-                    association.append((state_index, atom))
+                    association.append((data_idx, atom))
             target_atom_values[predicate] = torch.tensor(
                 target_values, dtype=torch.float
             )
@@ -109,8 +107,18 @@ def to_atom_values_batch(
     return states_batch, target_atom_values, target_state_association
 
 
+class StatefulCollater:
+    def __init__(self, fn: Callable, **kwargs):
+        self.fn = fn
+        self.kwargs = kwargs
+
+    def __call__(self, data_list: list[Data | HeteroData], **kwargs):
+        return self.fn(data_list, **self.kwargs, **kwargs)
+
+
 __all__ = [
     "to_atom_values_batch",
     "to_states_batch",
     "to_transitions_batch",
+    "StatefulCollater",
 ]
