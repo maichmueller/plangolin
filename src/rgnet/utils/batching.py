@@ -48,6 +48,9 @@ class PermutedDataBatch(Generic[T]):
         for perm, data in zip(self.permutations, self.data):
             yield PermutedData(perm, data)
 
+    def __len__(self):
+        return len(self.permutations)
+
 
 def batched_permutations(
     x: torch.Tensor | Sequence[T],
@@ -85,22 +88,17 @@ def batched_permutations(
         else:
             return [data[i] for i in indices]
 
-    match x:
-        case torch.Tensor():
-            assert x.ndim >= 2, f"Input must be at least 2D tensor. Given {x.ndim=}."
-        case Sequence():
-            pass
-        case _:
-            raise ValueError("Input must be at least 2D tensor or a sequence.")
-    num_rows = x.shape[0]
-    if arity == 1:
-        # no need to permute
-        perms_iter = batched(range(x.shape[0]), batch_size or num_rows)
+    if isinstance(x, torch.Tensor):
+        assert x.ndim >= 2, f"Input must be at least 2D tensor. Given {x.ndim=}."
+        num_rows = x.shape[0]
+    elif isinstance(x, Sequence):
+        num_rows = len(x)
     else:
-        if with_replacement:
-            perms_iter = itertools.product(range(num_rows), repeat=arity)
-        else:
-            perms_iter = itertools.permutations(range(num_rows), r=arity)
+        raise ValueError("Input must be at least 2D tensor or a sequence.")
+    if with_replacement:
+        perms_iter = itertools.product(range(num_rows), repeat=arity)
+    else:
+        perms_iter = itertools.permutations(range(num_rows), r=arity)
     batch = []
     for perm in perms_iter:
         permuted = sliceit(x, perm)
