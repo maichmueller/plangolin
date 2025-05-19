@@ -20,6 +20,7 @@ import networkx as nx
 import torch
 import torch_geometric as pyg
 from tensordict import tensordict
+from torch import Tensor
 from torchrl.data.utils import DEVICE_TYPING
 
 import xmimir as xmi
@@ -174,8 +175,8 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         self,
         instance_index: int,
         transition_probabilities: (
-            tuple[torch.Tensor, ...]
-            | Callable[[XState, Sequence[XTransition]], Sequence[float]]
+            tuple[Tensor, ...]
+            | Callable[[XState, Sequence[XTransition]], Tensor]
             | None
         ) = None,
         natural_transitions: bool = False,
@@ -185,7 +186,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         :class:`torch_geometric.data.Data` instance_list.
 
         :params:
-            transition_probabilities (tuple[torch.Tensor] | Callable[[XState, Sequence[XTransition]], Sequence[float]] | None):
+            transition_probabilities (tuple[Tensor] | Callable[[XState, Sequence[XTransition]], Tensor] | None):
                 The transition probabilities for each state. If None, uniform transition probabilities are used.
 
         """
@@ -232,7 +233,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             ),
             dtype=torch.long,
         )
-        group_edge_attrs = ["reward", "probs", "idx"]
+        group_edge_attrs = ["reward", "probs", "done", "idx"]
 
         data_dict: Dict[str, Any] = defaultdict(list)
         data_dict["edge_index"] = edge_index
@@ -322,6 +323,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             is_goal_state = space.is_goal(state)
             data_dict["goals"].append(is_goal_state)
             data_dict["reward"].append(rewards)
+            data_dict["done"].append(done)
             data_dict["probs"].append(t_probs)
             data_dict["action"].extend(
                 _serialized_action_info(t) for t in state_transitions
@@ -530,7 +532,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         running_transition_idx = itertools.count(0)
         for state, instance, state_transitions in zip(states, instances, transitions):
             t_probs: Sequence[float] = transition_probs(state, state_transitions)
-            reward, _ = self.get_reward_and_done(
+            reward, done = self.get_reward_and_done(
                 state_transitions, instances=[instance] * len(state_transitions)
             )
             for t_idx, t in enumerate(state_transitions):
@@ -540,6 +542,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                     state_node(t.target),
                     action=action_data,
                     reward=reward[t_idx],
+                    done=done[t_idx],
                     probs=t_probs[t_idx],
                     idx=next(running_transition_idx),
                 )

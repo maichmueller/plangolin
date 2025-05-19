@@ -18,17 +18,20 @@ def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     The second node feature dimension is one, if the node is a goal state.
     """
     pyg_graph = torch_geometric.utils.from_networkx(
-        nx_state_space_graph, group_edge_attrs=["reward", "probs", "idx"]
+        nx_state_space_graph, group_edge_attrs=["reward", "probs", "done", "idx"]
     )
-    transition_indices = pyg_graph.edge_attr[:, 2]
+    trans_attr_idx = 3
+    transition_indices = pyg_graph.edge_attr[:, trans_attr_idx]
     expected_transition_indices = torch.arange(transition_indices.max().item() + 1)
     if (transition_indices.int() != expected_transition_indices).any():
         # we have to maintain the order of the edges as they are returned by a traversal of the state space.
         graph_clone = pyg_graph.clone()
-        sorted_transition_indices = torch.argsort(graph_clone.edge_attr[:, 2])
+        sorted_transition_indices = torch.argsort(
+            graph_clone.edge_attr[:, trans_attr_idx]
+        )
         pyg_graph.edge_index = graph_clone.edge_index[:, sorted_transition_indices]
         pyg_graph.edge_attr = graph_clone.edge_attr[sorted_transition_indices, :]
-    transition_indices = pyg_graph.edge_attr[:, 2]
+    transition_indices = pyg_graph.edge_attr[:, trans_attr_idx]
     assert (transition_indices.int() == expected_transition_indices).all()
     is_goal_state = [False] * pyg_graph.num_nodes
     # inf as default to trigger errors if logic did not hold
