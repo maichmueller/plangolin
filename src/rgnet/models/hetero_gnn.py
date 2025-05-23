@@ -112,7 +112,7 @@ class HeteroGNN(PyGHeteroModule):
         # Spread the object embeddings to the atoms via message passing.
         # Note: unlike object embeddings, atom embeddings are always simply replaced, instead of updated.
         atom_msgs = self.objects_to_atom_mp(x_dict, edge_index_dict)
-        x_dict |= atom_msgs
+        x_dict.update(atom_msgs)
 
         # Distribute the atom embeddings back to the corresponding objects via message passing.
         object_msgs = self.atoms_to_object_mp(x_dict, edge_index_dict)[self.obj_type_id]
@@ -125,6 +125,7 @@ class HeteroGNN(PyGHeteroModule):
         # residual update (current + updates)
         x_dict[self.obj_type_id] = x_dict[self.obj_type_id] + updated_obj_emb
 
+    # @torch.compile(fullgraph=True, dynamic=True)
     def forward(
         self,
         x_dict: Dict[str, Tensor],

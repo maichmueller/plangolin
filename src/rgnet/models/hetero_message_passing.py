@@ -73,7 +73,7 @@ class HeteroRouting(torch.nn.Module):
             out = self._internal_forward(x, edge_index_dict[edge_type], edge_type)
             out_dict[dst].append(out)
 
-        return self._group_output(dict(out_dict))
+        return self._group_output({k: v for k, v in out_dict.items()})
 
     def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
@@ -221,7 +221,7 @@ class SelectMP(pyg.nn.MessagePassing):
             x = (x, x)
         return self.propagate(edge_index, x=x, position=position)
 
-    def message(self, x_j: Tensor, position: int) -> Tensor:
+    def message(self, x_j: Tensor, position: int = None) -> Tensor:
         # Take the i-th hidden-number of elements from the last dimension
         # e.g from [1, 2, 3, 4, 5, 6] with hidden=2 and position=1 -> [3, 4]
         # alternatively:
