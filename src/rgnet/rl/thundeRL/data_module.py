@@ -41,9 +41,8 @@ class ThundeRLDataModule(LightningDataModule):
         collate_kwargs: Optional[Dict[str, Any]] = None,
         drive_type: type[BaseDrive] = FlashDrive,
         drive_kwargs: Optional[Dict[str, Any]] = None,
-        batch_size_validation: Optional[int] = None,
-        num_workers_train: int = 6,
-        num_workers_validation: int = 2,
+        train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        validation_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         parallel: bool = True,
         balance_by_attr: str = "",
         max_cpu_count: Optional[int] = None,
@@ -55,11 +54,17 @@ class ThundeRLDataModule(LightningDataModule):
         self.data = input_data
         self.reward_function = reward_function
         self.batch_size = batch_size
-        self.batch_size_validation = batch_size_validation or batch_size
         self.parallel = parallel
         self.drive_type = drive_type
-        self.num_workers_train = num_workers_train
-        self.num_workers_val = num_workers_validation
+        self.train_dataloader_kwargs = (
+            dict(num_workers=6)
+            | (train_dataloader_kwargs or dict())
+            | dict(batch_size=batch_size)
+        )  # do not override batch_size arg silently
+        self.validation_dataloader_kwargs = dict(
+            num_workers=2,
+            batch_size=batch_size,
+        ) | (validation_dataloader_kwargs or dict())
         self.encoder_factory = encoder_factory
         self.balance_by_attr = balance_by_attr
         self.max_cpu_count = max_cpu_count
@@ -278,14 +283,15 @@ class ThundeRLDataModule(LightningDataModule):
         return self.train_datasets + list(self.validation_datasets)
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
-        defaults = dict(
-            sampler=self._sampler(),
-            batch_size=self.batch_size,
-            shuffle=not self.balance_by_attr,
-            num_workers=self.num_workers_train,
-            persistent_workers=self.num_workers_train > 0,
-            collate_fn=self._make_collate(),
-            pin_memory=True,
+        defaults = (
+            dict(
+                sampler=self._sampler(),
+                batch_size=self.batch_size,
+                shuffle=not self.balance_by_attr,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+            )
+            | self.train_dataloader_kwargs
         )
         return DataLoader(
             self.dataset,
@@ -294,14 +300,13 @@ class ThundeRLDataModule(LightningDataModule):
 
     def val_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         # Order of dataloader has to be equal to order of validation problems in `InputData`.
-        defaults = dict(
-            batch_size=self.batch_size_validation,
-            shuffle=False,
-            num_workers=self.num_workers_val,
-            # as we have multiple loader, each individually should get fewer workers
-            persistent_workers=False,  # when True validation memory usage increases a lot with every dataloader.
-            collate_fn=self._make_collate(),
-            pin_memory=True,
+        defaults = (
+            dict(
+                shuffle=False,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+            )
+            | self.validation_dataloader_kwargs
         )
         return [
             DataLoader(
