@@ -282,6 +282,13 @@ class ThundeRLDataModule(LightningDataModule):
             self.prepare_data()
         return self.train_datasets + list(self.validation_datasets)
 
+    def _sanitize_dataloader_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        # remove any key value combination that are not valid for DataLoader
+        if kwargs["persistent_workers"] and kwargs["num_workers"] == 0:
+            # raises ValueError otherwise
+            kwargs["persistent_workers"] = False
+        return kwargs
+
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         defaults = (
             dict(
@@ -295,7 +302,7 @@ class ThundeRLDataModule(LightningDataModule):
         )
         return DataLoader(
             self.dataset,
-            **(defaults | kwargs),
+            **self._sanitize_dataloader_kwargs(defaults | kwargs),
         )
 
     def val_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
@@ -311,7 +318,7 @@ class ThundeRLDataModule(LightningDataModule):
         return [
             DataLoader(
                 dataset,
-                **(defaults | kwargs),
+                **self._sanitize_dataloader_kwargs(defaults | kwargs),
             )
             for dataset in self.validation_sets
         ]
