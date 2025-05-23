@@ -14,11 +14,11 @@ import torch_geometric.nn
 from torch import Tensor
 from torch_geometric.nn import Aggregation, SimpleConv
 from torch_geometric.nn.conv.hetero_conv import group
-from torch_geometric.nn.module_dict import ModuleDict
 from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
 from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
+from rgnet.models.patched_module_dict import PatchedModuleDict
 
 
 class HeteroRouting(torch.nn.Module):
@@ -122,7 +122,7 @@ class FanOutMP(HeteroRouting):
     ) -> None:
         """ """
         super().__init__()
-        self.update_modules = ModuleDict(update_modules)
+        self.update_modules = PatchedModuleDict(update_modules)
         self.use_cuda_streams = torch.cuda.is_available() and use_cuda_streams
         if self.use_cuda_streams:
             self.cuda_streams = [
