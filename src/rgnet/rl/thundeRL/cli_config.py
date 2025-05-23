@@ -20,36 +20,20 @@ from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
 # avoids specifying full class_path for encoder in cli
-from rgnet.encoding import (  # noqa: F401
-    ColorGraphEncoder,
-    DirectGraphEncoder,
-    GraphEncoderBase,
-    HeteroGraphEncoder,
-)
+from rgnet.encoding import *  # noqa: F401
 from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.models import *  # noqa: F401
+from rgnet.rl.data import *  # noqa: F401
 
 # avoids specifying full class_path for model.gnn in cli
-from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.rl.data import AtomDrive, FlashDrive  # noqa: F401
 from rgnet.rl.data_layout import InputData, OutputData
-from rgnet.rl.losses import (  # noqa: F401
-    ActorCriticLoss,
-    AllActionsLoss,
-    AllActionsValueEstimator,
-    CriticLoss,
-)
+from rgnet.rl.losses import *  # noqa: F401
 from rgnet.rl.reward import *  # noqa: F401
 from rgnet.rl.thundeRL.data_module import ThundeRLDataModule
+from rgnet.rl.thundeRL.validation import *  # noqa: F401
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
-from rgnet.rl.thundeRL.validation import (  # noqa: F401
-    CriticValidation,
-    PolicyEntropy,
-    PolicyValidation,
-    ProbsCollector,
-    ProbsStoreCallback,
-)
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
@@ -298,3 +282,27 @@ class ThundeRLCLI(LightningCLI):
         )
         torch.set_num_threads(num_threads)
         logging.info(f"[CLI] Set torch cpu threads to {num_threads}.")
+
+    def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
+        """
+        We need to add the validation callbacks of the model to the trainer.
+
+        The problem is that we have a list of callbacks, and we can't extend
+        the list of callbacks provided via the config using jsonargparse.
+        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
+        Therefore, we manually add our model callbacks to the extra callbacks.
+        """
+        if self.model.validation_hooks:
+            model_callbacks = self.model.validation_hooks
+            extra_callbacks = [
+                self._get(self.config_init, c)
+                for c in self._parser(self.subcommand).callback_keys
+            ]
+            extra_callbacks.extend(model_callbacks)
+            trainer_config = {
+                **self._get(self.config_init, "trainer", default={}),
+                **kwargs,
+            }
+            return self._instantiate_trainer(trainer_config, extra_callbacks)
+
+        return super().instantiate_trainer(**kwargs)
