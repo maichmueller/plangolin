@@ -353,6 +353,9 @@ class ProbsCollector(torch.nn.Module):
         self._sorted_probs = None
 
     def sort_probs(self, dataloader_idx: int):
+        if self._sorted_probs is not None:
+            if dataloader_idx in self._sorted_probs:
+                return self._sorted_probs[dataloader_idx]
         probs_in_epoch: List[List[Tensor]] = self._probs_in_epoch[dataloader_idx]
         flattened_indices: torch.Tensor = torch.cat(
             self._state_id_in_epoch[dataloader_idx]
@@ -364,6 +367,8 @@ class ProbsCollector(torch.nn.Module):
         ]
         if self._sorted_probs is None:
             self._sorted_probs = {dataloader_idx: sorted_probs}
+        else:
+            self._sorted_probs[dataloader_idx] = sorted_probs
         return sorted_probs
 
     def sort_probs_on_epoch_end(self) -> Dict[int, List[Tensor]]:
@@ -376,13 +381,8 @@ class ProbsCollector(torch.nn.Module):
          while iterating over the values.
 
         """
-        if self._sorted_probs:
-            return self._sorted_probs
-
-        self._sorted_probs = {
-            dataloader_idx: self.sort_probs(dataloader_idx)
-            for dataloader_idx in self._state_id_in_epoch.keys()
-        }
+        for dataloader_idx in self._state_id_in_epoch.keys():
+            self.sort_probs(dataloader_idx)
         return self._sorted_probs
 
 
@@ -509,8 +509,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         for space_idx, optimal_values in discounted_optimal_values.items():
             self.register_buffer(str(space_idx), optimal_values)
 
-        self._last_seen_dataloader_idx: int = 0
-        self._losses = KeyAwareDefaultDict(
+        self.losses = KeyAwareDefaultDict(
             lambda dataloader_idx: self._compute_loss(dataloader_idx)
         )
         self._graphs: Dict[int, pyg.data.Data] = dict()
@@ -572,7 +571,7 @@ class PolicyEvaluationValidation(ValidationCallback):
             flat_probs.device == graph.edge_attr.device
         ), f"Found mismatching devices {flat_probs.device=} and {graph.edge_attr.device=}"
         graph.edge_attr[:, 1] = flat_probs
-        return self.message_passing[dataloader_idx](graph)
+        return self.message_passing[dataloader_idx](graph, cache=False)
 
     def forward(
         self,
@@ -582,18 +581,17 @@ class PolicyEvaluationValidation(ValidationCallback):
     ):
         if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
             return
-
-        prev_dataloader_idx = self._last_seen_dataloader_idx
-        if dataloader_idx != prev_dataloader_idx:
-            assert dataloader_idx > prev_dataloader_idx
-            loss = self._compute_loss(prev_dataloader_idx).cpu().detach()
-            self._losses[prev_dataloader_idx] = loss
-            self._last_seen_dataloader_idx = dataloader_idx
-            self.probs_collector.reset()
-
         self.probs_collector(
             tensordict, batch_idx=batch_idx, dataloader_idx=dataloader_idx
         )
+
+    def reset(self):
+        """
+        Reset the internal state of the callback.
+        This is needed to ensure that the callback can be reused in a new training run.
+        """
+        self.losses.clear()
+        self.probs_collector.reset()
 
     def _compute_loss(self, dataloader_idx) -> Optional[torch.Tensor]:
         epoch_probs = self.probs_collector.sort_probs(dataloader_idx)
@@ -613,9 +611,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         return loss
 
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
-        self.probs_collector.reset()
-        self._losses.clear()
-        self._last_seen_dataloader_idx = 0
+        self.reset()
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
         losses: List[torch.Tensor] = []
@@ -623,7 +619,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         for dataloader_idx in filter(
             lambda i: not self.skip_dataloader(i), sorted_probs.keys()
         ):
-            loss = self._losses[dataloader_idx]
+            loss = self.losses[dataloader_idx]
             pl_module.log(
                 self.log_key(dataloader_idx),
                 loss,
@@ -637,3 +633,4 @@ class PolicyEvaluationValidation(ValidationCallback):
                 torch.stack(losses).view(-1).mean(),
                 on_epoch=True,
             )
+        self.reset()

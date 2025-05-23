@@ -64,11 +64,12 @@ class PolicyEvaluationMP(MessagePassing):
         """
         return self.gamma.device
 
-    def forward(self, data: pyg.data.Data) -> Tensor:
-        if hasattr(data, self.attr_name):
+    def forward(self, data: pyg.data.Data, cache: bool = True) -> Tensor:
+        if cache and hasattr(data, self.attr_name):
             return getattr(data, self.attr_name)
         values = self._iterate(data)
-        setattr(data, self.attr_name, values)
+        if cache:
+            setattr(data, self.attr_name, values)
         self._reset()
         return values
 
