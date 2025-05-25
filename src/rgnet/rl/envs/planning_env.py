@@ -233,11 +233,11 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     def is_dead_end_transition(transition: xmi.XTransition) -> bool:
         return transition.action is None
 
-    def get_reward_and_done(
+    def _get_reward_and_done(
         self,
         transitions: Sequence[xmi.XTransition],
         instances: Sequence[InstanceType] | None = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[list[float], list[bool]]:
         """
         Compute the reward and done signal for the current state and actions taken.
         The method is typically called from step, therefore current_states refers to the states
@@ -249,7 +249,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             This parameter can be used to get the rewards and done signals after a rollout was already finished.
             Defaults to self._active_instances.
 
-        :return A tuple containing the rewards and done signal for the actions
+        :return A tuple containing the rewrds and done signal for the actions
         """
         instances = instances or self._active_instances
         if len(transitions) != len(instances):
@@ -272,12 +272,59 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             else:
                 done.append(False)
                 labels.append(xmi.StateLabel.default)
-        rewards = torch.tensor(
-            self.reward_function(transitions, labels),
-            dtype=torch.float,
-            device=self.device,
+        rewards = self.reward_function(transitions, labels)
+        return rewards, done
+
+    def get_reward_and_done(
+        self,
+        transitions: Sequence[xmi.XTransition],
+        instances: Sequence[InstanceType] | None = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the reward and done signal for the current state and actions taken.
+        The method is typically called from step, therefore current_states refers to the states
+        before the actions are taken.
+        The batch dimension can be over the environment batch size or the time.
+        :param transitions: The actions taken by the agent.
+        :param instances the instances from which actions and current states stem from.
+            Requires len(instances) == len(transitions).
+            This parameter can be used to get the rewards and done signals after a rollout was already finished.
+            Defaults to self._active_instances.
+
+        :return A tuple containing the rewrds and done signal for the actions
+        """
+        rewards, done = self._get_reward_and_done(transitions, instances)
+        return (
+            torch.tensor(
+                rewards,
+                dtype=torch.float,
+                device=self.device,
+            ),
+            torch.tensor(done, dtype=torch.bool, device=self.device),
         )
-        return rewards, torch.tensor(done, dtype=torch.bool, device=self.device)
+
+    def get_reward_and_done_multi(
+        self,
+        transitions: Sequence[Sequence[xmi.XTransition]],
+        instances: Sequence[Sequence[InstanceType]] | None = None,
+    ) -> Tuple[torch.nested.Tensor, torch.nested.Tensor]:
+        """
+        Compute the reward and done signal for a sequence of states characterized
+        by the outermost sequence of transitions.
+        """
+        all_transitions = transitions
+        all_instances = instances or [self._active_instances] * len(all_transitions)
+        all_rewards, all_done = [], []
+        for transitions, instances in zip(all_transitions, all_instances):
+            rewards, done = self._get_reward_and_done(transitions, instances)
+            all_rewards.append(rewards)
+            all_done.append(done)
+        return (
+            torch.nested.nested_tensor(
+                all_rewards, dtype=torch.float, device=self.device
+            ),
+            torch.nested.nested_tensor(all_done, dtype=torch.bool, device=self.device),
+        )
 
     def get_applicable_transitions(
         self,
