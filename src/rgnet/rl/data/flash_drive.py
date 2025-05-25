@@ -1,3 +1,4 @@
+import itertools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,24 +60,30 @@ class FlashDrive(BaseDrive):
         self,
         env: ExpandedStateSpaceEnv,
     ) -> List[HeteroData]:
-        out = env.traverse()[0]
-        space: xmi.XStateSpace = out[env.keys.instance][0]
+        space: xmi.XStateSpace = env.active_instances[0]
         encoder = self.encoder_factory(space.problem.domain)
         nr_states: int = len(space)
         logger = self._get_logger()
         logger.info(
             f"Building {self.__class__.__name__} "
-            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, space: {space})"
         )
         # Each data object represents one state
         batched_data: List[Union[HeteroData, Data]] = [None] * nr_states
-        space_iter = zip(out["state"], out["transitions"], out["instance"])
+        iterator = zip(
+            space,
+            env.get_applicable_transitions(space, instances=itertools.repeat(space)),
+        )
         if self.show_progress:
-            space_iter = tqdm(space_iter, total=nr_states, desc="Encoding states")
-        for state, transitions, instance in space_iter:
+            iterator = tqdm(
+                iterator,
+                total=nr_states,
+                desc=f"{self.__class__.__name__}: PyG-encoding space",
+            )
+        for state, transitions in iterator:
             data = encoder.to_pyg_data(encoder.encode(state))
             reward, done = env.get_reward_and_done(
-                transitions, instances=[instance] * len(transitions)
+                transitions, instances=[space] * len(transitions)
             )
             data.reward = reward
             # Save the index of the state
@@ -97,7 +104,7 @@ class FlashDrive(BaseDrive):
             batched_data[state.index] = data
         logger.info(
             f"Finished {self.__class__.__name__} "
-            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})",
         )
         return batched_data
 
