@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import torch
 from torch import Tensor
@@ -14,7 +14,7 @@ def to_states_batch(
     data_list: list[Data | HeteroData],
     exclude_keys: Iterable[str] | None = None,
     **kwargs,
-) -> Batch:
+) -> tuple[Batch, dict[str, Any]]:
     """
     Collate function for batching current states-(data) in PyTorch Geometric.
 
@@ -26,15 +26,16 @@ def to_states_batch(
     Returns:
         batch: A Batch object containing the current states(-data) as a pyg.Batch object.
     """
-    return Batch.from_data_list(
+    batch = Batch.from_data_list(
         data_list, exclude_keys=exclude_keys or ["targets"], **kwargs
     )
+    return batch, {"batch_size": batch.batch_size}
 
 
 def to_transitions_batch(
     data_list: list[Data | HeteroData], **kwargs
-) -> tuple[Batch, Batch, Tensor]:
-    batched = to_states_batch(data_list, **kwargs)
+) -> tuple[Batch, Batch, Tensor, dict[str, Any]]:
+    batched, info = to_states_batch(data_list, **kwargs)
 
     flattened_targets = list(
         itertools.chain.from_iterable(d.targets for d in data_list)
@@ -42,9 +43,14 @@ def to_transitions_batch(
     num_successors = torch.tensor(
         [len(data.targets) for data in data_list], dtype=torch.long
     )
-    successor_batch = to_states_batch(flattened_targets, **kwargs)
+    successor_batch, succ_info = to_states_batch(flattened_targets, **kwargs)
 
-    return batched, successor_batch, num_successors
+    return (
+        batched,
+        successor_batch,
+        num_successors,
+        info | {f"successors_{key}": value for key, value in succ_info.items()},
+    )
 
 
 def to_atom_values_batch(
@@ -52,7 +58,7 @@ def to_atom_values_batch(
     predicates: Sequence[XPredicate] | XDomain,
     unreachable_atom_value: float,
     **kwargs,
-) -> tuple[Batch, dict[str, Tensor], dict[str, list[tuple[int, str]]]]:
+) -> tuple[Batch, dict[str, Tensor], dict[str, list[tuple[int, str]]], dict[str, Any]]:
     """
     Collate function for batching atom distances in PyTorch Geometric.
 
@@ -66,7 +72,9 @@ def to_atom_values_batch(
     """
     if isinstance(predicates, XDomain):
         predicates = predicates.predicates(XCategory.fluent, XCategory.derived)
-    states_batch = to_states_batch(data_list, exclude_keys=["targets", "atom_values"])
+    states_batch, info = to_states_batch(
+        data_list, exclude_keys=["targets", "atom_values"]
+    )
     target_atom_values = dict()
     target_state_association = dict()
     for arity in sorted(set(p.arity for p in predicates)):
@@ -104,7 +112,7 @@ def to_atom_values_batch(
                 target_values, dtype=torch.float
             )
             target_state_association[predicate] = association
-    return states_batch, target_atom_values, target_state_association
+    return states_batch, target_atom_values, target_state_association, info
 
 
 class StatefulCollater:

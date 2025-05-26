@@ -46,11 +46,11 @@ class PolicyGradientLitModuleMock:
         # We can no longer check for tuple exclusively because if a pytorch dataloader has pin_memory=True set,
         # their data will be converted to a list (https://github.com/pytorch/pytorch/issues/48419)
         assert isinstance(batch_tuple, (list, tuple))
-        assert len(batch_tuple) == 3
+        assert len(batch_tuple) == 4
         assert isinstance(batch_tuple[0], Batch)
         assert isinstance(batch_tuple[1], Batch)
         assert type(batch_tuple[2]) == torch.Tensor
-        batched, successor_batch, num_successor = batch_tuple
+        batched, successor_batch, num_successor, _ = batch_tuple
         assert batched.batch_size == num_successor.numel()
         assert batched.done.device == batched.reward.device == num_successor.device
         assert (

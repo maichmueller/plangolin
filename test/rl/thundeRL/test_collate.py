@@ -17,7 +17,7 @@ def test(tmp_path, medium_blocks, fresh_flashdrive_medium_blocks):
     )
     batches = [batch for batch in loader]
     assert len(batches) == 5
-    assert all(isinstance(batch, tuple) and len(batch) == 3 for batch in batches)
+    assert all(isinstance(batch, tuple) and len(batch) == 4 for batch in batches)
 
     flattened_indices = itertools.chain.from_iterable(
         [batch[0].idx.tolist() for batch in batches]
