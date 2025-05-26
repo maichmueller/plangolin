@@ -1,5 +1,5 @@
 import dataclasses
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import lightning
 import torch
@@ -174,30 +174,32 @@ class PolicyGradientLitModule(lightning.LightningModule):
         return value if key.startswith("loss_") else None
 
     def _common_step(
-        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]
+        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor, dict[str, Any]]
     ) -> tuple[TensorDict, torch.Tensor]:
-        out: TensorDict = self(*batch_tuple)
+        out: TensorDict = self(*batch_tuple[:-1])
         losses_td = self.loss(out)
         losses = losses_td.named_apply(self._loss_filter)
         return losses, losses.sum(reduce=True)
 
     def training_step(
-        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor]
+        self, batch_tuple: Tuple[Batch, Batch, torch.Tensor, dict[str, Any]]
     ) -> STEP_OUTPUT:
         with set_exploration_type(ExplorationType.RANDOM):
             losses_separate, loss = self._common_step(batch_tuple)
             for key, value in losses_separate.items():
-                self.log("train/" + key, value, batch_size=batch_tuple[0].batch_size)
+                self.log(
+                    "train/" + key, value, batch_size=batch_tuple[-1]["batch_size"]
+                )
         return loss
 
     def validation_step(
         self,
-        batch_tuple: Tuple[Batch, Batch, torch.Tensor],
+        batch_tuple: Tuple[Batch, Batch, torch.Tensor, dict[str, Any]],
         batch_idx=None,
         dataloader_idx=0,
     ):
         with set_exploration_type(ExplorationType.MODE):
-            as_tensordict = self.forward(*batch_tuple)
+            as_tensordict = self(*batch_tuple[:-1])
             for hook in self.validation_hooks:
                 optional_metrics = hook(
                     as_tensordict, batch_idx=batch_idx, dataloader_idx=dataloader_idx
@@ -206,7 +208,9 @@ class PolicyGradientLitModule(lightning.LightningModule):
                     continue
                 for key, value in optional_metrics.items():
                     self.log(
-                        "validation/" + key, value, batch_size=batch_tuple[0].batch_size
+                        "validation/" + key,
+                        value,
+                        batch_size=batch_tuple[-1]["batch_size"],
                     )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:

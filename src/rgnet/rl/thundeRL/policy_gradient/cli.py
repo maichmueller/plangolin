@@ -284,33 +284,6 @@ class PolicyGradientCLI(ThundeRLCLI):
         parser.link_arguments(
             source="agent",
             target="model.validation_hooks.init_args.probs_collector",
-            compute_fn=lambda agent: ProbsCollector(probs_key=agent.keys.probs),
+            compute_fn=lambda agent: ProbsCollector(key=agent.keys.probs),
             apply_on="instantiate",
         )
-
-    def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
-        """
-        We need to add the validation callbacks of the model to the trainer.
-
-        The problem is that we have a list of callbacks, and we can't extend
-        the list of callbacks provided via the config using jsonargparse.
-        LightningCLI offers an extra way via "forced callbacks" but that doesn't work with lists.
-        Therefore, we manually add our model callbacks to the extra callbacks.
-        """
-        if (
-            isinstance(self.model, PolicyGradientLitModule)
-            and self.model.validation_hooks
-        ):
-            model_callbacks = self.model.validation_hooks
-            extra_callbacks = [
-                self._get(self.config_init, c)
-                for c in self._parser(self.subcommand).callback_keys
-            ]
-            extra_callbacks.extend(model_callbacks)
-            trainer_config = {
-                **self._get(self.config_init, "trainer", default={}),
-                **kwargs,
-            }
-            return self._instantiate_trainer(trainer_config, extra_callbacks)
-
-        return super().instantiate_trainer(**kwargs)

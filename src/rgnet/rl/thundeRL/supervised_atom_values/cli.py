@@ -53,7 +53,7 @@ class WandbExtraParameter:
 
 @dataclasses.dataclass
 class CollateKwargs:
-    predicates: Optional[List[XPredicate]] = None
+    predicates: Optional[Sequence[XPredicate]] = None
     unreachable_atom_value: float = float("inf")
 
 
@@ -134,13 +134,13 @@ class AtomValuesCLI(ThundeRLCLI):
             ],  # needed to be made hollow so that the collate function can pickle the predicates
         )
 
-        # # validation hooks
-        # parser.link_arguments(
-        #     "data_layout.input_data.domain",
-        #     "model.validation_hooks.init_args.predicates",
-        #     apply_on="instantiate",
-        #     compute_fn=lambda domain: [
-        #         pred.name
-        #         for pred in domain.predicates(XCategory.fluent, XCategory.derived)
-        #     ],
-        # )
+        # validation hooks
+        parser.link_arguments(
+            "data_layout.input_data.domain",
+            "model.validation_hooks.init_args.keys",
+            apply_on="instantiate",
+            compute_fn=lambda domain: [
+                pred.name
+                for pred in domain.predicates(XCategory.fluent, XCategory.derived)
+            ],
+        )
