@@ -197,10 +197,11 @@ class IWSearch:
         return (
             self.width == other.width
             and self.expansion_strategy == other.expansion_strategy
+            and self.depth_1_is_novel == other.depth_1_is_novel
         )
 
     def __str__(self):
-        return f"IWSearch(width={self.width}, expansion_strategy={self.expansion_strategy})"
+        return f"IWSearch(width={self.width}, expansion_strategy={self.expansion_strategy}, depth_1_is_novel={self.depth_1_is_novel})"
 
     def solve(
         self,
@@ -412,7 +413,7 @@ class IWStateSpace(XStateSpace):
         *,
         serialized_transitions: list[tuple[int, tuple[int, ...], int]] | None = None,
         serialized_state_infos: list[StateInfo] | None = None,
-        n_cpus: int = 1,
+        n_cpus: int | str = 1,
         max_transitions: int = float("inf"),
         max_time: timedelta = timedelta(hours=6),
         chunk_size: int = 100,
@@ -430,7 +431,11 @@ class IWStateSpace(XStateSpace):
         self.max_time = max_time
         self.chunk_size = chunk_size
         self.pbar = pbar
-        self.n_cpus = min(n_cpus, env_aware_cpu_count())
+        self.n_cpus = (
+            min(n_cpus, env_aware_cpu_count())
+            if n_cpus != "auto"
+            else env_aware_cpu_count()
+        )
         if self._serialized_transitions:
             for state in self:
                 self.iw_fwd_transitions[state] = []
