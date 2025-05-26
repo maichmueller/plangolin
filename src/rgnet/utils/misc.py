@@ -9,6 +9,7 @@ import pathlib
 import time
 from datetime import timedelta
 from functools import singledispatch
+from inspect import signature
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Reversible, Tuple, Union
 
@@ -24,8 +25,15 @@ def get_colors(graph: nx.Graph):
     return sorted(set(graph[node]["color"].value for node in graph))
 
 
-def get_device_cuda_if_possible() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def get_device_cuda_if_possible(device_id: int | None = None) -> torch.device:
+    if torch.cuda.is_available():
+        if device_id is not None and device_id < torch.cuda.device_count():
+            return torch.device(f"cuda:{device_id}")
+        elif device_id is not None:
+            raise ValueError(
+                f"Requested CUDA device {device_id}, but only {torch.cuda.device_count()} are available."
+            )
+    return torch.device("cuda")
 
 
 def time_delta_now(previous: float) -> str:
@@ -222,3 +230,11 @@ def _(input_: NonTensorWrapper, **kwargs) -> List:
 @tolist.register(Batch)
 def _(input_: Batch, **kwargs) -> List:
     return input_.to_data_list()
+
+
+def as_forwarding_args(func, args, kwargs, defaults: dict[str, Any] | None = None):
+    parent_sig = signature(func)
+    kwargs = (defaults or {}) | kwargs
+    bound_args = parent_sig.bind_partial(*args, **kwargs)
+    bound_args.apply_defaults()
+    return bound_args

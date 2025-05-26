@@ -1,6 +1,5 @@
 import abc
 import logging
-import statistics
 import warnings
 from collections import defaultdict
 from itertools import chain
@@ -16,20 +15,24 @@ from torchrl.modules import ValueOperator
 
 from rgnet.algorithms import PolicyEvaluationMP
 from rgnet.logging_setup import tqdm
+from rgnet.models.patched_module_dict import PatchedModuleDict
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import BaseDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.utils.misc import KeyAwareDefaultDict
+from rgnet.utils.misc import KeyAwareDefaultDict, as_forwarding_args
 
 
 class ValidationCallback(torch.nn.Module, Callback):
     def __init__(
         self,
         log_name: str,
+        key: NestedKey | None = None,
         dataloader_names: Optional[Dict[int, str]] = None,
         only_run_for_dataloader: Optional[set[int]] = None,
+        log_aggregated_metric: bool = False,
         epoch_reduction: Literal["mean", "max", "min"] = "mean",
+        dataloader_reduction: Literal["mean", "max", "min"] = "mean",
     ) -> None:
         """
 
@@ -44,27 +47,62 @@ class ValidationCallback(torch.nn.Module, Callback):
         """
         super().__init__()
         self.log_name = log_name
+        self.key = key
         self.dataloader_names = dataloader_names
         self.only_run_for_dataloader = only_run_for_dataloader
-        if epoch_reduction == "mean":
-            self.epoch_reduction = statistics.fmean
-        elif epoch_reduction == "max":
-            self.epoch_reduction = max
-        elif epoch_reduction == "min":
-            self.epoch_reduction = min
+        self.epoch_reduction = self._choose_reduction(epoch_reduction)
+        self.dataloader_reduction = self._choose_reduction(dataloader_reduction)
+        self.log_aggregated_metric = log_aggregated_metric
         self.is_sanity_check: bool = False
         self.epoch_values = defaultdict(list)
+
+    @staticmethod
+    def _choose_reduction(reduction: str):
+        match reduction:
+            case "mean":
+                return torch.mean
+            case "max":
+                return torch.max
+            case "min":
+                return torch.min
+            case _:
+                raise ValueError(
+                    f"Invalid reduction type: {reduction}. "
+                    "Choose from 'mean', 'max', or 'min'."
+                )
+
+    @property
+    def state_key(self) -> str:
+        return f"{super().state_key}_{self.log_name}"
 
     def on_validation_epoch_start(self, trainer, pl_module) -> None:
         self.epoch_values.clear()
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        """
+        This method is called after the model validation epoch ends.
+        We cannot use on_validation_epoch_end because it is called before the model validation, and thus there may
+        not be any value to log.
+        """
         for dataloader_idx, values in self.epoch_values.items():
             pl_module.log(
                 self.log_key(dataloader_idx),
-                self.epoch_reduction(values),
+                self.epoch_reduction(
+                    torch.stack(tuple(torch.as_tensor(value) for value in values))
+                ).item(),
                 on_epoch=True,
             )
+        if self.log_aggregated_metric:
+            # aggregate over all dataloaders
+            all_values = list(
+                map(torch.as_tensor, chain.from_iterable(self.epoch_values.values()))
+            )
+            if len(all_values) > 0:
+                pl_module.log(
+                    self.log_key(),
+                    self.dataloader_reduction(torch.stack(all_values)).item(),
+                    on_epoch=True,
+                )
 
     def on_sanity_check_start(self, trainer, pl_module) -> None:
         self.is_sanity_check = True
@@ -72,8 +110,11 @@ class ValidationCallback(torch.nn.Module, Callback):
     def on_sanity_check_end(self, trainer, pl_module) -> None:
         self.is_sanity_check = False
 
-    def log_key(self, dataloader_idx: int):
-        return f"val/{self.log_name}_" + (
+    def log_key(self, dataloader_idx: int | None = None):
+        base = f"val/{self.log_name}"
+        if dataloader_idx is None:
+            return base
+        return f"{base}_" + (
             self.dataloader_names[dataloader_idx]
             if self.dataloader_names
             else str(dataloader_idx)
@@ -92,6 +133,101 @@ class ValidationCallback(torch.nn.Module, Callback):
         pass
 
 
+class ValueValidation(ValidationCallback):
+    def forward(
+        self, tensordict: TensorDict, batch_idx: Optional[int] = None, dataloader_idx=0
+    ) -> None:
+        if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
+            return
+        self.epoch_values[dataloader_idx].append(tensordict[self.key])
+
+
+class ValidationDictionary(ValidationCallback):
+    """
+    Delegates validation of multiple keys to individual ValueValidation callbacks.
+    """
+
+    def __init__(
+        self,
+        keys: List[str],
+        log_name: str,
+        validation_subtype: (
+            dict[str, type[ValidationCallback]] | type[ValidationCallback] | None
+        ) = None,
+        validation_kwargs: dict[str, dict[str, Any]] | None = None,
+        **kwargs,
+    ):
+        self.keys = sorted(keys)
+        super().__init__(log_name=log_name, **kwargs)
+        match type(validation_subtype):
+            case type():
+                # If a single class is passed, use it for all keys
+                validation_subtype = {k: validation_subtype for k in self.keys}
+            case dict():
+                # If a dict is passed, use the specified class for each key
+                if not all(k in validation_subtype for k in self.keys):
+                    raise ValueError(
+                        "Not all keys have a corresponding validation subtype."
+                    )
+            case None:
+                # If None is passed, use ValueValidation for all keys
+                validation_subtype = {k: ValueValidation for k in self.keys}
+            case _:
+                raise TypeError(
+                    "validation_subtype must be either a class or a dictionary."
+                )
+        validation_subtype = validation_subtype or {
+            k: ValueValidation for k in self.keys
+        }
+        validation_kwargs = validation_kwargs or {k: {} for k in self.keys}
+        self.sub_callbacks = PatchedModuleDict(
+            {
+                key: validation_subtype[key](
+                    key=log_name,
+                    log_name=f"{log_name}-{{{key}}}",
+                    **(kwargs | validation_kwargs[key]),
+                )
+                for key in self.keys
+            }
+        )
+
+    @property
+    def state_key(self) -> str:
+        return f"{super().state_key}_{self.log_name}_dict"
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        for cb in self.sub_callbacks.values():
+            cb.on_validation_epoch_start(trainer, pl_module)
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        for cb in self.sub_callbacks.values():
+            cb.on_validation_epoch_end(trainer, pl_module)
+
+    def on_sanity_check_start(self, trainer, pl_module) -> None:
+        for cb in self.sub_callbacks.values():
+            cb.on_sanity_check_start(trainer, pl_module)
+
+    def on_sanity_check_end(self, trainer, pl_module) -> None:
+        for cb in self.sub_callbacks.values():
+            cb.on_sanity_check_end(trainer, pl_module)
+
+    def forward(
+        self,
+        loss_td: TensorDict,
+        batch_idx: Optional[int] = None,
+        dataloader_idx: int = 0,
+    ) -> None:
+        """
+        losses: mapping predicate name -> Tensor
+        """
+        # delegate each predicate's loss to its ValueValidation callback
+        for key, loss in loss_td.items():
+            if key in self.sub_callbacks:
+                self.sub_callbacks[key](
+                    loss, batch_idx=batch_idx, dataloader_idx=dataloader_idx
+                )
+
+
 class CriticValidation(ValidationCallback):
     def __init__(
         self,
@@ -100,7 +236,7 @@ class CriticValidation(ValidationCallback):
         loss_function: Optional[
             Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
         ] = None,
-        state_value_key: NestedKey = ActorCritic.default_keys.state_value,
+        key: NestedKey = ActorCritic.default_keys.state_value,
         log_name: str = "value_loss",
         dataloader_names: Optional[Dict[int, str]] = None,
         only_run_for_dataloader: Optional[set[int]] = None,
@@ -114,11 +250,12 @@ class CriticValidation(ValidationCallback):
             optimal_values_dict[i][j] is the optimal value for the j-th state in the i-th validation space.
         :param value_operator: The value operator currently learned. Each in-key has to be contained in the tensordicts.
         :param loss_function: Which loss function to use. (default: torch.nn.functional.mse_loss)
-        :param state_value_key: The output key of the value_operator.
+        :param key: The output key of the value_operator.
         :param log_name: How should be logged. (default: value_loss)
         """
         super().__init__(
             log_name=log_name,
+            key=key,
             dataloader_names=dataloader_names,
             only_run_for_dataloader=only_run_for_dataloader,
         )
@@ -126,7 +263,6 @@ class CriticValidation(ValidationCallback):
             self.register_buffer(str(space_idx), optimal_values)
         self.value_op = value_operator
         self.loss_function = loss_function or torch.nn.functional.mse_loss
-        self.state_value_key = state_value_key
 
     def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         if self.skip_dataloader(dataloader_idx) or self.is_sanity_check:
@@ -149,7 +285,7 @@ class CriticValidation(ValidationCallback):
         )
         # tensordict has shape [batch_size, 1] and tensordict[current_embedding] is [batch_size, 1, hidden_size]
         # therefore, prediction has shape [batch_size, 1, 1] and we have to squeeze two dimensions.
-        state_value: torch.Tensor = prediction[self.state_value_key].squeeze()
+        state_value: torch.Tensor = prediction[self.key].squeeze()
 
         if optimal_values.device != state_value.device:
             warnings.warn(
@@ -167,7 +303,7 @@ class PolicyValidation(ValidationCallback):
     def __init__(
         self,
         optimal_policy_dict: Dict[int, Dict[int, Set[int]]],
-        keys: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys,
+        key: PlanningEnvironment.AcceptedKeys = PlanningEnvironment.default_keys.action,
         log_name: str = "policy_precision",
         dataloader_names: Optional[Dict[int, str]] = None,
         only_run_for_dataloader: Optional[set[int]] = None,
@@ -175,6 +311,7 @@ class PolicyValidation(ValidationCallback):
     ) -> None:
         super().__init__(
             log_name=log_name,
+            key=key,
             dataloader_names=dataloader_names,
             only_run_for_dataloader=only_run_for_dataloader,
             epoch_reduction=epoch_reduction,
@@ -184,7 +321,6 @@ class PolicyValidation(ValidationCallback):
         self.optimal_action_indices: Dict[int, Dict[int, Set[int]]] = (
             optimal_policy_dict
         )
-        self.keys = keys
 
     def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         """
@@ -235,17 +371,20 @@ class PolicyEntropy(ValidationCallback):
 
     def __init__(
         self,
-        probs_key: NestedKey = ActorCritic.default_keys.probs,
-        log_name: str = "non_trivial_policy_entropy",
-        dataloader_names: Optional[Dict[int, str]] = None,
-        only_run_for_dataloader: Optional[set[int]] = None,
-        epoch_reduction: Literal["mean", "max", "min"] = "mean",
+        *args,
+        **kwargs,
     ) -> None:
-        super().__init__(
-            log_name, dataloader_names, only_run_for_dataloader, epoch_reduction
+        bound_args = as_forwarding_args(
+            ValidationCallback.__init__,
+            args,
+            kwargs,
+            defaults=dict(
+                key=ActorCritic.default_keys.probs,
+                log_name="non_trivial_policy_entropy",
+                epoch_reduction="mean",
+            ),
         )
-        self.probs_key = probs_key
-        self.epoch_values = defaultdict(list)
+        super().__init__(*bound_args.args, **bound_args.kwargs)
 
     @staticmethod
     def normalized_entropy(probs_tensor: torch.Tensor):
@@ -295,10 +434,10 @@ class ProbsCollector(torch.nn.Module):
 
     def __init__(
         self,
-        probs_key: NestedKey = ActorCritic.default_keys.probs,
+        key: NestedKey = ActorCritic.default_keys.probs,
     ):
         super().__init__()
-        self.probs_key: NestedKey = probs_key
+        self.probs_key: NestedKey = key
         # Collected over one validation epoch
         # The index of the current states in their StateSpaces collected over one epoch
         self._state_id_in_epoch: Dict[int, List[torch.Tensor]] = defaultdict(list)
@@ -306,7 +445,7 @@ class ProbsCollector(torch.nn.Module):
         # Each state can have various numbers of successors, therefore, we have a list of list
         self._probs_in_epoch: Dict[int, List[List[torch.Tensor]]] = defaultdict(list)
 
-        self._sorted_probs: Optional[Dict[int, List[torch.Tensor]]] = None
+        self._sorted_probs: Optional[Dict[int, List[torch.Tensor]]] = dict()
         self._seen_batch_indices: Dict[int, Set[int]] = defaultdict(set)
 
     def forward(self, tensordict: TensorDict, batch_idx: int, dataloader_idx=0):
@@ -326,7 +465,7 @@ class ProbsCollector(torch.nn.Module):
         if batch_idx in self._seen_batch_indices[dataloader_idx]:
             return
         self._seen_batch_indices[dataloader_idx].add(batch_idx)
-        if self._sorted_probs is not None:
+        if self._sorted_probs:
             raise UserWarning(
                 "You hae to reset the collector after each call to "
                 "sort_probs_on_epoch_end() before adding new data."
@@ -350,12 +489,11 @@ class ProbsCollector(torch.nn.Module):
         self._state_id_in_epoch.clear()
         self._probs_in_epoch.clear()
         self._seen_batch_indices.clear()
-        self._sorted_probs = None
+        self._sorted_probs.clear()
 
     def sort_probs(self, dataloader_idx: int):
-        if self._sorted_probs is not None:
-            if dataloader_idx in self._sorted_probs:
-                return self._sorted_probs[dataloader_idx]
+        if dataloader_idx in self._sorted_probs:
+            return self._sorted_probs[dataloader_idx]
         probs_in_epoch: List[List[Tensor]] = self._probs_in_epoch[dataloader_idx]
         flattened_indices: torch.Tensor = torch.cat(
             self._state_id_in_epoch[dataloader_idx]
@@ -365,10 +503,7 @@ class ProbsCollector(torch.nn.Module):
         sorted_probs: List[torch.Tensor] = [
             flattened_probs[i] for i in new_indices.tolist()
         ]
-        if self._sorted_probs is None:
-            self._sorted_probs = {dataloader_idx: sorted_probs}
-        else:
-            self._sorted_probs[dataloader_idx] = sorted_probs
+        self._sorted_probs[dataloader_idx] = sorted_probs
         return sorted_probs
 
     def sort_probs_on_epoch_end(self) -> Dict[int, List[Tensor]]:
@@ -471,12 +606,9 @@ class PolicyEvaluationValidation(ValidationCallback):
         envs: List[ExpandedStateSpaceEnv | torch.utils.data.Dataset],
         discounted_optimal_values: Dict[int, torch.Tensor],
         probs_collector: ProbsCollector,
-        log_name: str = "policy_evaluation",
         num_iterations: Optional[int] = 1_000,
         difference_threshold: Optional[float] = 0.001,
-        log_aggregated_metric: bool = True,
-        dataloader_names: Optional[Dict[int, str]] = None,
-        only_run_for_dataloader: Optional[set[int]] = None,
+        **kwargs,
     ) -> None:
         """
         :param envs: List of validation environments (independent of only_run_for_dataloader)
@@ -495,16 +627,18 @@ class PolicyEvaluationValidation(ValidationCallback):
         Both num_iterations and difference_threshold can be used simultaneously, but at least one
         has to be specified.
         """
-        super().__init__(
-            log_name, dataloader_names, only_run_for_dataloader, epoch_reduction="mean"
+        bound_args = as_forwarding_args(
+            ValidationCallback.__init__,
+            tuple(),
+            kwargs,
+            defaults=dict(log_name="policy_evaluation"),
         )
+        super().__init__(*bound_args.args, **bound_args.kwargs)
         if num_iterations is None and difference_threshold is None:
             raise ValueError(
                 "Neither num_iterations nor difference_threshold was given."
                 "At least one is required to determine value-iteration limit."
             )
-
-        self.log_aggregated_metric = log_aggregated_metric
         self.probs_collector = probs_collector
         for space_idx, optimal_values in discounted_optimal_values.items():
             self.register_buffer(str(space_idx), optimal_values)
@@ -592,6 +726,7 @@ class PolicyEvaluationValidation(ValidationCallback):
         """
         self.losses.clear()
         self.probs_collector.reset()
+        self.epoch_values.clear()
 
     def _compute_loss(self, dataloader_idx) -> Optional[torch.Tensor]:
         epoch_probs = self.probs_collector.sort_probs(dataloader_idx)
@@ -614,23 +749,11 @@ class PolicyEvaluationValidation(ValidationCallback):
         self.reset()
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:
-        losses: List[torch.Tensor] = []
         sorted_probs = self.probs_collector.sort_probs_on_epoch_end()
         for dataloader_idx in filter(
             lambda i: not self.skip_dataloader(i), sorted_probs.keys()
         ):
             loss = self.losses[dataloader_idx]
-            pl_module.log(
-                self.log_key(dataloader_idx),
-                loss,
-                on_epoch=True,
-            )
-            losses.append(loss)
-
-        if self.log_aggregated_metric:
-            pl_module.log(
-                f"val/{self.log_name}",
-                torch.stack(losses).view(-1).mean(),
-                on_epoch=True,
-            )
+            self.epoch_values[dataloader_idx].append(loss)
+        super().on_validation_epoch_end(trainer, pl_module)
         self.reset()
