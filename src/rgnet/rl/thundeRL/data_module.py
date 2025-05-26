@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import torch
 from lightning import LightningDataModule
-from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
+from lightning.pytorch.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
@@ -20,6 +20,7 @@ from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import StatefulCollater
+from rgnet.utils.data import transfer_batch_to_device
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -284,7 +285,10 @@ class ThundeRLDataModule(LightningDataModule):
 
     def _sanitize_dataloader_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         # remove any key value combination that are not valid for DataLoader
-        if kwargs["persistent_workers"] and kwargs["num_workers"] == 0:
+        if (
+            kwargs.get("persistent_workers", False)
+            and kwargs.get("num_workers", 0) == 0
+        ):
             # raises ValueError otherwise
             kwargs["persistent_workers"] = False
         return kwargs
@@ -305,7 +309,7 @@ class ThundeRLDataModule(LightningDataModule):
             **self._sanitize_dataloader_kwargs(defaults | kwargs),
         )
 
-    def val_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
+    def val_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
         # Order of dataloader has to be equal to order of validation problems in `InputData`.
         defaults = (
             dict(
