@@ -191,7 +191,10 @@ class TestPolicyEvaluationValidation:
         spy2(validator.message_passing[0].forward)
         validator.compute_values(probs, 0)
         verify(validator.message_passing[0]).forward(
-            arg_that(lambda data: (data.edge_attr[:, 1] == torch.cat(probs)).all())
+            arg_that(
+                lambda data: torch.allclose(data.edge_attr[:, 1], torch.cat(probs))
+            ),
+            cache=False,
         )
 
     def test_validation_epoch_end(
@@ -253,7 +256,7 @@ class TestPolicyEvaluationValidation:
             meta_device = self.device
             collected_probs = [t.to(meta_device) for t in collected_probs]
             sorted_epoch_probs[0] = collected_probs
-            validator._losses.clear()  # necessary or the cached loss will simply avoid our error setup
+            validator.losses.clear()  # necessary or the cached loss will simply avoid our error setup
             when(validator).compute_values(...).thenReturn(
                 optimal_values[0].to(meta_device)
             )

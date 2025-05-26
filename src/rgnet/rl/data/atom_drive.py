@@ -1,3 +1,4 @@
+import dataclasses
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
@@ -197,9 +198,14 @@ class AtomDrive(BaseDrive):
             return atom_dists
 
     def _make_env_aux_data(self, env: ExpandedStateSpaceEnv) -> AtomEnvAuxData:
+        base_data = dataclasses.asdict(super()._make_env_aux_data(env))
+        logger = self._get_logger()
+        logger.info(f"Auxiliary Data ({AtomDrive.__name__}): Starting.")
+        pyg_atom_data = self._make_atom_pyg_env(env)
+        logger.info("Auxiliary Data in {AtomDrive.__name__}: Finished.")
         return AtomEnvAuxData(
-            **super()._make_env_aux_data(env).__dict__,
-            pyg_atom_data=self._make_atom_pyg_env(env),
+            **base_data,
+            pyg_atom_data=pyg_atom_data,
         )
 
     def _make_atom_pyg_env(self, env, atoms: Iterable[XAtom] | None = None) -> Data:

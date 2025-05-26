@@ -215,7 +215,15 @@ class BaseDrive(InMemoryDataset):
         self.save(data_list, self.processed_paths[0])
 
     def _make_env_aux_data(self, env: ExpandedStateSpaceEnv) -> BaseEnvAuxData:
-        return BaseEnvAuxData(env.to_pyg_data(0))
+        space = env.active_instances[0]
+        logger = self._get_logger()
+        logger.info(
+            f"Auxiliary Data ({BaseDrive.__name__}: "
+            f"problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+        )
+        data = BaseEnvAuxData(env.to_pyg_data(0))
+        logger.info(f"Auxiliary Data ({BaseDrive.__name__}): Finished.")
+        return data
 
     def _save_metadata(self, *extras):
         with open(self.metadata_path, "wb") as file:

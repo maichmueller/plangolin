@@ -282,8 +282,9 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the reward and done signal for the current state and actions taken.
-        The method is typically called from step, therefore current_states refers to the states
-        before the actions are taken.
+
+        The method is typically called from step.
+
         The batch dimension can be over the environment batch size or the time.
         :param transitions: The actions taken by the agent.
         :param instances the instances from which actions and current states stem from.
@@ -291,7 +292,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             This parameter can be used to get the rewards and done signals after a rollout was already finished.
             Defaults to self._active_instances.
 
-        :return A tuple containing the rewrds and done signal for the actions
+        :return A tuple containing the rewards and done signal for the actions.
         """
         rewards, done = self._get_reward_and_done(transitions, instances)
         return (
@@ -309,8 +310,10 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         instances: Sequence[Sequence[InstanceType]] | None = None,
     ) -> Tuple[torch.nested.Tensor, torch.nested.Tensor]:
         """
-        Compute the reward and done signal for a sequence of states characterized
-        by the outermost sequence of transitions.
+        Compute the reward and done signal for a batch of states.
+
+        Generalizes get_reward_and_done to multiple states at once.
+        Each entry in transitions is a list of transitions for a single batch entry, i.e. a single state.
         """
         all_transitions = transitions
         all_instances = instances or [self._active_instances] * len(all_transitions)

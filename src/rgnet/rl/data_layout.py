@@ -233,7 +233,7 @@ class InputData:
                 f"Found domain.pddl in {directory.resolve()} this will likely result in a parse exception. Only problems should be placed in this directory."
             )
         if len(all_instances) == 0:
-            warnings.warn(
+            logging.warning(
                 "Could not find any *.pddl files in directory "
                 + str(directory.absolute())
             )
@@ -246,13 +246,13 @@ class InputData:
                     file_name += ".pddl"
                 instance_path = directory / file_name
                 if not instance_path.exists():
-                    warnings.warn(
+                    logging.warning(
                         f"Could not find {(directory / file_name).absolute()}"
                     )
                 else:
                     filtered_instances.append(instance_path)
             if len(filtered_instances) == 0:
-                warnings.warn(
+                logging.warning(
                     "Filter matched no instances."
                     f"Tried to filter for: {filter_list} but found {[i.name for i in all_instances]}"
                 )
@@ -271,9 +271,9 @@ class InputData:
                 )
                 warn_message = f"Could not parse problem {instance}.{repr(e)}"
                 if instance.stem.lower() == "domain":
-                    warnings.warn(f"{domain_warn_message}\n{warn_message}")
+                    logging.warning(f"{domain_warn_message}\n{warn_message}")
                 else:
-                    warnings.warn(warn_message)
+                    logging.warning(warn_message)
 
         return all_instances, problems
 

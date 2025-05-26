@@ -34,7 +34,6 @@ def test_critic_validation(expanded_state_space_env):
     overestimated_values = torch.arange(start=125, end=0, step=-1, dtype=torch.float)
 
     class OverestimatingValueOperator(torch.nn.Module):
-
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.batch_index = 0
@@ -87,7 +86,7 @@ class TestProbsCollector:
     @pytest.fixture
     def collector(self) -> ProbsCollector:
         # noinspection PyTypeChecker
-        return ProbsCollector(probs_key="probs")
+        return ProbsCollector(key="probs")
 
     @pytest.fixture
     def sample_data(self) -> List[TensorDict]:
@@ -131,7 +130,6 @@ class TestProbsCollector:
 
     # Test case 1: Basic functionality
     def test_basic_functionality(self, collector, sample_data, expected_sorted_probs):
-
         # Test forward pass
         collector.forward(sample_data[0], batch_idx=0)
 
@@ -147,7 +145,6 @@ class TestProbsCollector:
 
     # Test case 2: Multiple batches
     def test_multiple_batches(self, collector, sample_data, expected_sorted_probs):
-
         # Create multiple batches
         for batch_idx, td in enumerate(sample_data):
             collector.forward(td, batch_idx=batch_idx)
@@ -159,7 +156,6 @@ class TestProbsCollector:
 
     # Test case 3: Duplicate batch detection
     def test_duplicate_batch(self, collector, sample_data, expected_sorted_probs):
-
         td = sample_data[0]
 
         # Submit the same batch twice
@@ -173,7 +169,6 @@ class TestProbsCollector:
 
     # Test case 4: Multiple dataloaders
     def test_multiple_dataloaders(self, collector, sample_data, expected_sorted_probs):
-
         # Submit to different dataloader indices
         for dataloader_idx in range(2):
             for idx, td in enumerate(sample_data):
@@ -194,7 +189,6 @@ class TestProbsCollector:
     def test_duplicate_batch_different_dataloader(
         self, collector, sample_data, expected_sorted_probs
     ):
-
         td0, td1 = sample_data
 
         # Submit the same batch twice but under different dataloader
@@ -223,7 +217,6 @@ class TestProbsCollector:
 
     # Test that seen batch indices are reset correctly
     def test_reset(self, collector, sample_data, expected_sorted_probs):
-
         collector.forward(sample_data[0], batch_idx=0)
 
         collector.reset()
