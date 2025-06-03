@@ -79,19 +79,18 @@ class HeteroGNN(PyGHeteroModule):
         }
 
         self.objects_to_atom_mp = FanOutMP(mlp_dict, src_type=obj_type_id)
-
-        # Updates object embedding from embedding of last iteration and current iteration.
+        self.atoms_to_object_mp = FanInMP(
+            hidden_size=hidden_size,
+            dst_name=obj_type_id,
+            aggr=aggr,
+        )
+        # Updates object embedding from embedding of last iteration and current iteration:
+        # `X_o = comb([X_o, m_o])` where `m_o` is the final object message
         self.embedding_updater = simple_mlp(
             in_size=2 * hidden_size,
             hidden_size=2 * hidden_size,
             out_size=hidden_size,
             activation=activation,
-        )
-        # Messages from atoms flow to objects
-        self.atoms_to_object_mp = FanInMP(
-            hidden_size=hidden_size,
-            dst_name=obj_type_id,
-            aggr=aggr,
         )
 
     def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
@@ -131,6 +130,7 @@ class HeteroGNN(PyGHeteroModule):
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
+        info_dict: Optional[Dict[str, Tensor]] = None,
     ) -> tuple[Tensor, Tensor]:
         """
         Compute object embeddings for each state.
@@ -141,6 +141,7 @@ class HeteroGNN(PyGHeteroModule):
         :param edge_index_dict: The edges between heterogeneous nodes.
         :param batch_dict: Optional information which node is associated to which state.
             If you pass more than one state (graph) to this function, you should pass the batch_dict too.
+        :param info_dict: Optional information about the states.
         :return: A tuple containing:
         - The first tensor contains object embeddings with shape [N, hidden_size], where N is the total number of objects across all states in the batch.
         - The second tensor contains batch indices with shape [N], mapping each object (node) to its corresponding state (graph).
@@ -195,6 +196,7 @@ class ValueHeteroGNN(HeteroGNN):
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[PredicateEdgeType, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
+        info_dict: Optional[Dict[str, Tensor]] = None,
     ) -> torch.Tensor:
         object_embeddings = ObjectEmbedding.from_sparse(
             *super().forward(x_dict, edge_index_dict, batch_dict)

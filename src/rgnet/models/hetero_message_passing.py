@@ -5,7 +5,6 @@ import itertools
 import logging
 import operator
 from collections import defaultdict
-from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -18,6 +17,7 @@ from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
 from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
+from rgnet.models.mixins import DeviceAwareMixin
 from rgnet.models.patched_module_dict import PatchedModuleDict
 
 
@@ -88,7 +88,7 @@ class HeteroRouting(torch.nn.Module):
         return aggregated
 
 
-class FanOutMP(HeteroRouting):
+class FanOutMP(DeviceAwareMixin, HeteroRouting):
     """
     Perform the 'fanout' phase of message passing in a heterogeneous STRIPS-based graph (batch).
 
@@ -118,20 +118,35 @@ class FanOutMP(HeteroRouting):
         self,
         update_modules: Dict[str, torch.nn.Module],
         src_type: str,
-        use_cuda_streams: bool = False,
+        use_cuda_streams: bool = True,
     ) -> None:
         """ """
         super().__init__()
         self.update_modules = PatchedModuleDict(update_modules)
         self.use_cuda_streams = torch.cuda.is_available() and use_cuda_streams
-        if self.use_cuda_streams:
-            self.cuda_streams = [
-                torch.cuda.Stream() for _ in range(len(self.update_modules))
-            ]
-        else:
-            self.cuda_streams = None
+        self._cuda_streams = None
+        self._cuda_pool = None
         self.static_simple_conv = SimpleConv()
         self.src_type = src_type
+
+    @property
+    def cuda_streams(self):
+        if (
+            self.use_cuda_streams
+            and self._cuda_streams is None
+            and self.device.type == "cuda"
+        ):
+            self._cuda_streams = [
+                torch.cuda.Stream(self.device) for _ in range(len(self.update_modules))
+            ]
+            self._cuda_pool = itertools.cycle(self._cuda_streams)
+        return self._cuda_streams
+
+    def next_stream(self):
+        if not self.use_cuda_streams or self.device.type != "cuda":
+            return None
+        assert self.cuda_streams
+        return next(self._cuda_pool)
 
     def _accepts_edge(self, edge_type: EdgeType) -> bool:
         src, *_ = edge_type
@@ -142,27 +157,17 @@ class FanOutMP(HeteroRouting):
         out = self.static_simple_conv(x, edge_index)
         return position, out
 
-    def _on_cuda(self):
-        return torch.cuda.is_available() and next(self.parameters()).is_cuda
-
-    @property
-    def device(self) -> torch.device:
-        return next(self.parameters()).device
-
     def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
         grouped = dict()
-        on_cuda = self._on_cuda()
-        for (predicate, value), stream in zip(
-            out_dict.items(),
-            self.cuda_streams if self.use_cuda_streams else itertools.repeat(None),
-        ):
+        for predicate, value in out_dict.items():
             sorted_out = sorted(value, key=operator.itemgetter(0))
             stacked = torch.cat(tuple(out for _, out in sorted_out), dim=1)
             update_module = self.update_modules[predicate]
-            with torch.cuda.stream(stream) if on_cuda and stream else nullcontext():
+            with torch.cuda.stream(self.next_stream()):
                 grouped[predicate] = update_module(stacked)
-        if on_cuda and self.cuda_streams:
-            torch.cuda.synchronize(self.device)
+        # if self.use_cuda_streams and (cuda_streams := self.cuda_streams) is not None:
+        #     for stream in cuda_streams:
+        #         stream.synchronize()
         return grouped
 
 

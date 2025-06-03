@@ -7,11 +7,17 @@ from torch.nn import Module
 from torch_geometric.data import Batch, Data, HeteroData
 from torch_geometric.typing import Adj
 
+from rgnet.models.mixins import DeviceAwareMixin
 
-class PyGModule(Module, ABC):
+
+class PyGModule(DeviceAwareMixin, Module, ABC):
     @abstractmethod
     def forward(
-        self, x: Tensor, edge_index: Tensor, batch: Tensor = None
+        self,
+        x: Tensor,
+        edge_index: Tensor,
+        batch: Tensor = None,
+        **kwargs,
     ) -> Tensor: ...
 
     @singledispatchmethod
@@ -36,13 +42,14 @@ class PyGModule(Module, ABC):
         return data.x, data.edge_index, data.batch
 
 
-class PyGHeteroModule(Module, ABC):
+class PyGHeteroModule(DeviceAwareMixin, Module, ABC):
     @abstractmethod
     def forward(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[str, Adj],
         batch_dict: Optional[Dict[str, Tensor]] = None,
+        **kwargs,
     ): ...
 
     @singledispatchmethod
