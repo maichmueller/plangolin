@@ -5,11 +5,13 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from os.path import splitext
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, List, Mapping, Optional, Tuple, Type, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
+from torch_geometric.data.data import BaseData
 from torch_geometric.data.separate import separate
+from torch_geometric.io import fs
 
 import xmimir as xmi
 from rgnet.encoding.base_encoder import EncoderFactory
@@ -47,6 +49,7 @@ class BaseDrive(InMemoryDataset):
         reward_function: RewardFunction | None = None,
         encoder_factory: Optional[EncoderFactory] = None,
         *,
+        device: str | torch.device | None = None,
         transform: Callable[[HeteroData | Data], HeteroData | Data] = None,
         save_aux_data: bool = True,
         log: bool = False,
@@ -79,6 +82,7 @@ class BaseDrive(InMemoryDataset):
         self.reward_function = reward_function or getattr(env, "reward_function")
         self.desc: Optional[str] = None
         self.env = env
+        self.device = device
         self.space_options = space_options
         self.save_aux_data = save_aux_data
         self.show_progress = show_progress
@@ -119,6 +123,21 @@ class BaseDrive(InMemoryDataset):
 
     def __str__(self):
         return self.desc
+
+    def load(self, path: str, data_cls: Type[BaseData] = Data) -> None:
+        r"""Loads the dataset from the file path :obj:`path`."""
+        out = fs.torch_load(path, map_location=self.device or "cpu")
+        assert isinstance(out, tuple)
+        assert len(out) == 2 or len(out) == 3
+        if len(out) == 2:  # Backward compatibility.
+            data, self.slices = out
+        else:
+            data, self.slices, data_cls = out
+
+        if not isinstance(data, dict):  # Backward compatibility.
+            self.data = data
+        else:
+            self.data = data_cls.from_dict(data)
 
     @property
     def env_aux_data(self):
