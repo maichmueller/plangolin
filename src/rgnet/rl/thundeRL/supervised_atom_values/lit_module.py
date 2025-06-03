@@ -1,20 +1,72 @@
-from typing import List, NamedTuple, Optional, Union
+import itertools
+import logging
+import queue
+import threading
+import time
+from contextlib import ExitStack
+from functools import cached_property
+from typing import Any, List, NamedTuple, Optional, Union
 
 import lightning
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
+from tensordict import TensorDict
 from torch import Tensor
 from torch.nn import ModuleList
 from torch_geometric.data import Batch
 
+from rgnet.logging_setup import tqdm
 from rgnet.models.atom_valuator import AtomValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.thundeRL.validation import ValidationCallback
+from rgnet.utils.inference_worker import (
+    InferenceProcessWorker,
+    LoadWeights,
+    OutputBatch,
+    ProcessBatch,
+    SentinelType,
+    TagCompletionType,
+    TagException,
+)
+from rgnet.utils.reshape import unsqueeze_right_like
 
 
 class OutputInfo(NamedTuple):
     state_index: int
     atom: str
+
+
+def batch_fn(
+    model,
+    batch: Batch,
+    *args,
+):
+    return model(batch, provide_output_metadata=False)
+
+
+class EmbeddingAndValuator(torch.nn.Module):
+    def __init__(self, gnn: PyGModule, atom_valuator: AtomValuator):
+        super().__init__()
+        self.gnn = gnn
+        self.atom_valuator = atom_valuator
+
+    def forward(
+        self,
+        batch: Batch,
+        provide_output_metadata: bool | None = None,
+        info_dict: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
+        embeddings, batch_info = self.gnn(batch)
+        return self.atom_valuator(
+            embeddings,
+            batch_info,
+            batch.object_names,
+            provide_output_metadata=provide_output_metadata,
+            info_dict=info_dict,
+        )
+
+
+# torch.multiprocessing.set_sharing_strategy("file_system")
 
 
 class AtomValuesLitModule(lightning.LightningModule):
@@ -26,6 +78,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         validation_hooks: Optional[List[ValidationCallback]] = None,
         normalize_loss: bool = True,
         assert_output: bool = False,
+        max_queued_batches: int = 0,
     ) -> None:
         super().__init__()
         assert isinstance(optim, torch.optim.Optimizer)
@@ -33,19 +86,110 @@ class AtomValuesLitModule(lightning.LightningModule):
             raise ValueError(f"Unknown GNN type: {gnn}")
         self.gnn = gnn
         self.atom_valuator = atom_valuator
+        self.embedder_and_valuator = EmbeddingAndValuator(
+            gnn=self.gnn, atom_valuator=self.atom_valuator
+        )
         self.optim = optim
         self.validation_hooks = ModuleList(validation_hooks or [])
         self.normalize_loss = normalize_loss
         self.assert_output = assert_output
+        self._validation_losses = []
+        self._cuda_streams = None
+        self._cuda_pool = None
+        self._in_q: torch.multiprocessing.Queue | None = None
+        self._out_q: torch.multiprocessing.Queue | None = None
+        self._num_workers = 0  # Default number of workers, can be overridden
+        self._completion_tags_received = {i: False for i in range(self._num_workers)}
+        self._collector_thread = None
+        self._collector_running = False
+        self._validation_outputs = []
+        self._val_workers = []
+        self._worker_cycler = None
+        self._exit_stack = ExitStack()
+        self._validation_start_time = None
+        self._collector_pbar = None
+        # Batches that are queued for processing in separate streams
+        self._queued_batches: list[ProcessBatch] = []
+        self._max_queued_batches = (
+            max_queued_batches  # Maximum number of batches to queue in the workers
+        )
+
+    @property
+    def cuda_streams(self):
+        if self._cuda_streams is None:
+            self._cuda_streams = [torch.cuda.Stream(self.device) for _ in range(10)]
+            self._cuda_pool = itertools.cycle(self._cuda_streams)
+        return self._cuda_streams
+
+    def next_stream(self):
+        if self.device.type != "cuda":
+            return None
+        assert self.cuda_streams
+        return next(self._cuda_pool)
 
     def on_fit_start(self):
         # pass the device to the DataModule
+        logging.info(f"using device: {self.device}")
         self.trainer.datamodule.device = self.device
+
+    def on_validation_start(self) -> None:
+        n_val_loaders = len(self.trainer.val_dataloaders)
+        # How many batches *per* loader
+        # trainer.num_val_batches will be an int if you only
+        # have one val-loader, or a list/tuple of ints if multiple.
+        num_batches = self.trainer.num_val_batches
+
+        logging.info(
+            f"Running {n_val_loaders} validation-loaders:\n"
+            + "\n".join(
+                f"{i:<3}: {count} batches for {self.dataloader_names[i]}"
+                for i, count in enumerate(num_batches)
+            )
+        )
+        self._validation_start_time = time.time()
+        if self._num_workers > 0:
+            if not self._val_workers:
+                ctx = torch.multiprocessing.get_context()
+                # self._in_q = ctx.Queue()
+                self._out_q = ctx.Queue()
+                self._exit_stack = ExitStack()
+                max_queued_batches = (
+                    0
+                    if self._max_queued_batches == 0
+                    else (self._max_queued_batches // self._num_workers)
+                )
+                # spin up workers'
+                self.embedder_and_valuator.share_memory()
+                for worker_id in range(self._num_workers):
+                    worker = InferenceProcessWorker(
+                        worker_id=worker_id,
+                        model=self.embedder_and_valuator,
+                        batch_fn=batch_fn,
+                        ctx=ctx,
+                        device=self.device,
+                        out_q=self._out_q,
+                        max_qsize=max_queued_batches,
+                    )
+                    self._exit_stack.enter_context(worker)
+                    self._val_workers.append(worker)
+                self._worker_cycler = itertools.cycle(self._val_workers)
+            else:
+                # if we already have workers, we can just load the new weights
+                new_state_dict = self.embedder_and_valuator.state_dict()
+                for worker in self._val_workers:
+                    worker.submit(LoadWeights(new_state_dict))
+            # start a *thread* to collect + compute + log
+            self._collector_running = True
+            self._collector_thread = threading.Thread(
+                target=self._validation_step_collector_loop, daemon=True
+            )
+            self._collector_thread.start()
 
     def forward(
         self,
         states_batch: Batch,
-        with_info: bool | None = None,
+        provide_output_metadata: bool | None = None,
+        info_dict: Optional[dict[str, Any]] = None,
     ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
         """
         Batch is a PyG Batch object containing the graphs of batch_size many states.
@@ -56,12 +200,10 @@ class AtomValuesLitModule(lightning.LightningModule):
         We then compute all possible permutations of object-embeddings of size `arity(predicate)` in each state
         and batch them together again. The predicate-specific MLP then performs a readout of the atom values.
         """
-        if with_info is None:
-            with_info = self.assert_output
-        # embeddings shape: (batch_size * avg_object_count_per_state, embedding_size)
-        embeddings, batch_info = self.gnn(states_batch)
-        return self.atom_valuator(
-            embeddings, batch_info, states_batch.object_names, with_info=with_info
+        if provide_output_metadata is None:
+            provide_output_metadata = self.assert_output
+        return self.embedder_and_valuator(
+            states_batch, provide_output_metadata, info_dict=info_dict
         )
 
     @staticmethod
@@ -85,26 +227,32 @@ class AtomValuesLitModule(lightning.LightningModule):
 
     def training_step(
         self,
-        batch: Batch,
-        targets: dict[str, Tensor],
-        predicate_to_state_idx: dict[str, list[tuple[int, str]]],
+        batch_tuple: tuple[
+            Batch, dict[str, Tensor], dict[str, list[tuple[int, str]]], dict[str, Any]
+        ],
+        batch_idx: int = None,
+        dataloader_idx: int = 0,
     ) -> STEP_OUTPUT:
-        out_by_predicate = self(batch, with_info=self.assert_output)
+        batch, targets, predicate_to_state_idx, info = batch_tuple
+        out_by_predicate = self(
+            batch, provide_output_metadata=self.assert_output, info_dict=info
+        )
         if self.assert_output:
-            self._assert_output(*out_by_predicate, predicate_to_state_idx)
+            out_by_predicate, output_info = out_by_predicate
+            self._assert_output(out_by_predicate, output_info, predicate_to_state_idx)
         assert out_by_predicate.keys() == targets.keys()
-        loss, norm_loss, loss_by_predicate = self._compute_loss(
+        loss, norm_loss, loss_by_predicate, norm_loss_by_predicate = self._compute_loss(
             out_by_predicate, targets
         )
         self.log(
             "train/" + f"direct_l1{' (unused)' if self.normalize_loss else ''}",
             loss.item(),
-            batch_size=batch[0].batch_size,
+            batch_size=batch.batch_size,
         )
         self.log(
             "train/" + f"normalized_l1{' (unused)' if not self.normalize_loss else ''}",
             norm_loss.item(),
-            batch_size=batch[0].batch_size,
+            batch_size=batch.batch_size,
         )
         if self.normalize_loss:
             return norm_loss
@@ -115,63 +263,254 @@ class AtomValuesLitModule(lightning.LightningModule):
         self,
         out_by_predicate: dict[str, Tensor],
         targets: dict[str, Tensor],
-    ) -> tuple[Tensor, Tensor, dict[str, Tensor]]:
-        loss_by_predicate: dict[str, Tensor] = dict()
-        for predicate, target_values in targets.keys():
-            out = out_by_predicate[predicate]
-            l1loss = torch.abs(out - target_values)
-            loss_by_predicate[predicate] = l1loss
-        # Normalize the loss by the square root of the target values.
-        # This diminishes the weight of atoms with large values (e.g., when they are distances).
-        loss = torch.zeros(1, device=self.device)
-        norm_loss = torch.zeros(1, device=self.device)
-        nr_predicates = len(loss_by_predicate)
+        reduction: str = "mean",
+    ) -> tuple[Tensor, Tensor, dict[str, Tensor], dict[str, Tensor]]:
+        if reduction not in {"mean", "sum"}:
+            raise ValueError(f"Unsupported reduction type: {reduction}")
+
+        torch_reduce = getattr(torch, reduction)
+        loss_by_predicate: dict[str, Tensor] = {}
+        norm_loss_by_predicate: dict[str, Tensor] = {}
+
+        total_loss = torch.tensor(0.0, device=self.device)
+        total_norm_loss = torch.tensor(0.0, device=self.device)
+        total_elements = 0
+
         for predicate, target_values in targets.items():
-            pred_loss = loss_by_predicate[predicate]
-            # Take the mean for each predicate individually, since `sum` we would skew the loss towards higher arity
-            # predicates. Higher arity predicates will have more atoms (permutations) to compute the loss for and
-            # thus more loss values to sum up.
-            # The mean per predicate will ensure that the atom count does not emphasize one predicate over another.
-            avg_pred_loss = loss_by_predicate[predicate].mean()
-            loss_by_predicate[predicate] = avg_pred_loss
-            loss += avg_pred_loss
-            # Normalize the loss by the square root of the target values.
-            norm_loss += (pred_loss / target_values.detach().abs().sqrt()).mean()
-        return loss / nr_predicates, norm_loss / nr_predicates, loss_by_predicate
+            out = out_by_predicate.get(predicate)
+            if out is None:
+                raise KeyError(f"Missing output for predicate: {predicate}")
+
+            # Ensure shape compatibility
+            target_values = unsqueeze_right_like(target_values, out)
+            # Normalize by sqrt of absolute target (add epsilon to prevent division by zero)
+            epsilon = 1e-8
+            normalization_values = (
+                torch.clamp_min(target_values.detach().abs(), 1).sqrt() + epsilon
+            )
+            l1loss = torch.nn.functional.l1_loss(out, target_values, reduction="none")
+            norm_l1loss = l1loss / normalization_values
+
+            # Reduce per predicate (prevents high-arity predicates from dominating)
+            reduced_loss = torch_reduce(l1loss)
+            reduced_norm_loss = torch_reduce(norm_l1loss)
+
+            loss_by_predicate[predicate] = reduced_loss
+            norm_loss_by_predicate[predicate] = reduced_norm_loss
+
+            total_loss += reduced_loss
+            total_norm_loss += reduced_norm_loss
+            total_elements += l1loss.numel()
+
+        num_predicates = len(loss_by_predicate)
+        if reduction == "mean":
+            return (
+                total_loss / num_predicates,
+                total_norm_loss / num_predicates,
+                loss_by_predicate,
+                norm_loss_by_predicate,
+            )
+        else:  # "sum"
+            return (
+                total_loss / total_elements,
+                total_norm_loss / total_elements,
+                loss_by_predicate,
+                norm_loss_by_predicate,
+            )
+
+    @cached_property
+    def dataloader_names(self):
+        return {
+            i: p.name
+            for i, p in enumerate(self.trainer.datamodule.data.validation_problems)
+        }
 
     def validation_step(
         self,
-        batch: Batch,
-        targets: dict[str, Tensor],
-        *args,
-        batch_idx=None,
-        dataloader_idx=0,
-        **kwargs,
+        batch_tuple: tuple[
+            Batch,
+            dict[str, torch.Tensor],
+            dict[str, list[tuple[int, str]]],
+            dict[str, Any],
+        ],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        """
+        We only submit into the in_q here.  Everything else
+        (receive -> compute loss -> log / hooks) is done
+        asynchronously in _collector_loop().
+        """
+        if self._num_workers == 0:
+            self._enqueue_batch(ProcessBatch(batch_tuple, batch_idx, dataloader_idx))
+        else:
+            next(self._worker_cycler).submit(
+                ProcessBatch(
+                    batch=batch_tuple,
+                    batch_idx=batch_idx,
+                    dataloader_idx=dataloader_idx,
+                )
+            )
+
+    def _enqueue_batch(
+        self,
+        batch: ProcessBatch,
+    ) -> None:
+        if len(self._queued_batches) >= len(self.cuda_streams):
+            outputs = [
+                self._local_validation_step(
+                    proc_batch.batch,
+                    proc_batch.batch_idx,
+                    proc_batch.dataloader_idx,
+                )
+                for proc_batch in self._queued_batches
+            ]
+            if self.device.type == "cuda":
+                # synchronize the CUDA streams to ensure all operations are completed
+                for stream in self.cuda_streams:
+                    stream.synchronize()
+            for out, inp in zip(outputs, self._queued_batches):
+                output, (batch_tuple, batch_idx, dataloader_idx) = out, inp
+                targets, predicate_to_state_idx, info = batch_tuple[1:]
+                self._validation_loss_and_log(
+                    output,
+                    targets,
+                    info,
+                    batch_idx,
+                    dataloader_idx,
+                )
+            self._queued_batches.clear()
+        self._queued_batches.append(batch)
+
+    def _local_validation_step(self, batch_tuple, batch_idx, dataloader_idx):
+        with torch.cuda.stream(self.next_stream()):
+            batch, targets, predicate_to_state_idx, info = batch_tuple
+            output = self(
+                batch, provide_output_metadata=self.assert_output, info_dict=info
+            )
+            if self.assert_output:
+                output, output_info = output
+                self._assert_output(
+                    output,
+                    output_info,
+                    predicate_to_state_idx,
+                )
+            return output
+
+    def _validation_step_collector_loop(self) -> None:
+        """
+        Runs in its own thread.  Grabs model outputs off self._out_q,
+        """
+        while self._collector_running:
+            try:
+                # this call here is why we use a thread instead of a process to collect: despite Python's GIL, '
+                # the get function is implemented in C and actually releases the GIL since no other python objects
+                # are touched during the wait for the queue. This allows other threads to run in the meantime.
+                item = self._out_q.get(timeout=0.0)
+            except queue.Empty:
+                continue
+            match item:
+                case SentinelType():
+                    break
+                case (int(), TagCompletionType()):
+                    worker_id = item[0]
+                    self._completion_tags_received[worker_id] = True
+                    if all(self._completion_tags_received.values()):
+                        self._collector_running = False
+                        break
+                case OutputBatch():
+                    if self._collector_pbar is not None:
+                        self._collector_pbar.update(1)
+                    try:
+                        (
+                            tag,
+                            output_tuple,
+                            batch_idx,
+                            dataloader_idx,
+                        ) = item
+                    except TypeError as e:
+                        raise RuntimeError(
+                            "Expected item from _out_q to be a tuple of (tag, output_tuple, batch_idx, dataloader_idx), "
+                            f"but got: {item!r}"
+                        ) from e
+                    if tag is TagException:
+                        raise output_tuple  # re-raise the exception
+
+                    (
+                        out_by_predicate,
+                        targets,
+                        predicate_to_state_idx,
+                        info,
+                    ) = output_tuple
+
+                    self._validation_loss_and_log(
+                        out_by_predicate, targets, info, batch_idx, dataloader_idx
+                    )
+
+    def _validation_loss_and_log(
+        self, out_by_predicate, targets, info, batch_idx, dataloader_idx
     ):
-        estimated_values = self(batch, with_info=False)
-        loss, norm_loss, loss_per_predicate = self._compute_loss(
-            estimated_values, targets
+        (
+            loss,
+            norm_loss,
+            loss_by_predicate,
+            norm_loss_by_predicate,
+        ) = self._compute_loss(out_by_predicate, targets)
+        td = TensorDict(
+            {
+                f"{p}": {"l1": loss, "norm_l1": norm_loss_by_predicate[p]}
+                for p, loss in loss_by_predicate.items()
+            }
+            | {
+                "l1": loss,
+                "norm_l1": norm_loss,
+            }
         )
         for hook in self.validation_hooks:
-            optional_metrics = hook(
-                norm_loss if self.normalize_loss else loss,
+            metrics = hook(
+                td,
                 batch_idx=batch_idx,
                 dataloader_idx=dataloader_idx,
             )
-            optional_metrics_2 = hook(
-                loss_per_predicate, batch_idx=batch_idx, dataloader_idx=dataloader_idx
+            if metrics:
+                for k, v in metrics.items():
+                    self.log(
+                        f"val/{k}",
+                        v,
+                        batch_size=info["batch_size"],
+                        on_epoch=True,
+                    )
+
+    def on_validation_epoch_end(self) -> None:
+        if self._num_workers > 0:
+            self._collector_pbar = tqdm(
+                range(sum(worker.in_q.qsize() for worker in self._val_workers)),
+                desc="Finishing validation outputs of last dataloader",
             )
-            metrics = dict()
-            if optional_metrics is None:
-                if optional_metrics_2 is not None:
-                    metrics = optional_metrics_2
-            else:
-                if optional_metrics_2 is not None:
-                    metrics = {**optional_metrics, **optional_metrics_2}
-                else:
-                    metrics = optional_metrics
-            for key, value in metrics.items():
-                self.log("validation/" + key, value, batch_size=batch[0].batch_size)
+            for worker in self._val_workers:
+                worker.submit(TagCompletionType())
+            # 1) stop the collector thread
+            self._collector_thread.join()
+            self._validation_losses.clear()
+            self._completion_tags_received = {
+                i: False for i in range(self._num_workers)
+            }
+            self._collector_pbar = None
+        else:
+            for out in self._validation_outputs:
+                self._validation_loss_and_log(*out)
+            self._validation_outputs.clear()
+
+    def teardown(self, stage: str) -> None:
+        # in case Lightning calls teardown after exception, ensure we clean up
+        # shut down our workers and cleanup
+        if self._exit_stack:
+            self._exit_stack.close()
+        self._val_workers.clear()
+        if self._collector_thread and self._collector_thread.is_alive():
+            self._collector_running = False
+            self._collector_thread.join()
+        super().teardown(stage)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim

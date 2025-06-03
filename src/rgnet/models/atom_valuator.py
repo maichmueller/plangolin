@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, Iterable, NamedTuple, Sequence
+from typing import Any, Callable, Iterable, NamedTuple, Sequence
 
 import torch
 import torch_geometric.nn
@@ -12,6 +12,7 @@ from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import atom_str_template
 
 from .hetero_gnn import simple_mlp
+from .mixins import DeviceAwareMixin
 from .patched_module_dict import PatchedModuleDict
 from .residual import ResidualModule
 
@@ -21,7 +22,7 @@ class OutputInfo(NamedTuple):
     atom: str
 
 
-class AtomValuator(torch.nn.Module):
+class AtomValuator(DeviceAwareMixin, torch.nn.Module):
     def __init__(
         self,
         predicates: Iterable[XPredicate] | XDomain,
@@ -32,10 +33,17 @@ class AtomValuator(torch.nn.Module):
         activation: str = "mish",
         feature_size: int = 64,
         assert_output: bool = False,
+        do_sync: bool = True,
     ):
         super().__init__()
         if isinstance(predicates, XDomain):
             predicates = predicates.predicates(XCategory.fluent, XCategory.derived)
+        # make them hollow to not have to deal with pickling problems
+        predicates = [
+            XPredicate.make_hollow(p.name, p.arity, p.category)
+            for p in predicates
+            if not p.is_hollow
+        ]
         self.predicates_dict = {p.name: p for p in predicates}
         self.arity_dict: dict[str, int] = {
             p.name: p.arity for p in self.predicates_dict.values()
@@ -51,9 +59,6 @@ class AtomValuator(torch.nn.Module):
         assert sum(len(ps) for ps in self.arity_to_predicates.values()) == len(
             self.predicates_dict
         )
-        self.predicate_to_index = {
-            p.name: p.base.get_index() for p in self.predicates_dict.values()
-        }
         self.max_arity = max(self.arity_dict.values())
         self.valuator_by_predicate = PatchedModuleDict(
             {
@@ -96,27 +101,25 @@ class AtomValuator(torch.nn.Module):
                 )
         self.feature_size = feature_size
         self.assert_output = assert_output
-        self._streams: dict[str, torch.cuda.Stream] = dict()
-
-    @property
-    def device(self):
-        return next(self.parameters()).device
+        self.streams: dict[str, torch.cuda.Stream] = dict()
+        self._do_sync = do_sync
 
     def stream_for(self, predicate: str) -> torch.cuda.Stream | None:
         if self.device.type == "cpu":
             return None
-        if not self._streams and self.device.type == "cuda":
-            self._streams = {
+        if not self.streams and self.device.type == "cuda":
+            self.streams = {
                 pred: torch.cuda.Stream(self.device) for pred in self.predicates_dict
             }
-        return self._streams[predicate]
+        return self.streams[predicate]
 
     def forward(
         self,
         embeddings: Tensor,
         batch_info: Tensor,
         object_names: list[list[str]],
-        with_info: bool | None = None,
+        provide_output_metadata: bool | None = None,
+        info_dict: dict[str, Any] | None = None,
     ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
         """
         Batch is a PyG Batch object containing the graphs of batch_size many states.
@@ -135,17 +138,22 @@ class AtomValuator(torch.nn.Module):
                 (batch_size * avg_object_count_per_state, feature_size).
         :param batch_info: A tensor indicating for each entry in the batch which state it belongs to.
         :param object_names: A list containing the list of object names in each state.
-        :param with_info: If True, returns additional information about the output for verification.
+        :param provide_output_metadata: If True, returns additional information about the output for verification.
+        :param info_dict: Additional information dictionary that may contain the batch size or other batch related info.
         """
-        if with_info is None:
-            with_info = self.assert_output
+        if provide_output_metadata is None:
+            provide_output_metadata = self.assert_output
         num_objects = num_nodes_per_entry(batch_info)
         object_emb_per_state: tuple[Tensor, ...] = torch.split(
             embeddings, tolist(num_objects)
         )
         predicate_out = dict()
         output_info: dict[str, list[OutputInfo]] = dict()
-        pooled_emb_batch = self.pooling(embeddings, batch_info)
+        pooled_emb_batch = self.pooling(
+            embeddings,
+            batch_info,
+            size=info_dict.get("batch_size", None) if info_dict else None,
+        )
         for arity in self.arity_to_predicates.keys():
             if arity == 0:
                 # there are no objects in the predicate,
@@ -157,7 +165,7 @@ class AtomValuator(torch.nn.Module):
                             pooled_emb_batch,
                             range(len(object_emb_per_state)),
                             itertools.repeat([]),
-                            with_info=with_info,
+                            provide_output_metadata=provide_output_metadata,
                         )
                     )
             else:
@@ -213,13 +221,14 @@ class AtomValuator(torch.nn.Module):
                             batched_permuted_emb,
                             state_association,
                             objects_per_atom,
-                            with_info=with_info,
+                            provide_output_metadata=provide_output_metadata,
                         )
                     )
-        if self.device.type == "cuda":
+        if self._do_sync and self.device.type == "cuda":
             # Synchronize the CUDA stream to ensure all operations are completed before returning
-            torch.cuda.synchronize(self.device)
-        if with_info:
+            for stream in self.streams.values():
+                stream.synchronize()
+        if provide_output_metadata:
             return predicate_out, output_info
         else:
             return predicate_out
@@ -230,12 +239,12 @@ class AtomValuator(torch.nn.Module):
         batched_permutations: Tensor,
         state_association: Iterable[int] | None = None,
         atom_objects: Iterable[Sequence[str]] | None = None,
-        with_info: bool = False,
+        provide_output_metadata: bool = False,
     ):
         mlp = self.valuator_by_predicate[predicate]
         with torch.cuda.stream(self.stream_for(predicate)):
             predicate_out = mlp(batched_permutations)
-        if with_info:
+        if provide_output_metadata:
             output_info = [
                 OutputInfo(
                     state_index,
@@ -245,3 +254,19 @@ class AtomValuator(torch.nn.Module):
             ]
             return predicate_out, output_info
         return predicate_out, None
+
+    def __getstate__(self):
+        # Custom getstate to handle the streams
+        state = self.__dict__.copy()
+        state["_streams"] = None
+        return state
+
+    def __setstate__(self, state):
+        # Custom setstate to reinitialize the streams
+        self.__dict__.update(state)
+        if self.device.type == "cuda":
+            self.streams = {
+                pred: torch.cuda.Stream(self.device) for pred in self.predicates_dict
+            }
+        else:
+            self.streams = {}

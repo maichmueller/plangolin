@@ -167,7 +167,7 @@ class ValidationDictionary(ValidationCallback):
                 # If a dict is passed, use the specified class for each key
                 if not all(k in validation_subtype for k in self.keys):
                     raise ValueError(
-                        "Not all keys have a corresponding validation subtype."
+                        "Not all keys have a corresponding validation callback type."
                     )
             case None:
                 # If None is passed, use ValueValidation for all keys
@@ -179,13 +179,13 @@ class ValidationDictionary(ValidationCallback):
         validation_subtype = validation_subtype or {
             k: ValueValidation for k in self.keys
         }
-        validation_kwargs = validation_kwargs or {k: {} for k in self.keys}
+        validation_kwargs = validation_kwargs or {k: dict() for k in self.keys}
         self.sub_callbacks = PatchedModuleDict(
             {
                 key: validation_subtype[key](
                     key=log_name,
                     log_name=f"{log_name}-{{{key}}}",
-                    **(kwargs | validation_kwargs[key]),
+                    **validation_kwargs[key],
                 )
                 for key in self.keys
             }
