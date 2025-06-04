@@ -187,7 +187,7 @@ def num_nodes_per_entry(
 
 @num_nodes_per_entry.register
 def _num_nodes_per_entry(batch: torch.Tensor) -> torch.Tensor:
-    num_entries = batch.max().item() + 1
+    num_entries = batch.max() + 1
     out = torch.zeros(
         num_entries,
         dtype=torch.long,

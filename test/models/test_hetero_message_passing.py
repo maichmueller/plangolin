@@ -59,7 +59,7 @@ def test_fan_out():
         mlps[pred] = mlp_mock
 
     fan_out = FanOutMP(mlps, encoder.obj_type_id)
-    when(fan_out)._on_cuda().thenReturn(False)
+
     # Filter out empty edge_types (also includes handempty() and holding(x))
     edge_index_dict = {k: v for k, v in batch.edge_index_dict.items() if v.numel() != 0}
     out: dict[str, torch.Tensor] = fan_out(batch.x_dict, edge_index_dict)

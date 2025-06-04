@@ -1,4 +1,4 @@
-from test.fixtures import embedding_mock, small_blocks
+from test.fixtures import *  # noqa: F401, F403
 
 import mockito
 import pytest
@@ -23,7 +23,7 @@ def match_non_tensor_stack(expected_stack):
 
 @pytest.mark.parametrize("hidden_size", [3])
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_forward(small_blocks, embedding_mock, batch_size):
+def test_forward(small_blocks, embedding_mock, batch_size, hidden_size):
     """Verify that embeddings are produced in an environment step and reset operation."""
     space, _, _ = small_blocks
     env = ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
@@ -78,8 +78,8 @@ def test_forward(small_blocks, embedding_mock, batch_size):
     ).dense_embedding.shape == torch.Size(
         [batch_size, embedding_mock.test_num_objects, embedding_mock.hidden_size]
     )
-    assert ObjectEmbedding.embeddings_is_close(
-        out["current_embedding"], td[("next", "current_embedding")]
+    assert ObjectEmbedding.from_tensordict(out["current_embedding"]).allclose(
+        td[("next", "current_embedding")]
     )
 
     # assert that the spec complies with the tensordict using _StepMDP
@@ -88,7 +88,7 @@ def test_forward(small_blocks, embedding_mock, batch_size):
 
 @pytest.mark.parametrize("hidden_size", [3])
 @pytest.mark.parametrize("batch_size", [2])
-def test_partial_reset(small_blocks, embedding_mock, batch_size):
+def test_partial_reset(small_blocks, embedding_mock, batch_size, hidden_size):
     """
     Ensure that we do not produce embeddings for batch-entries that are not done,
     during a partial reset. Specifically when the _reset of the base_env is called in
@@ -116,12 +116,12 @@ def test_partial_reset(small_blocks, embedding_mock, batch_size):
     mockito.verify(embedding_mock, times=1).forward(...)
 
     # Assert that the not-done entry is still the same
-    assert ObjectEmbedding.embeddings_is_close(
-        tensordict_["current_embedding"][1], td[("next", "current_embedding")][1]
-    )
+    assert ObjectEmbedding.from_tensordict(
+        tensordict_["current_embedding"][1]
+    ).allclose(td[("next", "current_embedding")][1])
 
-    assert not ObjectEmbedding.embeddings_is_close(
-        tensordict_["current_embedding"][0], td[("next", "current_embedding")][0]
-    )
+    assert not ObjectEmbedding.from_tensordict(
+        tensordict_["current_embedding"][0]
+    ).allclose(td[("next", "current_embedding")][0])
     assert tensordict_[env.keys.state][0] != td[("next", env.keys.state)][0]
     assert tensordict_[env.keys.state][1] == td[("next", env.keys.state)][1]

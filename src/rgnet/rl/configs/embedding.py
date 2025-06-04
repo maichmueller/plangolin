@@ -13,7 +13,7 @@ import torch_geometric.nn.aggr
 
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.rl.data_layout import InputData
-from rgnet.rl.embedding import EmbeddingModule, build_embedding_and_gnn
+from rgnet.rl.embedding import EmbeddingModule, build_hetero_embedding_and_gnn
 from rgnet.utils.misc import tolist
 
 
@@ -36,7 +36,6 @@ def one_hot_embedding(
         ).float()
 
     class Embedding(torch.nn.Module):
-
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.lookup = {s: e for s, e in zip(all_states, embedding)}
@@ -75,7 +74,7 @@ def from_parser_args(
     if aggr == "softmax":
         aggr = torch_geometric.nn.aggr.SoftmaxAggregation()
 
-    return build_embedding_and_gnn(
+    return build_hetero_embedding_and_gnn(
         encoder=encoder,
         hidden_size=getattr(parser_args, Parameter.gnn_hidden_size),
         num_layer=getattr(parser_args, Parameter.gnn_num_layer),

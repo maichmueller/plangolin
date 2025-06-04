@@ -144,17 +144,15 @@ class ObjectEmbedding:
             self.padding_mask.detach(),
         )
 
-    @staticmethod
-    def embeddings_is_close(
-        embeddings: TensorDict | ObjectEmbedding, other: TensorDict | ObjectEmbedding
+    def allclose(
+        self,
+        other: TensorDict | ObjectEmbedding,
     ) -> bool:
-        if isinstance(embeddings, TensorDict):
-            embeddings = ObjectEmbedding.from_tensordict(embeddings)
         if isinstance(other, TensorDict):
             other = ObjectEmbedding.from_tensordict(other)
         return (
-            torch.allclose(embeddings.dense_embedding, other.dense_embedding)
-            and (embeddings.padding_mask == other.padding_mask).all()
+            torch.allclose(self.dense_embedding, other.dense_embedding)
+            and (self.padding_mask == other.padding_mask).all()
         )
 
     @staticmethod

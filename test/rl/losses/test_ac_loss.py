@@ -17,7 +17,7 @@ from rgnet.rl.agents import ActorCritic
 from rgnet.rl.embedding import (
     EmbeddingTransform,
     NonTensorTransformedEnv,
-    build_embedding_and_gnn,
+    build_hetero_embedding_and_gnn,
 )
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.losses import ActorCriticLoss
@@ -25,7 +25,6 @@ from rgnet.rl.losses import ActorCriticLoss
 
 @pytest.fixture
 def rollout_not_done(request):
-
     batch_size: int = request.param[0]
     rollout_length: int = request.param[1]
     hidden_size = 3
@@ -151,7 +150,7 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
     space, domain, problem = small_blocks
     uses_gnn = embedding_mode == "gnn"
     embedding = (
-        build_embedding_and_gnn(
+        build_hetero_embedding_and_gnn(
             hidden_size=hidden_size,
             num_layer=1,
             encoder=HeteroGraphEncoder(domain),
