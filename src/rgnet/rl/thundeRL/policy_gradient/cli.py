@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 import torch
 from lightning.pytorch.cli import OptimizerCallable
+from tensordict.nn import InteractionType
 
 from rgnet.algorithms import bellman_optimal_values, optimal_policy
 
@@ -142,7 +143,9 @@ class TestSetup:
     """
 
     max_steps: int = 100
-    exploration_type: ExplorationType = ExplorationType.MODE
+    exploration_type: InteractionType = InteractionType.MODE
+    avoid_cycles: bool = False  # whether to avoid cycles during testing
+    iw_search: Optional[IWSearch] = None
 
 
 class PolicyGradientCLI(ThundeRLCLI):
@@ -189,7 +192,10 @@ class PolicyGradientCLI(ThundeRLCLI):
         parser.add_class_arguments(
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
-
+        parser.add_class_arguments(
+            TestSetup,
+            "test_setup",
+        )
         #############################    Link arguments    #############################
 
         # Model links
