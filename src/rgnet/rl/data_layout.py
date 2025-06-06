@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
 import xmimir as xmi
-from rgnet.utils.plan import Plan, parse_fd_plan
+from rgnet.utils.plan import Plan, parse_fastdownward_plan
 from xmimir import XDomain, XProblem, XStateSpace
 
 
@@ -42,37 +42,53 @@ class OutputData:
         if experiment_name is None:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
 
+        self.out_dir = self._make_outdir_name(
+            out_dir, domain_name, experiment_name, output_dir_order
+        )
+
+        # Create the output directly, there could be multiple experiments with
+        # the same experiment name running in parallel.
+        suffix = 0
+        while True:
+            try:
+                # If ensure_new_out_dir it is not okay that the directory exists.
+                self.out_dir.mkdir(exist_ok=not ensure_new_out_dir, parents=True)
+                break
+            except FileExistsError:
+                if self.out_dir.is_dir() and len(list(self.out_dir.iterdir())) == 0:
+                    # If the directory exists but is empty, we can use it.
+                    logging.warning(
+                        f"Output directory {self.out_dir} already exists but is empty. Using it."
+                    )
+                    break
+                # Try to create a unique directory by appending a suffix.
+                self.out_dir = self._make_outdir_name(
+                    out_dir,
+                    domain_name,
+                    f"{experiment_name}_{suffix}",
+                    output_dir_order,
+                )
+                suffix += 1
+        if suffix > 0:
+            experiment_name = f"{experiment_name}_{suffix}"
+        logging.info("Using " + str(self.out_dir) + " for output data.")
+        self.experiment_name = experiment_name
+
+    def _make_outdir_name(
+        self, out_dir, domain_name, experiment_name, output_dir_order
+    ):
         if domain_name is not None:
             if output_dir_order == "domain":
-                self.out_dir = out_dir / domain_name / experiment_name
+                out_dir = out_dir / domain_name / experiment_name
             elif output_dir_order == "experiment":
-                self.out_dir = out_dir / experiment_name / domain_name
+                out_dir = out_dir / experiment_name / domain_name
             else:
                 raise ValueError(
                     f"Invalid 'output_dir_order'. Must be 'domain' or 'experiment'. Given {output_dir_order=}"
                 )
         else:
-            self.out_dir = out_dir / experiment_name
-
-        # Create the output directly, there could be multiple experiments with
-        # the same experiment name running in parallel.
-        try:
-            # If ensure_new_out_dir it is not okay that the directory exists.
-            self.out_dir.mkdir(exist_ok=not ensure_new_out_dir, parents=True)
-        except FileExistsError:
-            suffix = 0
-            while True:
-                try:
-                    unique_dir = self.out_dir.parent / f"{experiment_name}_{suffix}"
-                    unique_dir.mkdir(parents=True, exist_ok=False)
-                    self.out_dir = unique_dir
-                    experiment_name = f"{experiment_name}_{suffix}"
-                    break
-                except FileExistsError:
-                    suffix += 1
-
-        logging.info("Using " + str(self.out_dir) + " for output data.")
-        self.experiment_name = experiment_name
+            out_dir = out_dir / experiment_name
+        return out_dir
 
 
 def _all_or_filter(instances: List[str] | Literal["all"]):
@@ -274,7 +290,6 @@ class InputData:
                     logging.warning(f"{domain_warn_message}\n{warn_message}")
                 else:
                     logging.warning(warn_message)
-
         return all_instances, problems
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
