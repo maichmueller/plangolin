@@ -304,7 +304,7 @@ class IWSearch:
             depth,
             effective_width,
         ) in self.expansion_strategy.consume(nodes):
-            for action, child_state in successor_generator.successors(state):
+            for _, child_state, action in successor_generator.successors(state):
                 pos_effect_atoms = tuple(action.effects(positive=True))
                 if not pos_effect_atoms:
                     continue
