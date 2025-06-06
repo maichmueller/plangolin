@@ -3,7 +3,7 @@ import logging
 from argparse import Namespace
 from os import PathLike
 from pathlib import Path
-from typing import Any, Callable, Dict, Literal, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, Literal, Optional, Sequence, Type, Union, final
 
 import lightning
 import torch
@@ -16,7 +16,6 @@ from lightning.pytorch.cli import (
     SaveConfigCallback,
 )
 from lightning.pytorch.loggers import WandbLogger
-from torchrl.envs.utils import ExplorationType
 from torchrl.objectives import ValueEstimators
 
 # avoids specifying full class_path for encoder in cli
@@ -64,22 +63,6 @@ class ValueEstimatorConfig:
         self.estimator_type = estimator_type
 
 
-@dataclasses.dataclass
-class TestSetup:
-    """
-    Define additional parameter used for testing the agent.
-    Args:
-        max_steps: The maximum number of steps the agent is allowed to take to solve any problem.
-            (default: 100)
-        exploration_type: How the actions should be sampled. RANDOM means the probability
-            distribution over successor states is sampled and MODE will take the arg-max.
-            (default: ExplorationType.MODE)
-    """
-
-    max_steps: int = 100
-    exploration_type: ExplorationType = ExplorationType.MODE
-
-
 class ThundeRLCLI(LightningCLI):
     def __init__(
         self,
@@ -125,10 +108,6 @@ class ThundeRLCLI(LightningCLI):
 
         parser.add_argument(
             "--data_layout.root_dir", type=Optional[PathLike], default=None
-        )
-        parser.add_class_arguments(
-            TestSetup,
-            "test_setup",
         )
         parser.add_class_arguments(
             InputData, "data_layout.input_data", as_positional=True
@@ -235,13 +214,19 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
 
+    @final
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        if type(self) is not ThundeRLCLI:
-            # while we are not at the root of CLI dependency (RGNetCLI), we ask all parents to define their arguments
-            # also note: super() is not used here, as we want to call the parent class of `self`, not the
-            # parent class of RGNetCLI.
-            super(type(self), self).add_arguments_to_parser_impl(parser)
-        self.add_arguments_to_parser_impl(parser)
+        # while we are not at the root of CLI dependency (ThundeRLCLI), we ask all parents to define their arguments
+        # also note: super() is not used here, as we want to call the parent class of `self`, not the
+        # parent class of ThundeRLCLI.
+        classes = [
+            cls
+            for cls in type(self).mro()
+            if "add_arguments_to_parser_impl" in cls.__dict__
+        ]
+        # Call implementations from top-most parent down to subclass
+        for cls in reversed(classes):
+            cls.add_arguments_to_parser_impl(self, parser)
 
     def convert_to_nested_dict(self, config: Namespace):
         """Lightning converts nested namespaces to strings"""
@@ -273,7 +258,7 @@ class ThundeRLCLI(LightningCLI):
             )
 
     def before_instantiate_classes(self):
-        num_threads = self.config.fit.get("data.max_cpu_count", None)
+        num_threads = self.config.get("data.max_cpu_count")
         limited_num_threads = env_aware_cpu_count()
         num_threads = (
             min(num_threads, limited_num_threads)
