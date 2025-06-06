@@ -20,7 +20,6 @@ from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import StatefulCollater
-from rgnet.utils.data import transfer_batch_to_device
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -47,6 +46,7 @@ class ThundeRLDataModule(LightningDataModule):
         parallel: bool = True,
         balance_by_attr: str = "",
         max_cpu_count: Optional[int] = None,
+        skip: bool = False,
         exit_after_processing: bool = False,
     ) -> None:
         super().__init__()
@@ -78,6 +78,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
             input_data.problem_paths + input_data.validation_problem_paths, self.get_env
         )
+        # whether to skip the data preparation step completely (e.g. for testing)
+        self.skip = skip
         # defaulted, to be overridden by trainer on setup
         self.device = torch.device("cpu")
 
@@ -214,7 +216,7 @@ class ThundeRLDataModule(LightningDataModule):
         NOTE it is important for the validation problems to be in the same order as in
         :attr: `InputData.validation_problem_paths`!
         """
-        if self._data_prepared:
+        if self._data_prepared or self.skip:
             return
 
         train_prob_paths: List[Path] = self.data.problem_paths

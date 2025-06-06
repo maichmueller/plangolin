@@ -351,5 +351,5 @@ class InputData:
                     f"\tCandidates: {problem_by_stem.keys()}"
                 )
                 continue
-            problem_to_plan[problem] = parse_fd_plan(plan_file, problem)
+            problem_to_plan[problem] = parse_fastdownward_plan(plan_file, problem)
         return problem_to_plan

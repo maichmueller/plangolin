@@ -18,7 +18,7 @@ class Plan:
         self.cost = sum(transition.action.cost for transition in self.transitions)
 
 
-def parse_fd_plan(path: Path, problem: xmi.XProblem) -> Plan:
+def parse_fastdownward_plan(path: Path, problem: xmi.XProblem) -> Plan:
     """
     Tries to parse plan-file by matching actions to applicable actions in the problem.
     :param path: Path to the plan file.

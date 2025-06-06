@@ -15,10 +15,7 @@ class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
         active_instance: xmi.XSuccessorGenerator,
         state: xmi.XState,
     ) -> List[xmi.XTransition]:
-        return [
-            xmi.XTransition.make_hollow(state, action, next_state)
-            for action, next_state in active_instance.successors(state)
-        ]
+        return list(active_instance.successors(state))
 
     def initial_for(
         self,
