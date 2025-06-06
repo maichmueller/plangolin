@@ -15,11 +15,12 @@ class EmbeddingModule(torch.nn.Module):
     def __init__(
         self,
         encoder: GraphEncoderBase,
+        embedding_size: int,
         gnn: PyGModule | PyGHeteroModule | None = None,
         device: torch.device = torch.device("cpu"),
     ):
         super().__init__()
-        self.hidden_size = gnn.hidden_size
+        self.hidden_size = embedding_size
         self.device = device
         self.gnn = gnn
         self.encoder = encoder
