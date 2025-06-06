@@ -30,6 +30,7 @@ __all__ = [
     "RandomizedExpansion",
     "IWSearch",
     "IWStateSpace",
+    "IWSuccessorGenerator",
 ]
 
 
@@ -382,6 +383,58 @@ def _check_timeout(
         raise TimeoutError(
             f"IWStateSpace({problem_name}) construction maxed out time or transition budget."
         )
+
+
+class IWSuccessorGenerator(XSuccessorGenerator):
+    """
+    A successor generator that uses an IWSearch to generate successors for a given state.
+    """
+
+    @multimethod
+    def __init__(self, iw_search: IWSearch, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.iw_search = iw_search
+
+    @multimethod
+    def __init__(
+        self,
+        iw_search: IWSearch,
+        successor_generator: XSuccessorGenerator,
+    ):
+        grounder = successor_generator.grounder
+        action_generator = successor_generator.action_generator
+        state_repository = successor_generator.base
+        super().__init__(grounder, state_repository, action_generator)
+        self.iw_search = iw_search
+
+    def successor(self, state: XState, action: XAction | Sequence[XAction]) -> XState:
+        if isinstance(action, XAction):
+            return super().successor(state, action)
+        elif isinstance(action, Sequence):
+            state = state
+            for act in action:
+                state = super().successor(state, act)
+            return state
+        else:
+            raise TypeError(
+                f"Action must be an XAction or a sequence of XActions, got {type(action)}"
+            )
+
+    def successors(self, state: XState) -> Iterator[XTransition]:
+        collector = CollectorHook()
+        self.iw_search.solve(
+            self,
+            start_state=state,
+            stop_on_goal=False,
+            novel_hook=collector,
+        )
+        for node in collector.nodes:
+            trace = node.trace
+            yield XTransition.make_hollow(
+                state, [tr.action for tr in trace], node.state
+            )
+
+    __hash__ = None
 
 
 class IWStateSpace(XStateSpace):

@@ -825,7 +825,7 @@ class XTransition(MimirWrapper[GroundActionEdge]):
         source: XState,
         action: XAction | Sequence[XAction | None] | None,
         target: XState,
-    ):
+    ) -> XTransition:
         obj = super().make_hollow()
         obj.source = source
         obj.target = target
@@ -866,9 +866,10 @@ class XTransition(MimirWrapper[GroundActionEdge]):
             action_string = "None"
         return (
             f"Transition(\n"
-            f"from: {self.source.fluent_atoms + self.source.derived_atoms}\n"
-            f"action: {action_string}\n"
-            f"to: {self.target.fluent_atoms + self.target.derived_atoms})"
+            f"\tfrom:   [{', '.join(map(str, chain(self.source.fluent_atoms, self.source.derived_atoms)))}]\n"
+            f"\taction: {action_string}\n"
+            f"\tto:     [{', '.join(map(str, chain(self.target.fluent_atoms, self.target.derived_atoms)))}]\n"
+            f")"
         )
 
     def explain(self) -> str:
@@ -975,9 +976,9 @@ class XSuccessorGenerator(MimirWrapper[StateRepository]):
             state.problem,
         )
 
-    def successors(self, state: XState) -> Generator[tuple[XAction, XState]]:
+    def successors(self, state: XState) -> Iterator[XTransition]:
         for action in self.action_generator.generate_actions(state):
-            yield action, self.successor(state, action)
+            yield XTransition.make_hollow(state, action, self.successor(state, action))
 
     def semantic_eq(self, other):
         raise NotImplementedError(
