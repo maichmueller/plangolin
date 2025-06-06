@@ -19,7 +19,7 @@ from rgnet.utils.object_embeddings import ObjectEmbedding
 @pytest.fixture
 def agent(embedding_mock):
     return ActorCritic(
-        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+        embedding_size=embedding_mock.embedding_size, embedding_module=embedding_mock
     )
 
 
@@ -35,9 +35,9 @@ def medium_env(medium_blocks, batch_size):
     return ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
 
 
-@pytest.mark.parametrize("hidden_size", [3])
-def test_init(agent, hidden_size):
-    assert agent._hidden_size == hidden_size
+@pytest.mark.parametrize("embedding_size", [3])
+def test_init(agent, embedding_size):
+    assert agent._embedding_size == embedding_size
     assert agent._embedding_module is not None
     assert agent.actor_net_probs is not None
     assert agent.actor_objects_net is not None
@@ -46,7 +46,7 @@ def test_init(agent, hidden_size):
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])
-@pytest.mark.parametrize("hidden_size", [3])
+@pytest.mark.parametrize("embedding_size", [3])
 @pytest.mark.parametrize("space_fixture", ["small_blocks", "medium_blocks"])
 @pytest.mark.parametrize("rollout_length", [5, 20])
 def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
@@ -100,8 +100,8 @@ def test_as_policy(batch_size, agent, space_fixture, rollout_length, request):
             )
 
 
-@pytest.mark.parametrize("hidden_size", [3])
-def test_policy_preparation(embedding_mock, hidden_size):
+@pytest.mark.parametrize("embedding_size", [3])
+def test_policy_preparation(embedding_mock, embedding_size):
     batch_size = 3  # hardcoded for this test
 
     def actor_mock(tensor):
@@ -109,16 +109,16 @@ def test_policy_preparation(embedding_mock, hidden_size):
         return torch.ones(size=(_batch_size, 1), dtype=tensor.dtype)
 
     agent = ActorCritic(
-        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+        embedding_size=embedding_mock.embedding_size, embedding_module=embedding_mock
     )
 
     mockito.when(agent.actor_net_probs).forward(...).thenAnswer(actor_mock)
 
-    current_embeddings = random_object_embeddings(batch_size, 4, hidden_size)
+    current_embeddings = random_object_embeddings(batch_size, 4, embedding_size)
 
     num_successors = torch.tensor([3, 4, 2], dtype=torch.long)
     successor_embeddings = random_object_embeddings(
-        num_successors.sum(), 4, hidden_size
+        num_successors.sum(), 4, embedding_size
     )
 
     batched_probabilities = agent._actor_probs(
@@ -163,9 +163,9 @@ def test_policy_preparation(embedding_mock, hidden_size):
         )
 
 
-@pytest.mark.parametrize("hidden_size", [3])
+@pytest.mark.parametrize("embedding_size", [3])
 @pytest.mark.parametrize("batch_size", [2])
-def test_probabilities_require_grad(agent, env, hidden_size, batch_size):
+def test_probabilities_require_grad(agent, env, embedding_size, batch_size):
     """As of the 13.08.2024 NonTensorData will remove any gradients by calling .data
     on the tensor. This test ensures that the gradients are kept for the transition
     probabilities, which don't share a uniform shape across the batch and time dimension

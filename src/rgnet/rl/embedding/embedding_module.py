@@ -20,7 +20,7 @@ class EmbeddingModule(torch.nn.Module):
         device: torch.device = torch.device("cpu"),
     ):
         super().__init__()
-        self.hidden_size = embedding_size
+        self.embedding_size = embedding_size
         self.device = device
         self.gnn = gnn
         self.encoder = encoder
@@ -37,17 +37,19 @@ class EmbeddingModule(torch.nn.Module):
 
 
 def build_hetero_embedding_and_gnn(
-    hidden_size: int,
+    embedding_size: int,
     num_layer: int,
     encoder: HeteroGraphEncoder,
     aggr: str | Aggregation | None = None,
     **kwargs,
 ):
     gnn = HeteroGNN(
-        hidden_size=hidden_size,
+        embedding_size=embedding_size,
         num_layer=num_layer,
         aggr=aggr,
         obj_type_id=encoder.obj_type_id,
         arity_dict=encoder.arity_dict,
     )
-    return EmbeddingModule(encoder, gnn=gnn, **kwargs)
+    return EmbeddingModule(
+        embedding_size=gnn.embedding_size, encoder=encoder, gnn=gnn, **kwargs
+    )

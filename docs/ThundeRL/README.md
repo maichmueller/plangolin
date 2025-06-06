@@ -88,7 +88,7 @@ data_layout:
     ensure_new_out_dir: true
 
 hetero_gnn:
-  hidden_size: 64
+  embedding_size: 64
   num_layer: 30
   aggr: softmax
 

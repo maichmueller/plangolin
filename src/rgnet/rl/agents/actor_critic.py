@@ -63,7 +63,7 @@ class ActorCritic(torch.nn.Module):
 
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         embedding_module: Optional[EmbeddingModule] = None,
         value_net: torch.nn.Module | None = None,
         activation: str = "mish",
@@ -83,7 +83,7 @@ class ActorCritic(torch.nn.Module):
 
         self._keys: ActorCritic.Acceptedkeys = keys
 
-        self._hidden_size = hidden_size
+        self._embedding_size = embedding_size
 
         self.add_successor_embeddings = add_successor_embeddings
         self._embedding_module = embedding_module
@@ -101,17 +101,17 @@ class ActorCritic(torch.nn.Module):
         # Input: object embedding of current state and next state, Output: 2 + hidden size
         # -> Two Linear layer with Mish activation
         self.actor_objects_net = simple_mlp(
-            in_size=2 * self._hidden_size,
-            hidden_size=2 * self._hidden_size,
-            out_size=2 * self._hidden_size,
+            in_size=2 * self._embedding_size,
+            embedding_size=2 * self._embedding_size,
+            out_size=2 * self._embedding_size,
             activation=activation,
         )
 
         # Input: 2 * hidden size, Output: single scalar "logits"
         # -> Three Linear layer with one Mish activation
         self.actor_net_probs = simple_mlp(
-            in_size=2 * self._hidden_size,
-            hidden_size=2 * self._hidden_size,
+            in_size=2 * self._embedding_size,
+            embedding_size=2 * self._embedding_size,
             out_size=1,
             activation=activation,
         )
@@ -120,8 +120,8 @@ class ActorCritic(torch.nn.Module):
         # provided with the embeddings of the current state it estimates the value.
         if value_net is None:
             value_net = simple_mlp(
-                in_size=hidden_size,
-                hidden_size=hidden_size,
+                in_size=embedding_size,
+                embedding_size=embedding_size,
                 out_size=1,
                 activation=activation,
             )
@@ -192,9 +192,9 @@ class ActorCritic(torch.nn.Module):
 
 
         :param current_embeddings: The embeddings of the current states.
-            The shape should be [batch_size, max_num_objects, hidden_size].
+            The shape should be [batch_size, max_num_objects, embedding_size].
         :param successor_embeddings: The embeddings of all successor states, not separated by state!
-            The shape should be [num_successors.sum(), max_num_objects, hidden_size].
+            The shape should be [num_successors.sum(), max_num_objects, embedding_size].
             The objects of successor states should always equal the objects of the current state.
         :param num_successors: The number of successors for each state in the batch.
             This will be used to split the successor_embeddings tensor.

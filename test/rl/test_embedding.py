@@ -21,9 +21,9 @@ def match_non_tensor_stack(expected_stack):
     return mockito.arg_that(match)
 
 
-@pytest.mark.parametrize("hidden_size", [3])
+@pytest.mark.parametrize("embedding_size", [3])
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_forward(small_blocks, embedding_mock, batch_size, hidden_size):
+def test_forward(small_blocks, embedding_mock, batch_size, embedding_size):
     """Verify that embeddings are produced in an environment step and reset operation."""
     space, _, _ = small_blocks
     env = ExpandedStateSpaceEnv(space, batch_size=torch.Size([batch_size]), seed=42)
@@ -49,7 +49,7 @@ def test_forward(small_blocks, embedding_mock, batch_size, hidden_size):
     assert current_embedding.dense_embedding.shape == (
         batch_size,
         embedding_mock.test_num_objects,
-        embedding_mock.hidden_size,
+        embedding_mock.embedding_size,
     )
     assert current_embedding.dense_embedding.requires_grad
 
@@ -76,7 +76,7 @@ def test_forward(small_blocks, embedding_mock, batch_size, hidden_size):
     assert ObjectEmbedding.from_tensordict(
         out["current_embedding"]
     ).dense_embedding.shape == torch.Size(
-        [batch_size, embedding_mock.test_num_objects, embedding_mock.hidden_size]
+        [batch_size, embedding_mock.test_num_objects, embedding_mock.embedding_size]
     )
     assert ObjectEmbedding.from_tensordict(out["current_embedding"]).allclose(
         td[("next", "current_embedding")]
@@ -86,9 +86,9 @@ def test_forward(small_blocks, embedding_mock, batch_size, hidden_size):
     assert transformed._step_mdp.validate(td)
 
 
-@pytest.mark.parametrize("hidden_size", [3])
+@pytest.mark.parametrize("embedding_size", [3])
 @pytest.mark.parametrize("batch_size", [2])
-def test_partial_reset(small_blocks, embedding_mock, batch_size, hidden_size):
+def test_partial_reset(small_blocks, embedding_mock, batch_size, embedding_size):
     """
     Ensure that we do not produce embeddings for batch-entries that are not done,
     during a partial reset. Specifically when the _reset of the base_env is called in

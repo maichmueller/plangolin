@@ -176,13 +176,13 @@ class FanInMP(HeteroRouting):
 
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         dst_name: str,
         aggr: str | torch_geometric.nn.Aggregation | None = None,
     ) -> None:
         aggr = aggr or LogSumExpAggregation()
         super().__init__(aggr)
-        self.select = SelectMP(hidden_size)
+        self.select = SelectMP(embedding_size)
         self.dst_name = dst_name
 
     def _accepts_edge(self, edge_type: EdgeType) -> bool:
@@ -209,7 +209,7 @@ class FanInMP(HeteroRouting):
 class SelectMP(pyg.nn.MessagePassing):
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         aggr: Optional[str | List[str]] = "sum",
         aggr_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -217,7 +217,7 @@ class SelectMP(pyg.nn.MessagePassing):
             aggr,
             aggr_kwargs=aggr_kwargs,
         )
-        self.hidden_size = hidden_size
+        self.embedding_size = embedding_size
 
     def forward(
         self, x: Union[Tensor, OptPairTensor], edge_index: Adj, position: int
@@ -230,10 +230,10 @@ class SelectMP(pyg.nn.MessagePassing):
         # Take the i-th hidden-number of elements from the last dimension
         # e.g from [1, 2, 3, 4, 5, 6] with hidden=2 and position=1 -> [3, 4]
         # alternatively:
-        #   split = torch.split(x_j, self.hidden_size, dim=-1)
+        #   split = torch.split(x_j, self.embedding_size, dim=-1)
         #   return split[position]
         sliced = x_j[
-            ..., position * self.hidden_size : (position + 1) * self.hidden_size
+            ..., position * self.embedding_size : (position + 1) * self.embedding_size
         ]
         return sliced
 

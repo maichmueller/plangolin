@@ -13,7 +13,7 @@ from rgnet.utils.activation_map import get_activation
 class VanillaGNN(PyGModule):
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         num_layer: int,
         aggr: Union[str, pyg.nn.aggr.Aggregation] = "softmax",
         activation: Union[str, Callable] = "relu",
@@ -21,7 +21,7 @@ class VanillaGNN(PyGModule):
     ) -> None:
         super().__init__()
         # attrs
-        self.hidden_size = hidden_size
+        self.embedding_size = embedding_size
         # modules
         self.layers = nn.ModuleList()
         if isinstance(activation, str):
@@ -29,8 +29,8 @@ class VanillaGNN(PyGModule):
 
         for i in range(num_layer):
             conv = GENConv(
-                hidden_size,
-                hidden_size,
+                embedding_size,
+                embedding_size,
                 aggr=aggr,
                 learn_t=False,
                 num_layers=2,
@@ -40,7 +40,7 @@ class VanillaGNN(PyGModule):
             self.layers.append(
                 DeepGCNLayer(
                     conv,
-                    norm=LayerNorm(hidden_size, elementwise_affine=True),
+                    norm=LayerNorm(embedding_size, elementwise_affine=True),
                     act=activation,
                     block="res+",
                     dropout=dropout,

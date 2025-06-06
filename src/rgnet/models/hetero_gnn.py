@@ -18,16 +18,16 @@ from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def simple_mlp(
-    in_size: int, hidden_size: int, out_size: int, activation: str | None = None
+    in_size: int, embedding_size: int, out_size: int, activation: str | None = None
 ):
     activation = activation or "mish"
     layer = [
-        torch.nn.Linear(in_size, hidden_size),
+        torch.nn.Linear(in_size, embedding_size),
         activation_resolver(activation),
-        torch.nn.Linear(hidden_size, hidden_size),
+        torch.nn.Linear(embedding_size, embedding_size),
     ]
-    if out_size != hidden_size:
-        layer.append(torch.nn.Linear(hidden_size, out_size))
+    if out_size != embedding_size:
+        layer.append(torch.nn.Linear(embedding_size, out_size))
 
     return torch.nn.Sequential(*layer)
 
@@ -35,7 +35,7 @@ def simple_mlp(
 class HeteroGNN(PyGHeteroModule):
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         num_layer: int,
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
@@ -43,7 +43,7 @@ class HeteroGNN(PyGHeteroModule):
         activation: Union[str, Callable, None] = None,
     ):
         """
-        :param hidden_size: The size of object embeddings.
+        :param embedding_size: The size of object embeddings.
         :param num_layer: Total number of message exchange iterations.
         :param aggr: Aggregation-function to be used for message passing.
         :param obj_type_id: The type identifier of objects in the x_dict.
@@ -55,7 +55,7 @@ class HeteroGNN(PyGHeteroModule):
         """
         super().__init__()
 
-        self.hidden_size: int = hidden_size
+        self.embedding_size: int = embedding_size
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
         if isinstance(aggr, str) or aggr is None:
@@ -70,7 +70,7 @@ class HeteroGNN(PyGHeteroModule):
             # embeddings as input and generates k outputs, one for each object.
             pred: ResidualModule(
                 simple_mlp(
-                    *([hidden_size * arity] * 3),
+                    *([embedding_size * arity] * 3),
                     activation=activation,
                 )
             )
@@ -80,27 +80,27 @@ class HeteroGNN(PyGHeteroModule):
 
         self.objects_to_atom_mp = FanOutMP(mlp_dict, src_type=obj_type_id)
         self.atoms_to_object_mp = FanInMP(
-            hidden_size=hidden_size,
+            embedding_size=embedding_size,
             dst_name=obj_type_id,
             aggr=aggr,
         )
         # Updates object embedding from embedding of last iteration and current iteration:
         # `X_o = comb([X_o, m_o])` where `m_o` is the final object message
         self.embedding_updater = simple_mlp(
-            in_size=2 * hidden_size,
-            hidden_size=2 * hidden_size,
-            out_size=hidden_size,
+            in_size=2 * embedding_size,
+            embedding_size=2 * embedding_size,
+            out_size=embedding_size,
             activation=activation,
         )
 
     def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
         # Initialize embeddings for objects and atoms with 0s.
-        # embedding-dims of objects = hidden_size
-        # embedding-dims of atoms = (arity of predicate) * hidden_size
+        # embedding-dims of objects = embedding_size
+        # embedding-dims of atoms = (arity of predicate) * embedding_size
         for key, x in x_dict.items():
             assert x.dim() == 2
             x_dict[key] = torch.zeros(
-                x.shape[0], x.shape[1] * self.hidden_size, device=x.device
+                x.shape[0], x.shape[1] * self.embedding_size, device=x.device
             )
         return x_dict
 
@@ -143,7 +143,7 @@ class HeteroGNN(PyGHeteroModule):
             If you pass more than one state (graph) to this function, you should pass the batch_dict too.
         :param info_dict: Optional information about the states.
         :return: A tuple containing:
-        - The first tensor contains object embeddings with shape [N, hidden_size], where N is the total number of objects across all states in the batch.
+        - The first tensor contains object embeddings with shape [N, embedding_size], where N is the total number of objects across all states in the batch.
         - The second tensor contains batch indices with shape [N], mapping each object (node) to its corresponding state (graph).
         Note that the number of objects is not necessarily equal for each state. This tuple can be used to instantiate an `ObjectEmbedding`.
         We do not return this object directly since pytorch would refuse to accept hooks with this return type.
@@ -152,7 +152,7 @@ class HeteroGNN(PyGHeteroModule):
         x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
         edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
 
-        # Resize everything by the hidden_size
+        # Resize everything by the embedding_size
         self.initialize_embeddings(x_dict)
 
         for _ in range(self.num_layer):
@@ -170,7 +170,7 @@ class HeteroGNN(PyGHeteroModule):
 class ValueHeteroGNN(HeteroGNN):
     def __init__(
         self,
-        hidden_size: int,
+        embedding_size: int,
         num_layer: int,
         obj_type_id: str,
         arity_dict: Dict[str, int],
@@ -179,7 +179,7 @@ class ValueHeteroGNN(HeteroGNN):
         pooling: Union[str, Callable[[Tensor], Tensor]] = "add",
     ):
         super().__init__(
-            hidden_size,
+            embedding_size,
             num_layer,
             aggr,
             obj_type_id,
@@ -187,7 +187,7 @@ class ValueHeteroGNN(HeteroGNN):
             activation=activation,
         )
         self.readout = simple_mlp(
-            hidden_size, 2 * hidden_size, 1, activation=activation
+            embedding_size, 2 * embedding_size, 1, activation=activation
         )
         self.pooling = ObjectPoolingModule(pooling)
 

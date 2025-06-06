@@ -18,28 +18,28 @@ from rgnet.utils.misc import tolist
 
 
 def one_hot_embedding(
-    all_states, hidden_size: Optional[int] = None, device=None
+    all_states, embedding_size: Optional[int] = None, device=None
 ) -> EmbeddingModule:
-    hidden_size = hidden_size or len(all_states)
+    embedding_size = embedding_size or len(all_states)
     num_states = len(all_states)
     device = device or torch.device("cpu")
     embedding: torch.Tensor
-    if len(all_states) == hidden_size:
+    if len(all_states) == embedding_size:
         embedding = torch.eye(
-            hidden_size, hidden_size, dtype=torch.float, device=device
+            embedding_size, embedding_size, dtype=torch.float, device=device
         )
-    elif num_states > hidden_size:
+    elif num_states > embedding_size:
         raise ValueError("Number of states must be less than or equal to hidden size")
     else:
         embedding = torch.nn.functional.one_hot(
-            torch.arange(num_states, device=device), hidden_size
+            torch.arange(num_states, device=device), embedding_size
         ).float()
 
     class Embedding(torch.nn.Module):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.lookup = {s: e for s, e in zip(all_states, embedding)}
-            self.hidden_size = hidden_size
+            self.embedding_size = embedding_size
             self.device = device
 
         def forward(self, states_):
@@ -51,7 +51,7 @@ def one_hot_embedding(
 
 class Parameter(StrEnum):
     embedding_type = auto()
-    gnn_hidden_size = auto()
+    gnn_embedding_size = auto()
     gnn_num_layer = auto()
     gnn_aggr = auto()
 
@@ -76,7 +76,7 @@ def from_parser_args(
 
     return build_hetero_embedding_and_gnn(
         encoder=encoder,
-        hidden_size=getattr(parser_args, Parameter.gnn_hidden_size),
+        embedding_size=getattr(parser_args, Parameter.gnn_embedding_size),
         num_layer=getattr(parser_args, Parameter.gnn_num_layer),
         aggr=aggr,
         device=device,
@@ -93,7 +93,7 @@ def add_parser_args(parent_parser: ArgumentParser):
         help="Type of embedding to use (default: gnn)",
     )
     parser.add_argument(
-        f"--{Parameter.gnn_hidden_size.value}",
+        f"--{Parameter.gnn_embedding_size.value}",
         type=int,
         required=False,
         default=32,

@@ -287,7 +287,7 @@ def test_environment_partial_reset():
 
 
 @pytest.mark.parametrize("total_iterations", [20])
-@pytest.mark.parametrize("hidden_size", [8])
+@pytest.mark.parametrize("embedding_size", [8])
 @pytest.mark.parametrize("rollout_length", [1, 2])
 @pytest.mark.parametrize(
     "expanded_state_space_env", [["small_blocks", 2]], indirect=True
@@ -299,7 +299,7 @@ def test_trainer(
     expanded_state_space_env,
     transformed_env: NonTensorTransformedEnv,
     total_iterations,
-    hidden_size,
+    embedding_size,
     rollout_length,
 ):
     """
@@ -311,7 +311,7 @@ def test_trainer(
     env_keys = ExpandedStateSpaceEnv.default_keys
 
     agent = ActorCritic(
-        hidden_size=embedding_mock.hidden_size, embedding_module=embedding_mock
+        embedding_size=embedding_mock.embedding_size, embedding_module=embedding_mock
     )
     policy = agent.as_td_module(env_keys.state, env_keys.transitions, env_keys.action)
     loss = ActorCriticLoss(agent.value_operator)

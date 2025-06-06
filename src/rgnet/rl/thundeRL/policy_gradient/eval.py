@@ -120,7 +120,7 @@ class ModelData:
 
         # All states over a single space have the same number of objects.
         # We can simply save the dense embeddings without the mask.
-        # Shape [space.num_states(), num_objects, hidden_size]
+        # Shape [space.num_states(), num_objects, embedding_size]
         self._embedding_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
 
         # Computed probs for space

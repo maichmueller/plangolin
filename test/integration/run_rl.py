@@ -75,7 +75,7 @@ def test_actor_critic(tmp_path: Path):
         "--learning_rate 0.02",
         "--logger_backend csv",
         "--embedding_type gnn",
-        "--gnn_hidden_size 8",
+        "--gnn_embedding_size 8",
     ]
     launch_rl(tmp_path, args)
 
@@ -117,7 +117,7 @@ def test_gnn_embedding(tmp_path: Path):
         "--algorithm actor_critic",
         "--offline True",
         "--embedding_type gnn",
-        "--gnn_hidden_size 8",
+        "--gnn_embedding_size 8",
         "--gnn_aggr softmax",
         "--gnn_num_layer 5",
     ]
@@ -131,7 +131,7 @@ def test_filter_multiple_instances(tmp_path: Path):
         "--algorithm actor_critic",
         "--offline True",
         "--embedding_type gnn",
-        "--gnn_hidden_size 8",
+        "--gnn_embedding_size 8",
         "--gnn_num_layer 5",
     ]
     result = launch_rl(tmp_path, args)
@@ -146,7 +146,7 @@ def test_no_instance_filter(tmp_path: Path):
         "--algorithm actor_critic",
         "--offline True",
         "--embedding_type gnn",
-        "--gnn_hidden_size 8",
+        "--gnn_embedding_size 8",
         "--gnn_num_layer 5",
     ]
     result = launch_rl(tmp_path, args)
@@ -160,7 +160,7 @@ def test_validation(tmp_path: Path):
         "--algorithm actor_critic",
         # "--offline True",
         "--embedding_type gnn",
-        "--gnn_hidden_size 8",
+        "--gnn_embedding_size 8",
         "--gnn_num_layer 5",
         "--validate_after_epoch True",
     ]

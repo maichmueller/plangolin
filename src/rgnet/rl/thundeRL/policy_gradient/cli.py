@@ -204,7 +204,7 @@ class PolicyGradientCLI(ThundeRLCLI):
         parser.link_arguments("agent", "optimizer_setup.agent", apply_on="instantiate")
 
         parser.link_arguments(
-            "model.gnn.hidden_size", "agent.hidden_size", apply_on="instantiate"
+            "model.gnn.embedding_size", "agent.embedding_size", apply_on="instantiate"
         )
         parser.link_arguments(
             "model.gnn", "optimizer_setup.gnn", apply_on="instantiate"

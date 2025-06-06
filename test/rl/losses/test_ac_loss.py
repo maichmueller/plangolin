@@ -27,15 +27,15 @@ from rgnet.rl.losses import ActorCriticLoss
 def rollout_not_done(request):
     batch_size: int = request.param[0]
     rollout_length: int = request.param[1]
-    hidden_size = 3
+    embedding_size = 3
 
     return TensorDict(
         {
-            "observation": torch.rand((batch_size, rollout_length, hidden_size)),
+            "observation": torch.rand((batch_size, rollout_length, embedding_size)),
             "next": TensorDict(
                 {
                     "observation": torch.rand(
-                        (batch_size, rollout_length, hidden_size)
+                        (batch_size, rollout_length, embedding_size)
                     ),
                     "reward": torch.ones((batch_size, rollout_length, 1)),
                     "done": torch.zeros(
@@ -53,19 +53,19 @@ def rollout_not_done(request):
 
 
 @pytest.fixture
-def critic_mock(hidden_size=3):
-    linear = nn.Linear(hidden_size, 1)
+def critic_mock(embedding_size=3):
+    linear = nn.Linear(embedding_size, 1)
     vo = ValueOperator(linear)
     mockito.spy2(vo.forward)
     return vo
 
 
 @pytest.fixture
-def actor_mock(hidden_size=3):
+def actor_mock(embedding_size=3):
     class M(nn.Module):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
-            self.linear = nn.Linear(hidden_size, hidden_size)
+            self.linear = nn.Linear(embedding_size, embedding_size)
 
         def forward(self, obs):
             c = Categorical(probs=self.linear(obs).softmax(dim=-1))
@@ -143,15 +143,15 @@ def test_forward(critic_mock, actor_mock, rollout_not_done):
     assert not all(param.grad is None for param in critic_mock.parameters())
 
 
-@pytest.mark.parametrize("hidden_size", [5])
+@pytest.mark.parametrize("embedding_size", [5])
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("embedding_mode", ["embedding_mock", "gnn"])
-def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, request):
+def test_with_agent(small_blocks, embedding_mode, embedding_size, batch_size, request):
     space, domain, problem = small_blocks
     uses_gnn = embedding_mode == "gnn"
     embedding = (
         build_hetero_embedding_and_gnn(
-            hidden_size=hidden_size,
+            embedding_size=embedding_size,
             num_layer=1,
             encoder=HeteroGraphEncoder(domain),
             aggr="sum",
@@ -172,7 +172,9 @@ def test_with_agent(small_blocks, embedding_mode, hidden_size, batch_size, reque
         cache_specs=True,
     )
 
-    agent = ActorCritic(hidden_size=embedding.hidden_size, embedding_module=embedding)
+    agent = ActorCritic(
+        embedding_size=embedding.embedding_size, embedding_module=embedding
+    )
     agent_policy = agent.as_td_module(
         env.keys.state, env.keys.transitions, env.keys.action
     )

@@ -19,7 +19,7 @@ class LightningHetero(LightningModule):
     DEFAULT_LEARNING_RATE = 0.001
     DEFAULT_WEIGHT_DECAY = 5e-4
     DEFAULT_LOSS = "L1Loss"
-    DEFAULT_HIDDEN_SIZE = 32
+    DEFAULT_embedding_size = 32
     DEFAULT_NUM_LAYER = 30
     DEFAULT_AGGREGATION = "sum"
 
@@ -28,7 +28,7 @@ class LightningHetero(LightningModule):
         learning_rate: float,
         weight_decay: float,
         loss_function: _Loss | str,
-        hidden_size: int,
+        embedding_size: int,
         num_layer: int,
         aggregation: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
@@ -46,7 +46,7 @@ class LightningHetero(LightningModule):
             raise ValueError(f"Unknown loss function: {loss_function}")
 
         self.model = ValueHeteroGNN(
-            hidden_size,
+            embedding_size,
             num_layer=num_layer,
             obj_type_id=obj_type_id,
             arity_dict=arity_dict,
@@ -59,10 +59,10 @@ class LightningHetero(LightningModule):
     def add_model_args(parent_parser: ArgumentParser) -> ArgumentParser:
         parser = parent_parser.add_argument_group("HeteroGNN")
         parser.add_argument(
-            "--hidden_size",
+            "--embedding_size",
             type=int,
-            default=LightningHetero.DEFAULT_HIDDEN_SIZE,
-            help=f"Embedding size of graph nodes (default: {LightningHetero.DEFAULT_HIDDEN_SIZE})",
+            default=LightningHetero.DEFAULT_embedding_size,
+            help=f"Embedding size of graph nodes (default: {LightningHetero.DEFAULT_embedding_size})",
         )
         parser.add_argument(
             "--num_layer",

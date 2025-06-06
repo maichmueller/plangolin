@@ -20,7 +20,7 @@ def test_hetero_gnn(hetero_encoded_state):
     data = encoder.to_pyg_data(graph)
 
     model = ValueHeteroGNN(
-        hidden_size=2,
+        embedding_size=2,
         num_layer=1,
         aggr="sum",
         obj_type_id=encoder.obj_type_id,
@@ -35,7 +35,7 @@ def test_value_hetero_gnn_backward(tmp_path):
     batch = Batch.from_data_list(dataset)
     encoder = dataset.state_encoder
     model = ValueHeteroGNN(
-        hidden_size=2,
+        embedding_size=2,
         num_layer=1,
         aggr="sum",
         obj_type_id=encoder.obj_type_id,
@@ -61,7 +61,7 @@ def test_hetero_gnn_backward(tmp_path):
     assert len(batch) == 5, "If this fails the underlying test data has changed!"
     encoder = dataset.state_encoder
     model = HeteroGNN(
-        hidden_size=5,
+        embedding_size=5,
         num_layer=1,
         aggr="sum",
         obj_type_id=encoder.obj_type_id,
@@ -89,7 +89,7 @@ def test_hetero_batched(tmp_path):
     loader = DataLoader(dataset, batch_size=3)
     for batch in loader:
         model = ValueHeteroGNN(
-            hidden_size=2,
+            embedding_size=2,
             num_layer=1,
             aggr="sum",
             obj_type_id=encoder.obj_type_id,

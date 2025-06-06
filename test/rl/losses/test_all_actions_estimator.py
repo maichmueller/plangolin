@@ -74,7 +74,7 @@ class TestAllActionsValueEstimator:
 
         Done in the second time-step of the second batch entry.
         Agent always chose 0-th action.
-        We use hidden_size=1 for object embeddings and one object per state.
+        We use embedding_size=1 for object embeddings and one object per state.
         Hence, the object-embedding = state embedding = state value.
 
         tensordict keys:
@@ -261,15 +261,15 @@ class TestAllActionsValueEstimator:
         [dict(spaces=["small_blocks", "medium_blocks"], batch_size=5)],
         indirect=True,
     )
-    @pytest.mark.parametrize("hidden_size", [4])
+    @pytest.mark.parametrize("embedding_size", [4])
     def test_env_based_provider(
         self,
         multi_instance_env: MultiInstanceStateSpaceEnv,
         embedding_mock,
-        hidden_size,
+        embedding_size,
     ):
         agent = ActorCritic(
-            hidden_size=embedding_mock.hidden_size,
+            embedding_size=embedding_mock.embedding_size,
             embedding_module=embedding_mock,
             add_successor_embeddings=True,
         )

@@ -49,5 +49,5 @@ model:
     class_path: HeteroGNN
     init_args:
       num_layer: 2
-      hidden_size: 2
+      embedding_size: 2
       aggr: logsumexp

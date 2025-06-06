@@ -27,8 +27,8 @@ class ValueModule(torch.nn.Module):
         if value_net is None:
             value_net = MLP(
                 channel_list=[
-                    self._embedding_module.hidden_size,
-                    self._embedding_module.hidden_size,
+                    self._embedding_module.embedding_size,
+                    self._embedding_module.embedding_size,
                     1,
                 ],
                 norm=None,

@@ -63,7 +63,7 @@ class EmbeddingTransform(Transform):
         This is important for _StepMDP validate."""
         new_observation_spec = observation_spec.clone()
         embedding_shape: List[int] = list(observation_spec.shape)
-        embedding_shape.append(self.embedding_module.hidden_size)
+        embedding_shape.append(self.embedding_module.embedding_size)
         device = self.embedding_module.device
         new_observation_spec[self.current_embedding_key] = Composite(
             dense_embedding=Unbounded(shape=torch.Size(embedding_shape), device=device),

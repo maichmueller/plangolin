@@ -104,7 +104,7 @@ class AtomValuesCLI(ThundeRLCLI):
             "model.atom_valuator", "optimizer_setup.valuator", apply_on="instantiate"
         )
         parser.link_arguments(
-            "model.gnn.hidden_size",
+            "model.gnn.embedding_size",
             "model.atom_valuator.init_args.feature_size",
             apply_on="parse",
         )

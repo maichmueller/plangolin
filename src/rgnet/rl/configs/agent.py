@@ -54,13 +54,13 @@ class Parameter(StrEnum):
     use_epsilon_for_actor_critic = auto()
 
 
-def simple_linear_net(hidden_size: int):
-    return torch.nn.Linear(hidden_size, 1, bias=False)
+def simple_linear_net(embedding_size: int):
+    return torch.nn.Linear(embedding_size, 1, bias=False)
 
 
-def mlp_net(hidden_size: int):
+def mlp_net(embedding_size: int):
     return MLP(
-        channel_list=[hidden_size, hidden_size, 1],
+        channel_list=[embedding_size, embedding_size, 1],
         norm=None,
         dropout=0.0,
     )
@@ -155,9 +155,9 @@ class AgentAndLossConfig:
         )
         self.epsilon_annealing = EpsilonAnnealing.from_parser_args(parser_args)
         self.value_net = (
-            mlp_net(embedding.hidden_size)
+            mlp_net(embedding.embedding_size)
             if self.parser_values[Parameter.value_net] == "mlp"
-            else simple_linear_net(embedding.hidden_size)
+            else simple_linear_net(embedding.embedding_size)
         )
         self.embedding = embedding
         self.env_keys = env_keys
@@ -233,7 +233,7 @@ class AgentAndLossConfig:
 
     def _resolve_actor_critic(self):
         agent = ActorCritic(
-            hidden_size=self.embedding.hidden_size,
+            embedding_size=self.embedding.embedding_size,
             embedding_module=self.embedding,
             value_net=self.value_net,
             add_successor_embeddings=self.use_all_actions,

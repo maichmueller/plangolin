@@ -283,7 +283,7 @@ class CriticValidation(ValidationCallback):
         prediction: TensorDict = self.value_op(
             tensordict.select(*self.value_op.in_keys)
         )
-        # tensordict has shape [batch_size, 1] and tensordict[current_embedding] is [batch_size, 1, hidden_size]
+        # tensordict has shape [batch_size, 1] and tensordict[current_embedding] is [batch_size, 1, embedding_size]
         # therefore, prediction has shape [batch_size, 1, 1] and we have to squeeze two dimensions.
         state_value: torch.Tensor = prediction[self.key].squeeze()
 

@@ -8,8 +8,8 @@ from rgnet.rl.agents import ValueModule
 from rgnet.rl.envs import ExpandedStateSpaceEnv, InitialStateReset
 
 
-@pytest.mark.parametrize("hidden_size", [2])
-def test_forward(embedding_mock, small_blocks, hidden_size):
+@pytest.mark.parametrize("embedding_size", [2])
+def test_forward(embedding_mock, small_blocks, embedding_size):
     space, _, _ = small_blocks
     batch_size = 2
 

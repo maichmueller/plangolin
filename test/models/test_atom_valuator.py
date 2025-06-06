@@ -27,7 +27,7 @@ def test_atom_valuator(small_blocks, medium_blocks):
 
     feature_size = 5
     gnn = HeteroGNN(
-        hidden_size=feature_size,
+        embedding_size=feature_size,
         num_layer=1,
         aggr="sum",
         obj_type_id=encoder.obj_type_id,
