@@ -4,14 +4,12 @@ import dataclasses
 import functools
 import itertools
 import logging
-import re
 import sys
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-import networkx as nx
 import torch
 import torch_geometric as pyg
 import torchrl
@@ -23,7 +21,6 @@ from torch import Tensor
 from torchrl.envs.utils import set_exploration_type
 
 import xmimir as xmi
-from rgnet.algorithms import mdp_graph_as_pyg_data
 from rgnet.encoding import HeteroGraphEncoder
 from rgnet.logging_setup import tqdm
 from rgnet.models import PyGHeteroModule
@@ -39,99 +36,43 @@ from rgnet.rl.envs import (
     PlanningEnvironment,
     SuccessorEnvironment,
 )
-from rgnet.rl.thundeRL.cli_config import TestSetup, ThundeRLCLI
-from rgnet.rl.thundeRL.policy_gradient_lit_module import PolicyGradientLitModule
+from rgnet.rl.reward import RewardFunction
+from rgnet.rl.thundeRL import PolicyGradientCLI
+from rgnet.rl.thundeRL.policy_gradient.cli import TestSetup
+from rgnet.rl.thundeRL.policy_gradient.lit_module import PolicyGradientLitModule
+from rgnet.rl.thundeRL.utils import (
+    default_checkpoint_format,
+    resolve_checkpoints,
+    wandb_id_resolver,
+)
 from rgnet.utils.misc import as_non_tensor_stack, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from rgnet.utils.plan import Plan
+from xmimir import iw
 
 
-def resolve_checkpoints(
-    out_data: OutputData,
-) -> Tuple[List[Path], Path | None]:
-    sorted_checkpoints: List[Tuple[int, int, Path]] = []
-    last_checkpoint: Path | None = None
-    root_dir = out_data.out_dir / "rgnet"
-    dirs = [d for d in root_dir.iterdir() if d.is_dir()]
-    if len(dirs) != 1:
-        warnings.warn("Found more than one checkpoint directory.")
-    checkpoint_dir = dirs[0] / "checkpoints"
-    checkpoint_paths = list(checkpoint_dir.glob("*.ckpt"))
-    if len(checkpoint_paths) == 0:
-        raise RuntimeError(f"Could not find any checkpoints in {checkpoint_dir}")
-    for checkpoint_path in checkpoint_paths:
-        if checkpoint_path.stem == "last":
-            last_checkpoint = checkpoint_path
-        else:
-            try:
-                match = default_checkpoint_format(checkpoint_path.name)
-                epoch, step = match
-                sorted_checkpoints.append((epoch, step, checkpoint_path))
-            except ValueError:
-                warnings.warn(
-                    f"Skipping checkpoint which was neither called last: {checkpoint_path.name} nor matched default_checkpoint_format"
-                )
-                continue
-    sorted_checkpoints.sort()  # will sort by epoch then by step
-    return [tpl[2] for tpl in sorted_checkpoints], last_checkpoint
-
-
-def wandb_id_resolver(out_data: OutputData) -> str:
-    """
-    Try to find the wandb run id from the output directory.
-    First look in the wandb directory, where we hope to find the following
-    wandb
-        run-<time_stamp>-<run_id>
-        ...
-    Otherwise, we look for the lightning checkpoint directory.
-    rgnet
-        run_id
-            _checkpoints
-    """
-    wandb_dir = out_data.out_dir / "wandb"
-    if wandb_dir.is_dir():
-        run_dir = next(wandb_dir.glob("run-*"), None)
-        if run_dir is not None:
-            run_id = run_dir.name.split("-")[-1]
-            if len(run_id) == 8:
-                return run_id
-    # try the lightning logging directory
-    if (lightning_dir := out_data.out_dir / "rgnet").is_dir():
-        run_dir = next(lightning_dir.iterdir(), None)
-        if run_dir is not None and len(run_dir.name) == 8:
-            return run_dir.name
-
-
-def default_checkpoint_format(checkpoint_name: str) -> Tuple[int, int]:
-    match = re.match(r"epoch=(\d+)-step=(\d+)", checkpoint_name)
-    if match is not None:
-        epoch, step = map(int, match.groups())
-        return epoch, step
-    else:
-        raise ValueError(
-            f"Checkpoint did not follow the pattern 'epoch=<epoch>-step=<step>' got {checkpoint_name}"
-        )
-
-
-# TODO Unify with experiments.analyze_run.PlanResult
 @dataclasses.dataclass
 class ProbabilisticPlanResult(Plan):
     solved: bool
     average_probability: float
     min_probability: float
+    rl_return: float
+    subgoals: int
+    cycles: List[List[xmi.XTransition]]
     # 0 if optimal, positive if higher cost than optimal
-    diff_to_optimal: Optional[int] = None
+    diff_return_to_optimal: Optional[float] = None
+    diff_cost_to_optimal: Optional[float] = None
 
     # cant use dataclasses.asdict(...) because pymimir problems can't be pickled
     def serialize_as_dict(self):
         def transform(k, v):
             if isinstance(v, xmi.XProblem):
                 return v.name
-            elif k == "transitions":
+            elif k in ["transitions", "cycles"]:
                 assert isinstance(v, List) and (
                     len(v) == 0 or (isinstance(v[0], xmi.XTransition))
                 )
-                return v.to_string(detailed=True)
+                return [t.to_string(detailed=True) for t in v]
             return v
 
         return {
@@ -140,7 +81,148 @@ class ProbabilisticPlanResult(Plan):
         }
 
 
-class RLExperimentAnalyzer:
+class ModelData:
+    """
+    Everything produced by a specific model is stored in a ModelResults
+    """
+
+    def __init__(
+        self,
+        policy_gradient_lit_module: PolicyGradientLitModule,
+        checkpoint_path: Path,
+        experiment_analyzer,
+    ):
+        self._parent: RLPolicySearchEvaluator = experiment_analyzer
+
+        policy_gradient_module = copy.deepcopy(policy_gradient_lit_module)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self._parent.device, weights_only=False
+        )
+        # we cant do strict=True, since validation_hooks are often present in the state dict
+        policy_gradient_module.load_state_dict(checkpoint["state_dict"], strict=False)
+        embedding = EmbeddingModule(
+            encoder=HeteroGraphEncoder(self._parent.in_data.domain),
+            gnn=policy_gradient_module.gnn,
+            device=self._parent.device,
+        )
+        self.agent: ActorCritic = policy_gradient_module.actor_critic
+        # TODO fix embedding from agent, can't mix properties and torch.nn.Module
+        self.agent._embedding_module = embedding
+        self.policy_gradient_module: PolicyGradientLitModule = policy_gradient_module
+        self.gnn: PyGHeteroModule = self.policy_gradient_module.gnn
+        self.policy: TensorDictModule = self.agent.as_td_module(
+            self._parent.env_keys.state,
+            self._parent.env_keys.transitions,
+            self._parent.env_keys.action,
+            add_probs=True,
+            # out_successor_embeddings=True,
+        )
+
+        # All states over a single space have the same number of objects.
+        # We can simply save the dense embeddings without the mask.
+        # Shape [space.num_states(), num_objects, hidden_size]
+        self._embedding_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
+
+        # Computed probs for space
+        self._computed_probs_list_for_space: Dict[
+            xmi.XStateSpace, List[torch.Tensor]
+        ] = dict()
+        self._action_indices_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
+        self._log_probs_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
+
+        # Computed values for space
+        self._computed_values_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
+
+    def _compute_probs_for_space(self, space: xmi.XStateSpace):
+        with set_exploration_type(InteractionType.MODE):
+            embeddings: Tensor = self.embedding_for_space(space)
+            successor_indices: dict[xmi.XState, list[int]] = (
+                self._parent.successor_indices(space)
+            )
+            successor_indices_list: List[torch.Tensor] = [
+                torch.tensor(successor_indices[s]) for s in space
+            ]
+            num_successors: torch.Tensor = torch.tensor(
+                [len(ls) for ls in successor_indices_list],
+                dtype=torch.long,
+                device=self._parent.device,
+            )
+            successor_embeddings = torch.cat(
+                [embeddings[indices] for indices in successor_indices_list], dim=0
+            )
+            assert num_successors.size(0) == embeddings.size(0)
+            assert successor_embeddings.size(0) == num_successors.sum()
+
+            batched_probs, action_indices, log_probs = self.agent.embedded_forward(
+                ObjectEmbedding(
+                    embeddings,
+                    torch.ones(
+                        size=embeddings.shape[:-1],
+                        dtype=torch.bool,
+                        device=self._parent.device,
+                    ),
+                ),
+                ObjectEmbedding(
+                    successor_embeddings,
+                    torch.ones(
+                        size=successor_embeddings.shape[:-1],
+                        dtype=torch.bool,
+                        device=self._parent.device,
+                    ),
+                ),
+                num_successors,
+            )
+            self._computed_probs_list_for_space[space] = batched_probs
+            self._action_indices_for_space[space] = action_indices
+            self._log_probs_for_space[space] = log_probs
+
+    def computed_probs_list_for_space(self, space: xmi.XStateSpace):
+        if space not in self._computed_probs_list_for_space:
+            self._compute_probs_for_space(space)
+        return self._computed_probs_list_for_space[space]
+
+    def action_indices_for_space(self, space: xmi.XStateSpace):
+        if space not in self._action_indices_for_space:
+            self._compute_probs_for_space(space)
+        return self._action_indices_for_space[space]
+
+    def log_probs_for_space(self, space: xmi.XStateSpace):
+        if space not in self._log_probs_for_space:
+            self._compute_probs_for_space(space)
+        return self._log_probs_for_space[space]
+
+    def computed_values_for_space(self, space: xmi.XStateSpace):
+        if space not in self._computed_values_for_space:
+            embeddings = self.embedding_for_space(space)
+            values = self.agent.value_operator.module(embeddings)
+            self._computed_values_for_space[space] = values
+        return self._computed_values_for_space[space]
+
+    def embedding_for_space(self, space: xmi.XStateSpace):
+        if space not in self._embedding_for_space:
+            logging.info(
+                f"Computing embedding for whole state space {space} with {len(space)} states."
+                f" This might take a while."
+            )
+            self._embedding_for_space[space] = self.agent.embedding_module(
+                list(space)
+            ).dense_embedding
+        return self._embedding_for_space[space]
+
+    def transformed_embedding_env(self, base_env):
+        return NonTensorTransformedEnv(
+            env=base_env,
+            transform=EmbeddingTransform(
+                current_embedding_key=self.agent.keys.current_embedding,
+                env=base_env,
+                embedding_module=self.agent.embedding_module,
+            ),
+            cache_specs=True,
+            device=self._parent.device,
+        )
+
+
+class RLPolicySearchEvaluator:
     env_keys = PlanningEnvironment.default_keys
 
     def __init__(
@@ -149,20 +231,21 @@ class RLExperimentAnalyzer:
         in_data: InputData,
         out_data: OutputData,
         test_setup: TestSetup,
+        reward_function: RewardFunction,
         checkpoints_paths: List[Path] | None = None,
         device: torch.device = torch.device("cpu"),
+        gamma: float = 1.0,
     ):
+        self._current_model = None
         self.in_data = in_data
         self.out_data = out_data
         self.test_setup = test_setup
         self.agent_keys = lightning_agent.actor_critic.keys
         self.device: torch.device = device
-
-        self._model_for_checkpoint: Dict[Path, RLExperimentAnalyzer.ModelResults] = (
-            dict()
-        )
-        self._policy_gradient_lit_module = lightning_agent
-
+        self.gamma: float = gamma
+        self.reward_function: RewardFunction = reward_function
+        self._model_for_checkpoint: Dict[Path, ModelData] = dict()
+        self._policy_gradient_lit_module = lightning_agent.to(self.device)
         if checkpoints_paths is None:
             checkpoints_paths, last_checkpoint = resolve_checkpoints(out_data)
         else:
@@ -175,7 +258,7 @@ class RLExperimentAnalyzer:
                 for ckpt in checkpoints_paths
             )
 
-        self._current_model: RLExperimentAnalyzer.ModelResults
+        self._current_model: ModelData
         self._current_checkpoint: Path
         self.load_checkpoint(
             last_checkpoint if last_checkpoint is not None else checkpoints_paths[-1]
@@ -201,157 +284,11 @@ class RLExperimentAnalyzer:
         self._successor_indices: Dict[xmi.XStateSpace, Dict[xmi.XState, List[int]]] = (
             dict()
         )
-
-        # State Space as nx.Graph and pyg.data.Data
-        self._mdp_graph_for_space: Dict[xmi.XStateSpace, nx.DiGraph] = dict()
-        self._pyg_graph_for_space: Dict[xmi.XStateSpace, pyg.data.Data] = dict()
-
-    class ModelResults:
-        """
-        Everything produced by a specific model is stored in a ModelResults
-        """
-
-        def __init__(
-            self,
-            policy_gradient_lit_module: PolicyGradientLitModule,
-            checkpoint_path: Path,
-            experiment_analyzer,
-        ):
-            self._parent: RLExperimentAnalyzer = experiment_analyzer
-
-            adapter = copy.deepcopy(policy_gradient_lit_module)
-            checkpoint = torch.load(
-                checkpoint_path, map_location=self._parent.device, weights_only=False
-            )
-            adapter.load_state_dict(checkpoint["state_dict"])
-            embedding = EmbeddingModule(
-                encoder=HeteroGraphEncoder(self._parent.in_data.domain),
-                gnn=adapter.gnn,
-                device=self._parent.device,
-            )
-            self.agent: ActorCritic = adapter.actor_critic
-            # TODO fix embedding from agent, can't mix properties and torch.nn.Module
-            self.agent._embedding_module = embedding
-            self.adapter: PolicyGradientLitModule = adapter
-            self.gnn: PyGHeteroModule = self.adapter.gnn
-            self.policy: TensorDictModule = self.agent.as_td_module(
-                self._parent.env_keys.state,
-                self._parent.env_keys.transitions,
-                self._parent.env_keys.action,
-                add_probs=True,
-                # out_successor_embeddings=True,
-            )
-
-            # All states over a single space have the same number of objects.
-            # We can simply save the dense embeddings without the mask.
-            # Shape [space.num_states(), num_objects, hidden_size]
-            self._embedding_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
-
-            # Computed probs for space
-            self._computed_probs_list_for_space: Dict[
-                xmi.XStateSpace, List[torch.Tensor]
-            ] = dict()
-            self._action_indices_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
-            self._log_probs_for_space: Dict[xmi.XStateSpace, torch.Tensor] = dict()
-
-            # Computed values for space
-            self._computed_values_for_space: Dict[xmi.XStateSpace, torch.Tensor] = (
-                dict()
-            )
-
-        def _compute_probs_for_space(self, space: xmi.XStateSpace):
-            with set_exploration_type(InteractionType.MODE):
-                embeddings: Tensor = self.embedding_for_space(space)
-                successor_indices: dict[xmi.XState, list[int]] = (
-                    self._parent.successor_indices(space)
-                )
-                successor_indices_list: List[torch.Tensor] = [
-                    torch.tensor(successor_indices[s]) for s in space
-                ]
-                num_successors: torch.Tensor = torch.tensor(
-                    [len(ls) for ls in successor_indices_list],
-                    dtype=torch.long,
-                    device=self._parent.device,
-                )
-                successor_embeddings = torch.cat(
-                    [embeddings[indices] for indices in successor_indices_list], dim=0
-                )
-                assert num_successors.size(0) == embeddings.size(0)
-                assert successor_embeddings.size(0) == num_successors.sum()
-
-                batched_probs, action_indices, log_probs = self.agent.embedded_forward(
-                    ObjectEmbedding(
-                        embeddings,
-                        torch.ones(
-                            size=embeddings.shape[:-1],
-                            dtype=torch.bool,
-                            device=self._parent.device,
-                        ),
-                    ),
-                    ObjectEmbedding(
-                        successor_embeddings,
-                        torch.ones(
-                            size=successor_embeddings.shape[:-1],
-                            dtype=torch.bool,
-                            device=self._parent.device,
-                        ),
-                    ),
-                    num_successors,
-                )
-                self._computed_probs_list_for_space[space] = batched_probs
-                self._action_indices_for_space[space] = action_indices
-                self._log_probs_for_space[space] = log_probs
-
-        def computed_probs_list_for_space(self, space: xmi.XStateSpace):
-            if space not in self._computed_probs_list_for_space:
-                self._compute_probs_for_space(space)
-            return self._computed_probs_list_for_space[space]
-
-        def action_indices_for_space(self, space: xmi.XStateSpace):
-            if space not in self._action_indices_for_space:
-                self._compute_probs_for_space(space)
-            return self._action_indices_for_space[space]
-
-        def log_probs_for_space(self, space: xmi.XStateSpace):
-            if space not in self._log_probs_for_space:
-                self._compute_probs_for_space(space)
-            return self._log_probs_for_space[space]
-
-        def computed_values_for_space(self, space: xmi.XStateSpace):
-            if space not in self._computed_values_for_space:
-                embeddings = self.embedding_for_space(space)
-                values = self.agent.value_operator.module(embeddings)
-                self._computed_values_for_space[space] = values
-            return self._computed_values_for_space[space]
-
-        def embedding_for_space(self, space: xmi.XStateSpace):
-            if space not in self._embedding_for_space:
-                logging.info(
-                    f"Computing embedding for whole state space {space} with {len(space)} states."
-                    f" This might take a while."
-                )
-                self._embedding_for_space[space] = self.agent.embedding_module(
-                    list(space)
-                ).dense_embedding
-            return self._embedding_for_space[space]
-
-        def transformed_embedding_env(self, base_env):
-            return NonTensorTransformedEnv(
-                env=base_env,
-                transform=EmbeddingTransform(
-                    current_embedding_key=self.agent.keys.current_embedding,
-                    env=base_env,
-                    embedding_module=self.agent.embedding_module,
-                ),
-                cache_specs=True,
-                device=self._parent.device,
-            )
+        self._expanded_envs: Dict[xmi.XStateSpace, pyg.data.Data] = dict()
 
     def load_checkpoint(self, checkpoint_path: Path):
         if checkpoint_path not in self._model_for_checkpoint:
-            model = RLExperimentAnalyzer.ModelResults(
-                self._policy_gradient_lit_module, checkpoint_path, self
-            )
+            model = ModelData(self._policy_gradient_lit_module, checkpoint_path, self)
             self._model_for_checkpoint[checkpoint_path] = model
         self._current_checkpoint = checkpoint_path
         self._current_model = self._model_for_checkpoint[checkpoint_path]
@@ -384,26 +321,16 @@ class RLExperimentAnalyzer:
             }
         return self._successor_indices[space]
 
-    def mdp_graph_for_space(self, space: xmi.XStateSpace):
-        if space not in self._mdp_graph_for_space:
-            nx_graph = ExpandedStateSpaceEnv(space).to_mdp_graph(0)
-            pyg_graph = mdp_graph_as_pyg_data(nx_graph)
-            pyg_graph.to(self.device)
-            self._mdp_graph_for_space[space] = nx_graph
-            self._pyg_graph_for_space[space] = pyg_graph
-        return self._mdp_graph_for_space[space]
-
-    def pyg_graph_for_space(self, space: xmi.XStateSpace):
-        if space not in self._pyg_graph_for_space:
-            self.mdp_graph_for_space(space)
-        return self._pyg_graph_for_space[space]
-
     @functools.cache
     def successor_env_for_problem(self, problem: xmi.XProblem) -> SuccessorEnvironment:
         if problem not in self._successor_env_for_problem:
+            if self.test_setup.iw_search is not None:
+                generator = iw.IWSuccessorGenerator(self.test_setup.iw_search, problem)
+            else:
+                generator = xmi.XSuccessorGenerator(problem)
             base_env = SuccessorEnvironment(
-                generators=[xmi.XSuccessorGenerator(problem)],
-                problems=[problem],
+                generators=[generator],
+                reward_function=self.reward_function,
                 batch_size=torch.Size((1,)),
             )
             self._successor_env_for_problem[problem] = base_env
@@ -419,6 +346,7 @@ class RLExperimentAnalyzer:
         if problem not in self._expanded_env_for_problem:
             base_env = ExpandedStateSpaceEnv(
                 space=space,
+                reward_function=self.reward_function,
                 batch_size=torch.Size((1,)),
             )
             self._expanded_env_for_problem[problem] = base_env
@@ -428,16 +356,24 @@ class RLExperimentAnalyzer:
         self,
         base_env: PlanningEnvironment,
         initial_state: xmi.XState | None = None,
-        avoid_cycle: bool = False,
         exploration_type: InteractionType | None = None,
         max_steps: int | None = None,
     ):
         env = self.model.transformed_embedding_env(base_env)
-        if avoid_cycle:
+        cycle_transform = CycleAvoidingTransform(self.env_keys.transitions)
+        if self.test_setup.avoid_cycles:
             env = NonTensorTransformedEnv(
-                env=env, transform=CycleAvoidingTransform(self.env_keys.transitions)
+                env=env,
+                transform=cycle_transform,
             )
-
+            env = NonTensorTransformedEnv(
+                env=env,
+                transform=NoTransitionTruncationTransform(
+                    self.env_keys.transitions,
+                    self.env_keys.done,
+                    self.env_keys.truncated,
+                ),
+            )
         initial = (
             env.reset(states=[initial_state] * env.batch_size[0])
             if initial_state
@@ -530,7 +466,7 @@ class RLExperimentAnalyzer:
         return self._stored_probs_for_problem[problem]
 
     def map_to_probabilistic_plan(
-        self, problem: xmi.XProblem, rollout: TensorDict
+        self, problem: xmi.XProblem, rollout: TensorDictBase
     ) -> ProbabilisticPlanResult:
         problem: xmi.XProblem
         # Assert we only have one batch entry and the time dimension is the last
@@ -539,30 +475,58 @@ class RLExperimentAnalyzer:
         action_probs = rollout["log_probs"].detach().exp()
         transitions = list(
             itertools.takewhile(
-                lambda t: not t.source.literals_hold(problem.goal), rollout["action"][0]
+                lambda t: not t.source.is_goal(),
+                rollout["action"][0],
             )
         )
         plan_length = len(transitions)
         action_probs = action_probs[:plan_length]
+        rl_return, cost = self._compute_return(transitions)
+        cycles = self._analyze_cycles(transitions)
         plan_result = ProbabilisticPlanResult(
             problem=problem,
             solved=rollout[("next", "terminated")].any().item(),
             average_probability=round(action_probs.mean().item(), 4),
             min_probability=round(action_probs.min().item(), 4),
             transitions=transitions,
+            rl_return=round(rl_return, 3),
+            cost=cost,
+            subgoals=len(transitions),
+            cycles=cycles,
         )
         optimal_plan: Optional[Plan] = self.in_data.plan_by_problem.get(problem)
         if optimal_plan is not None:
-            plan_result.diff_to_optimal = plan_result.cost - optimal_plan.cost
+            rl_return_optimal, cost_optimal = self._compute_return(
+                optimal_plan.transitions
+            )
+            assert cost_optimal == plan_result.cost
+            plan_result.diff_cost_to_optimal = plan_result.cost - cost_optimal
+            plan_result.diff_return_to_optimal = rl_return - rl_return_optimal
             for i, (plan_step, optimal_plan_step) in enumerate(
                 zip(plan_result.transitions, optimal_plan.transitions)
             ):
-                # Equal between actions not correctly implemented in old pymimir
-                if plan_step.target != optimal_plan_step.target:
-                    print("Deferred from optimal plan at step ", str(i))
+                if not plan_step.target.semantic_eq(optimal_plan_step.target):
+                    print("Deviated from optimal plan at step ", str(i))
                     break
-
         return plan_result
+
+    def _compute_return(self, transitions):
+        rl_return = 0.0
+        cost = 0.0
+        step = 0
+        for transition in transitions:
+            if isinstance(transition.action, Sequence):
+                rl_return += sum(
+                    self.gamma**i * (-action.cost)
+                    for i, action in enumerate(transition.action, start=step)
+                )
+                cost += sum(action.cost for action in transition.action)
+                step += len(transition.action)
+            else:
+                rl_return += self.gamma**step * transition.action.cost
+                cost += transition.action.cost
+                step += 1
+        return rl_return, cost
 
     def use_stored_probs_as_policy(
         self, problem: xmi.XProblem, epoch: int | None = None
@@ -579,20 +543,35 @@ class RLExperimentAnalyzer:
             idx_of_state = space
         else:
             idx_of_state = "idx_in_space"
-        return ProbsBasedPolicy(
+        return StochasticPolicy(
             probs_list, problem, env_keys=self.env_keys, idx_of_state=idx_of_state
         )
 
-    @staticmethod
-    def detect_cycle(transitions: List[xmi.XTransition]):
-        visited = dict()
-        for i, t in enumerate(transitions):
-            if t.source in visited:
-                print(f"Found cycle at {i - visited[t.source]} in step {i}")
-            visited[t.source] = i
+    def _analyze_cycles(self, transitions):
+        """
+        Analyze the transitions and return the cycles that were made.
+        A cycle is a list of transitions that lead to a previously visited state.
+        The cycles are grouped by the level of decision-making, e.g., subgoal cycles
+        are on the level of subgoals, while primitive action cycles are on the level of primitive actions.
+        """
+        visited: Set[xmi.XState] = set()
+        cycles: List[List[xmi.XTransition]] = []
+        current_cycle: List[xmi.XTransition] = []
+
+        for transition in transitions:
+            if transition.source in visited:
+                # we have a cycle
+                new_cycle = [transition]
+                if len(current_cycle) > 0:
+                    cycles.append(current_cycle + new_cycle)
+                current_cycle = new_cycle
+            else:
+                visited.add(transition.source)
+                current_cycle.append(transition)
+        return cycles
 
 
-class ProbsBasedPolicy(torch.nn.Module, Callable[[TensorDictBase], TensorDictBase]):
+class StochasticPolicy(torch.nn.Module, Callable[[TensorDictBase], TensorDictBase]):
     def __init__(
         self,
         probs_list: List[torch.Tensor],
@@ -671,12 +650,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
             filtered: List[xmi.XTransition] = [
                 t for t in transitions if t.target not in self.visited[batch_idx]
             ]
-            if len(filtered) == 0:
-                raise RuntimeError(
-                    "All transitions lead to previously visited states."
-                    f"In state {transitions[0].source} with transitions {transitions}"
-                )
-            filtered_transitions.append(transitions)
+            filtered_transitions.append(filtered)
 
         return as_non_tensor_stack(filtered_transitions)
 
@@ -689,11 +663,68 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
         return self._call(tensordict_reset)
 
 
-class EvalThundeRLCLI(ThundeRLCLI):
-    def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        super().add_arguments_to_parser(parser)
+class NoTransitionTruncationTransform(torchrl.envs.Transform):
+    """
+    After CycleAvoidingTransform has filtered out all successors,
+    force a truncation (i.e. set `truncated=True` and thus `done=True`)
+    on any batch index where `transitions` is empty.
+    """
+
+    def __init__(
+        self,
+        transitions_key: NestedKey,
+        done_key: NestedKey,
+        truncated_key: NestedKey,
+    ):
+        # We do NOT pass anything to in_keys / out_keys, because we override _step directly.
+        super().__init__(
+            in_keys=None, out_keys=None, in_keys_inv=None, out_keys_inv=None
+        )
+        self.transitions_key = transitions_key
+        self.done_key = done_key
+        self.truncated_key = truncated_key
+
+    def _step(
+        self,
+        tensordict: TensorDict,  # the TensorDict at time t
+        next_tensordict: TensorDict,  # the TensorDict at time t+1 (after env.step)
+    ) -> TensorDict:
+        """
+        Called after the base env (and any previous transforms) have stepped.
+        We look at `next_tensordict[self.transitions_key]` and, wherever that list is empty,
+        we force `truncated=True` and then `done=True`.
+        """
+        batched_transitions = next_tensordict.get(self.transitions_key)
+        transitions_list = tolist(batched_transitions)  # now a Python list of lists
+
+        batch_size = len(transitions_list)
+        device = next_tensordict.device
+
+        truncated = torch.zeros((batch_size, 1), dtype=torch.bool, device=device)
+        for i in range(batch_size):
+            if len(transitions_list[i]) == 0:
+                truncated[i, 0] = True
+
+        # read existing `done` (if absent, assume all False)
+        if next_tensordict.get(self.done_key, None) is None:
+            done_existing = torch.zeros(
+                (batch_size, 1), dtype=torch.bool, device=device
+            )
+        else:
+            done_existing = next_tensordict.get(self.done_key)
+
+        new_done = done_existing | truncated
+        next_tensordict.set(self.truncated_key, truncated)
+        next_tensordict.set(self.done_key, new_done)
+
+        return next_tensordict
+
+
+class EvalPolicyGradientCLI(PolicyGradientCLI):
+    def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         # fit subcommand adds this value to the config
         parser.add_argument("--ckpt_path", type=Optional[Path], default=None)
+        parser.add_argument("--device", type=str, default="cpu")
         parser.link_arguments(
             "data_layout.output_data",
             "trainer.logger.init_args.id",
@@ -702,7 +733,8 @@ class EvalThundeRLCLI(ThundeRLCLI):
         )
 
 
-def eval_lightning_agent(
+def eval_model(
+    cli: PolicyGradientCLI,
     policy_gradient_lit_module: PolicyGradientLitModule,
     logger: Logger,
     input_data: InputData,
@@ -721,6 +753,7 @@ def eval_lightning_agent(
     The output is saved as csv under the out directory of OutputData as results_{epoch}_{step}.csv
     referencing the epoch and step form the loaded checkpoint.
 
+    :param cli: The CLI instance used to run the agent.
     :param policy_gradient_lit_module: An agent instance. The weights for the agent will be loaded from a checkpoint.
     :param logger: If a WandbLogger is passed, the results are uploaded as table.
     :param input_data: InputData which should specify at least one test_problem.
@@ -729,12 +762,19 @@ def eval_lightning_agent(
     """
     if not input_data.test_problems:
         raise ValueError("No test instances provided")
-
-    analyzer = RLExperimentAnalyzer(
+    estimator_config = cli.config_init.get("estimator_config")
+    if estimator_config is None:
+        gamma = 1.0
+    else:
+        gamma = estimator_config.gamma
+    analyzer = RLPolicySearchEvaluator(
         policy_gradient_lit_module,
         in_data=input_data,
         out_data=output_data,
         test_setup=test_setup,
+        reward_function=cli.config_init["reward"],
+        gamma=gamma,
+        device=torch.device(cli.config_init["device"]),
     )
     for checkpoint_path in analyzer.checkpoints:
         analyzer.current_checkpoint = checkpoint_path
@@ -786,18 +826,18 @@ def eval_lightning_agent(
 
 def eval_lightning_agent_cli():
     # overwrite this because it might be set in the config.yaml.
-    sys.argv.append("--data_layout.output_data.ensure_new_out_dir")
-    sys.argv.append("false")
-    # workaround because we can't set the default
-    # Should be set to avoid overwriting the previous run with the same id
-    sys.argv.append("--trainer.logger.init_args.resume")
-    sys.argv.append("true")
-    cli = EvalThundeRLCLI(run=False)
+    sys.argv.extend(["--data_layout.output_data.ensure_new_out_dir", "false"])
+    # needs to be set to avoid loading all the training and validation data
+    sys.argv.extend(["--data.skip", "true"])
+    # Should be set to avoid overwriting the previous run with the same id (workaround because we can't set the default)
+    sys.argv.extend(["--trainer.logger.init_args.resume", "true"])
+    cli = EvalPolicyGradientCLI(run=False)
     policy_gradient_lit_module: PolicyGradientLitModule = cli.model
     in_data: InputData = cli.datamodule.data
     out_data = cli.config_init["data_layout.output_data"]
     test_setup: TestSetup = cli.config_init["test_setup"]
-    eval_lightning_agent(
+    eval_model(
+        cli=cli,
         policy_gradient_lit_module=policy_gradient_lit_module,
         logger=cli.trainer.logger,
         input_data=in_data,
@@ -808,5 +848,5 @@ def eval_lightning_agent_cli():
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    # torch.multiprocessing.set_sharing_strategy("file_system")
     eval_lightning_agent_cli()
