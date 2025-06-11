@@ -11,8 +11,6 @@ from lightning_fabric.utilities.apply_func import (
 )
 from lightning_utilities import apply_to_collection
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10, MNIST, FakeData
-from torchvision.transforms import transforms
 
 
 class DetachableDataType(ABC):
@@ -138,6 +136,9 @@ class MultiSourceValDataLoader:
 
 
 if __name__ == "__main__":
+    from torchvision.datasets import CIFAR10, MNIST, FakeData
+    from torchvision.transforms import transforms
+
     # common transform
     transform = transforms.Compose(
         [
