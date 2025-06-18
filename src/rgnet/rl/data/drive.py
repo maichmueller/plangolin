@@ -91,8 +91,8 @@ class BaseDrive(InMemoryDataset):
         metadata_hash = persistent_hash(self.metadata.values())
         root_dir = Path(root_dir) / metadata_hash
         # initialize klepto store for modular persistence
-        self.metabase_path = root_dir / "database"
-        os.makedirs(self.metabase_path, exist_ok=True)
+        self.metabase_path = root_dir / "database.db"
+        os.makedirs(root_dir, exist_ok=True)
         self.metabase = shelve.open(str(self.metabase_path), flag="c")
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.
