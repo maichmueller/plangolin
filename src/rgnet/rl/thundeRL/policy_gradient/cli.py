@@ -252,7 +252,7 @@ class PolicyGradientCLI(ThundeRLCLI):
             source="data.validation_datasets",
             target="model.validation_hooks.init_args.discounted_optimal_values",
             compute_fn=lambda datasets: {
-                i: bellman_optimal_values(flashdrive.env_aux_data.pyg_env)
+                i: bellman_optimal_values(flashdrive.env_aux_data())
                 for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
@@ -262,7 +262,7 @@ class PolicyGradientCLI(ThundeRLCLI):
             source="data.validation_datasets",
             target="model.validation_hooks.init_args.optimal_policy_dict",
             compute_fn=lambda datasets: {
-                i: optimal_policy(flashdrive.env_aux_data.pyg_env)
+                i: optimal_policy(flashdrive.env_aux_data())
                 for i, flashdrive in enumerate(datasets)
             },
             apply_on="instantiate",
