@@ -1,5 +1,6 @@
 import dataclasses
-from typing import Any, List, Optional, Tuple, Union
+import itertools
+from typing import Any, Iterator, List, Optional, Tuple, Union
 
 import lightning
 import torch
@@ -53,6 +54,22 @@ class PolicyGradientLitModule(lightning.LightningModule):
         self.add_all_rewards_and_done = add_all_rewards_and_done or is_all_actions
         self.add_successor_embeddings = add_successor_embeddings or is_all_actions
         self.keys = keys
+        self._cuda_streams = None
+        self._cuda_cycler: Iterator[torch.cuda.Stream | None] = None
+
+    def next_stream(self) -> Optional[torch.cuda.Stream]:
+        """Returns the next CUDA stream if available, otherwise None."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            if self._cuda_streams is None:
+                self._cuda_streams = [torch.cuda.Stream(self.device) for _ in range(2)]
+                self._cuda_cycler = itertools.cycle(self._cuda_streams)
+            return next(self._cuda_cycler)
+        return None
+
+    @property
+    def cuda_streams(self) -> Optional[List[torch.cuda.Stream]]:
+        """Returns the list of CUDA streams if available, otherwise None."""
+        return self._cuda_streams
 
     @staticmethod
     def _get_rewards_and_done(
@@ -82,15 +99,15 @@ class PolicyGradientLitModule(lightning.LightningModule):
         successor_start_indices = num_successors.cumsum(dim=0).long()[:-1]
         successor_start_indices_cpu = successor_start_indices.cpu()
 
-        # Shape batch_size x embedding_size
-        object_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
-            *self.gnn(states_data)
-        )
-        # shape (batch_size * num_successor[i]) x embedding_size
-        successor_embeddings: ObjectEmbedding = ObjectEmbedding.from_sparse(
-            *self.gnn(successors_flattened)
-        )
-
+        batches_out: list[ObjectEmbedding] = []
+        for batch in (states_data, successors_flattened):
+            with torch.cuda.stream(self.next_stream()):
+                # Shape batch_size x embedding_size
+                batches_out.append(ObjectEmbedding.from_sparse(*self.gnn(batch)))
+        if self.cuda_streams is not None:
+            for stream in self.cuda_streams:
+                stream.synchronize()
+        object_embeddings, successor_embeddings = batches_out
         # Sample actions from the agent
         batched_probs: List[torch.Tensor]  # probability for each transition
         batched_probs, action_indices, log_probs = self.actor_critic.embedded_forward(
