@@ -249,3 +249,138 @@ class AtomDrive(BaseDrive):
                         pred_dists[atom] = curr_atom_dist_incr
                         new_open_list.add(pred.source)
         return new_open_list
+
+
+class PartialAtomDrive(AtomDrive):
+    """
+    AtomDrive stores for each state s their optimal distance to any atom p, i.e., a value function V(p | s).
+
+    This drive is used for partial atom spaces, where not all states are present in the state space.
+    """
+
+    def __init__(
+        self,
+        *args,
+        iw_search: IWSearch,
+        num_states: int = 0,
+        atom_value_method: bool = False,
+        store_values_as_tensor: bool = True,
+        seed: int = None,
+        **kwargs,
+    ):
+        self._atom_to_index_map: dict[str, int] = None
+        self._index_to_atom_map: dict[int, str] = None
+        self.atom_value_method = atom_value_method
+        self.store_values_as_tensor = store_values_as_tensor
+        self.iw_search = iw_search
+        self.num_states = num_states
+        self.seed = seed
+        domain, problem = parse(self.domain_path, self.problem_path)
+        successor_gen = XSuccessorGenerator(problem)
+        env = SuccessorEnvironment(
+            generators=[successor_gen],
+            reward_function=self.reward_function,
+            reset=True,
+            batch_size=1,
+        )
+        kwargs["env"] = env
+        super().__init__(*args, **kwargs)
+
+    @property
+    def metadata(self) -> dict:
+        return dict(
+            seed=self.seed,
+            num_states=self.num_states,
+            expansion_iw_search=self.iw_search,
+            **super().metadata,
+        )
+
+    def _metadata_misaligned(self, meta: dict) -> str:
+        if not super()._metadata_misaligned(meta):
+            if (
+                self.iw_search is not None
+                and self.iw_search != meta["expansion_iw_search"]
+            ):
+                return f"expansion_iw_search: given={self.iw_search} != loaded={meta['expansion_iw_search']}"
+            if self.num_states != meta["num_states"]:
+                return f"num_states: given={self.num_states} != loaded={meta['num_states']}"
+            if self.seed != meta["seed"]:
+                return f"seed: given={self.seed} != loaded={meta['seed']}"
+        return ""
+
+    def _build(
+        self,
+    ) -> List[HeteroData]:
+        env = self.env
+        problem = env.active_instances[0].problem
+        self.problem = problem
+        encoder = self.encoder_factory(problem.domain)
+        logger = self._get_logger()
+        logger.info(
+            f"Building {self.__class__.__name__} "
+            f"(problem: {problem.name} / {Path(problem.filepath).stem}, #space: {self.num_states} states (max-cutoff))"
+        )
+        atom_values = self._sample_atom_dists(env)
+        nr_states: int = self.num_states
+        atom_id_map, atoms = make_atom_ids(problem)
+        self._atom_to_index_map = atom_id_map
+        states = list(atom_values.keys())
+        if self.store_values_as_tensor:
+            if isinstance(atom_values, dict):
+                atom_values = atom_value_dict_to_tensor(
+                    atom_values, self.atom_to_index_map
+                )
+        else:
+            if isinstance(atom_values, torch.Tensor):
+                atom_values = atom_tensor_to_dict(
+                    atom_values, self.atom_to_index_map, self.index_to_atom_map
+                )
+
+        batched_data = self._encode(env, encoder, atom_values, states, nr_states)
+        logger.info(
+            f"Finished {self.__class__.__name__} "
+            f"(problem: {problem.name} / {Path(problem.filepath).stem}, #space: {self.num_states} states (max-cutoff))"
+        )
+        return batched_data
+
+    def _sample_atom_dists(
+        self,
+        env: SuccessorEnvironment,
+    ) -> dict[XState, defaultdict[XAtom, float]] | torch.Tensor:
+        succ_gen = env.active_instances[0]
+        rng = np.random.default_rng(self.seed)
+        open_states = deque([succ_gen.initial_state])
+        dists: dict[XState, defaultdict[XAtom, float]] = dict()
+        closed_states = set()
+        pbar: tqdm_asyncio | None
+        with (
+            tqdm(desc="Sampling Atom Distances", total=self.num_states)
+            if self.show_progress
+            else contextlib.nullcontext()
+        ) as pbar:
+            while len(closed_states) < self.num_states or not open_states:
+                state = open_states.pop()
+                closed_states.add(state)
+                atom_dists = defaultdict(lambda: float("inf"))
+                dists[state] = atom_dists
+                collector = CollectorHook()
+                self.iw_search.solve(
+                    succ_gen,
+                    start_state=state,
+                    novel_hook=collector,
+                    stop_on_goal=False,
+                )
+                nodes = collector.nodes
+                for node in (nodes[i] for i in rng.permutation(len(nodes))):
+                    if node.state not in closed_states:
+                        open_states.append(node.state)
+                    for atom_tuples in node.novelty_trace[-1]:
+                        for atom in atom_tuples:
+                            if len(atom_tuples) == 1:
+                                atom_dists[atom] = node.depth
+                if pbar:
+                    pbar.update(1)
+        return dists
+
+    def env_aux_data(self):
+        return None
