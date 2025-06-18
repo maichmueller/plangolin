@@ -9,7 +9,6 @@ from torch_geometric.data import Data, HeteroData
 
 import xmimir as xmi
 from rgnet.logging_setup import tqdm
-from rgnet.rl.envs import ExpandedStateSpaceEnv
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 from .drive import BaseDrive, BaseDriveMetadata
@@ -37,16 +36,18 @@ class FlashDrive(BaseDrive):
                 )
         super().__init__(*args, transform=self.target_idx_to_data_transform, **kwargs)
 
-    def _metadata_misaligned(self, meta: FlashDriveMetadata) -> str:
+    def _metadata_misaligned(self, meta: dict) -> str:
         if not super()._metadata_misaligned(meta):
-            if self.iw_search is not None and self.iw_search != meta.iw_search:
-                return f"iw_search: given={self.iw_search} != loaded={meta.iw_search}"
+            if self.iw_search is not None and self.iw_search != meta["iw_search"]:
+                return (
+                    f"iw_search: given={self.iw_search} != loaded={meta['iw_search']}"
+                )
         return ""
 
     @property
-    def metadata(self) -> FlashDriveMetadata:
-        return FlashDriveMetadata(
-            **super().metadata.__dict__,
+    def metadata(self) -> dict:
+        return dict(
+            **super().metadata,
             iw_search=self.iw_search,
         )
 
@@ -56,11 +57,10 @@ class FlashDrive(BaseDrive):
             space = IWStateSpace(self.iw_search, space, **self.iw_options)
         return space
 
-    def _build(
-        self,
-        env: ExpandedStateSpaceEnv,
-    ) -> List[HeteroData]:
+    def _build(self) -> List[HeteroData]:
+        env = self.env
         space: xmi.XStateSpace = env.active_instances[0]
+        self.problem = space.problem
         encoder = self.encoder_factory(space.problem.domain)
         nr_states: int = len(space)
         logger = self._get_logger()

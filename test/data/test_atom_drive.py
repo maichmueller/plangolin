@@ -20,13 +20,10 @@ def validate_drive(drive: AtomDrive, space, invert_values: bool = False):
     encoder = HeteroGraphEncoder(space.problem.domain)
     sign = -1 if invert_values else 1
     expected_values = drive.atom_value_dict_to_tensor(
-        list(
-            map(
-                operator.itemgetter(1),
-                sorted(
-                    _expected_optimal_atom_values(space).items(),
-                    key=operator.itemgetter(0),
-                ),
+        dict(
+            sorted(
+                _expected_optimal_atom_values(space).items(),
+                key=operator.itemgetter(0),
             )
         )
     )
@@ -69,7 +66,7 @@ def validate_atom_values(atom_dists: Callable[[str], float], space, state):
     )
 
 
-def _expected_optimal_atom_values(space, state=None) -> dict[int, [dict[XAtom, float]]]:
+def _expected_optimal_atom_values(space, state=None) -> dict[int, dict[XAtom, float]]:
     # litmus test: any atom in blocksworld/delivery is at most of width 2, so IW(2) should find us all the distances
     # of the atoms from any state
     if state is None:
@@ -167,7 +164,7 @@ def test_atom_dist_mp_module(request, problem):
     pyg_env.atoms_per_state = [list(state.atoms(with_statics=False)) for state in space]
     device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
     mp_module = OptimalAtomValuesMP(
-        atom_to_index_map=make_atom_ids(space)[0], aggr="min"
+        atom_to_index_map=make_atom_ids(space.problem)[0], aggr="min"
     ).to(device)
     start = time.time()
     mp_module(pyg_env.to(device))

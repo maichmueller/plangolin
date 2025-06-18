@@ -412,6 +412,22 @@ class XProblem(MimirWrapper[Problem]):
             )
         )
 
+    @cache
+    def atom_count(self, category: XCategory):
+        counter = itertools.count()
+        get_atom = getattr(self.repositories, f"get_{category.name}_ground_atom")
+        while True:
+            count = next(counter)
+            try:
+                get_atom(count)
+            except IndexError:
+                return count
+
+    def all_atoms(self, category: XCategory) -> Iterable[XAtom]:
+        get_atom = getattr(self.repositories, f"get_{category.name}_ground_atom")
+        for i in range(self.atom_count(category)):
+            yield XAtom(get_atom(i))
+
     def __str__(self):
         return (
             f"Problem: {{\n"
@@ -723,7 +739,6 @@ class XState(MimirWrapper[State]):
         """
         return self.base.get_index()
 
-    @cache
     def is_goal(self, goal: tuple[XLiteral, ...] = ()) -> bool:
         return not any(self.unsatisfied_literals(goal or self.problem.goal()))
 
@@ -1152,22 +1167,6 @@ class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
             )
             for vertex in self._vertices
         )
-
-    @cache
-    def atom_count(self, category: XCategory):
-        counter = itertools.count()
-        get_atom = getattr(self.pddl_repositories, f"get_{category.name}_ground_atom")
-        while True:
-            count = next(counter)
-            try:
-                get_atom(count)
-            except IndexError:
-                return count
-
-    def all_atoms(self, category: XCategory) -> Iterable[XAtom]:
-        get_atom = getattr(self.pddl_repositories, f"get_{category.name}_ground_atom")
-        for i in range(self.atom_count(category)):
-            yield XAtom(get_atom(i))
 
     def is_deadend(self, state: XState) -> bool:
         return self.base.is_deadend_vertex(state.index)

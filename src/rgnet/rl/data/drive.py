@@ -1,9 +1,8 @@
 import logging
-import pickle
-import warnings
+import os
+import shelve
 from abc import abstractmethod
 from dataclasses import dataclass
-from os.path import splitext
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Type, Union
 
@@ -15,13 +14,14 @@ from torch_geometric.io import fs
 
 import xmimir as xmi
 from rgnet.encoding.base_encoder import EncoderFactory
-from rgnet.rl.envs import ExpandedStateSpaceEnv
+from rgnet.rl.envs import ExpandedStateSpaceEnv, PlanningEnvironment
 from rgnet.rl.envs.expanded_state_space_env import (
     ExpandedStateSpaceEnvLoader,
     IteratingReset,
 )
 from rgnet.rl.reward import RewardFunction
 from rgnet.utils.misc import persistent_hash
+from xmimir import XProblem, XStateSpace, parse
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,6 @@ class BaseDrive(InMemoryDataset):
         *,
         device: str | torch.device | None = None,
         transform: Callable[[HeteroData | Data], HeteroData | Data] = None,
-        save_aux_data: bool = True,
         log: bool = False,
         force_reload: bool = False,
         show_progress: bool = True,
@@ -77,36 +76,34 @@ class BaseDrive(InMemoryDataset):
         ), "Domain or problem paths are None."
         assert self.domain_path.exists() and self.domain_path.is_file()
         assert self.problem_path.exists() and self.problem_path.is_file()
+        self.problem: XProblem | None = None
         self.encoder_factory = encoder_factory
         self.encoder = None
         self.reward_function = reward_function or getattr(env, "reward_function")
-        self.desc: Optional[str] = None
-        self.env = env
+        self._maybe_env: PlanningEnvironment | ExpandedStateSpaceEnvLoader | None = env
+        self._env: PlanningEnvironment | None = None
+        self._space: XStateSpace | None = None
         self.device = device
         self.space_options = space_options
-        self.save_aux_data = save_aux_data
         self.show_progress = show_progress
+        self._data_cache = dict()
         self.logging_kwargs = logging_kwargs  # will be removed after process(), otherwise pickling not possible
-        metadata_hash = persistent_hash(self.metadata.__dict__.values())
+        metadata_hash = persistent_hash(self.metadata.values())
         root_dir = Path(root_dir) / metadata_hash
-        self.metadata_path: Path = Path(root_dir) / (
-            str(splitext(self.processed_file_names[0])[0]) + ".meta.pt"
-        )
-        if self.metadata_path.exists():
-            # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
-            # data will align with our expectations.
-            loaded_metadata, self.desc, *_ = self._load_metadata()
-            if mismatch_desc := self._metadata_misaligned(loaded_metadata):
+        # initialize klepto store for modular persistence
+        os.makedirs(root_dir / "database", exist_ok=True)
+        self.metabase = shelve.open(str(root_dir / "database"), flag="c")
+        # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
+        # data will align with our expectations.
+        self.desc: Optional[str] = None
+
+        if metadata := self.try_get_data("meta"):
+            self.desc = metadata.get("desc", None)
+            if mismatch_desc := self._metadata_misaligned(metadata):
                 logging.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
-        if self.save_aux_data:
-            self.aux_data_path = Path(root_dir) / (
-                str(splitext(self.processed_file_names[0])[0]) + ".graph.pt"
-            )
-        else:
-            self.aux_data_path = None
 
         super().__init__(
             root=str(root_dir.absolute()),
@@ -116,13 +113,117 @@ class BaseDrive(InMemoryDataset):
             log=log,
             force_reload=force_reload,
         )
-        del (
-            self.env
-        )  # avoid pickling the un-pickleable env object by simply removing it
         self.load(self.processed_paths[0])
+
+    def try_get_data(self, key: str) -> dict[str, Any] | None:
+        r"""Attempts to retrieve metadata from the metabase."""
+        try:
+            if key in self._data_cache:
+                # if we have already loaded this key, return the cached value
+                return self._data_cache[key]
+            data = self.metabase[key]
+            self._data_cache[key] = data
+            return data
+        except KeyError:
+            keytree = self._metabase_keytree()
+            key_parts = key.split(".")
+            for part in key_parts:
+                if part not in keytree:
+                    return None
+                keytree = keytree[part]
+            return self._retrieve_data_from_keytree(key_parts, keytree)
+
+    def _metabase_keytree(self):
+        """
+        Build a nested dict of the key hierarchy without loading any values.
+        Leaves are marked as None.
+        """
+        tree = {}
+        for full_key in self.metabase.keys():
+            parts = full_key.split(".")
+            current = tree
+            for part in parts[:-1]:
+                current = current.setdefault(part, {})
+            # mark last part as a leaf with None
+            current[parts[-1]] = None
+        return tree
+
+    def _retrieve_data_from_keytree(
+        self, key_parts: List[str], keytree: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Given:
+          key_parts — the path down to this subtree (as list of fragments),
+          keytree   — the subtree dict where leaves are None,
+        returns a nested dict of the same shape, but with each leaf replaced
+        by self.metabase['.'.join(full path)].
+        """
+        result: dict[str, Any] = {}
+        for part, subtree in keytree.items():
+            full_path = key_parts + [part]
+            full_key = ".".join(full_path)
+            if subtree is None:
+                # leaf: load the actual value
+                result[part] = self.metabase.get(full_key)
+            else:
+                # branch: recurse deeper
+                result[part] = self._retrieve_data_from_keytree(full_path, subtree)
+        return result
+
+    @property
+    def env(self) -> PlanningEnvironment | ExpandedStateSpaceEnv | None:
+        if self._env is not None:
+            return self._env
+
+        if self._maybe_env is not None:
+            env = self._maybe_env
+            self._maybe_env = None  # clear the maybe_env to avoid reloading
+            if isinstance(env, ExpandedStateSpaceEnvLoader):
+                try:
+                    env = env()
+                except KeyError:
+                    # this is not a problem for which we can load the environment,
+                    # perhaps the space is too large or the environment is not available.
+                    # We continue without, perhaps a deriving drive class can handle this.
+                    env = None
+            elif not isinstance(env, PlanningEnvironment):
+                raise ValueError(
+                    f"`env` is not an instance of {PlanningEnvironment.__class__}. Given: {type(env)}"
+                )
+            if env is None:
+                logging.warning(
+                    "ExpandedStateSpaceEnvLoader returned None, "
+                    "perhaps the space is too large."
+                )
+            self._env = env
+            return self._env
+        space = self._make_space()
+        self._space = space
+        env = ExpandedStateSpaceEnv(
+            space,
+            batch_size=torch.Size((len(space),)),
+            reset_strategy=IteratingReset(),
+            reward_function=self.reward_function,
+            reset=True,
+        )
+        self._env = env
+        return self._env
 
     def __str__(self):
         return self.desc
+
+    def _load(self):
+        r"""Loads the dataset from the processed file."""
+        if not self.processed_paths:
+            raise RuntimeError(
+                "Dataset not processed yet. Call `process()` before loading."
+            )
+        # avoid pickling un-pickleable pymimir objects by simply removing it
+        del self._env
+        del self._maybe_env
+        del self._space
+        del self.problem
+        self.load(self.processed_paths[0])
 
     def load(self, path: str, data_cls: Type[BaseData] = Data) -> None:
         r"""Loads the dataset from the file path :obj:`path`."""
@@ -139,39 +240,27 @@ class BaseDrive(InMemoryDataset):
         else:
             self.data = data_cls.from_dict(data)
 
-    @property
-    def env_aux_data(self):
-        if self.aux_data_path is not None and self.aux_data_path.exists():
-            with open(self.aux_data_path, "rb") as file:
-                aux_data = pickle.load(file)
-            return aux_data
-        warnings.warn(
-            f"Drive object has no auxiliary data path set ({self.aux_data_path = }) or "
-            f"the data does not exist ({self.aux_data_path.exists() = }. "
-        )
-        return None
-
-    def _metadata_misaligned(self, meta: BaseDriveMetadata) -> str:
-        if self.__class__ != meta.class_:
-            return f"Class: given={self.__class__} != loaded={meta.class_}"
+    def _metadata_misaligned(self, meta: dict) -> str:
+        if self.__class__ != meta["class_"]:
+            return f"Class: given={self.__class__} != loaded={meta['class_']}"
         if (
             self.encoder_factory is not None
-            and self.encoder_factory != meta.encoder_factory
+            and self.encoder_factory != meta["encoder_factory"]
         ):
-            return f"encoder_factory: given={self.encoder_factory} != loaded={meta.encoder_factory}"
-        if self.reward_function != meta.reward_function:
-            return f"reward_function: given={self.reward_function} != loaded={meta.reward_function}"
-        if (our_file := self.domain_path.read_text()) != meta.domain_content:
-            return f"domain: given={our_file} != loaded={meta.domain_content}"
-        if (our_file := self.problem_path.read_text()) != meta.problem_content:
-            return f"problem: given={our_file} != loaded={meta.problem_content}"
-        if self.space_options != meta.space_options:
-            return f"space_options: given={self.space_options} != loaded={meta.space_options}"
+            return f"encoder_factory: given={self.encoder_factory} != loaded={meta['encoder_factory']}"
+        if self.reward_function != meta["reward_function"]:
+            return f"reward_function: given={self.reward_function} != loaded={meta['reward_function']}"
+        if (our_file := self.domain_path.read_text()) != meta["domain_content"]:
+            return f"domain: given={our_file} != loaded={meta['domain_content']}"
+        if (our_file := self.problem_path.read_text()) != meta["problem_content"]:
+            return f"problem: given={our_file} != loaded={meta['problem_content']}"
+        if self.space_options != meta["space_options"]:
+            return f"space_options: given={self.space_options} != loaded={meta['space_options']}"
         return ""
 
     @property
-    def metadata(self) -> BaseDriveMetadata:
-        return BaseDriveMetadata(
+    def metadata(self) -> dict:
+        return dict(
             class_=self.__class__,
             encoder_factory=self.encoder_factory,
             reward_function=self.reward_function,
@@ -197,69 +286,79 @@ class BaseDrive(InMemoryDataset):
             raise ValueError(
                 "Encoder factory must be provided when data has not been processed prior."
             )
-        if self.env is not None:
-            env = self.env
-            if isinstance(env, ExpandedStateSpaceEnvLoader):
-                env = env()
-            if not isinstance(env, ExpandedStateSpaceEnv):
-                raise ValueError(
-                    f"`env` is not an instance of ExpandedStateSpaceEnv. Given: {type(env)}"
-                )
-            space = env.active_instances[0]
-        else:
-            space = self._make_space()
-            env = ExpandedStateSpaceEnv(
-                space,
-                batch_size=torch.Size((len(space),)),
-                reset_strategy=IteratingReset(),
-                reward_function=self.reward_function,
-                reset=True,
-            )
+
+        space = self._make_space()
+        data_list = self._build()
         self._set_desc(space)
-
-        if self.save_aux_data:
-            aux = self._make_env_aux_data(env)
-            with open(self.aux_data_path, "wb") as file:
-                pickle.dump(aux, file)
-
-        data_list = self._build(env)
-
-        self._save_metadata(self.desc)
+        self._save_metadata(desc=self.desc)
 
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
-            f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+            f"(problem: {self.problem.name} / {Path(self.problem.filepath).stem}, space: {space})"
         )
         del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
 
-    def _make_env_aux_data(self, env: ExpandedStateSpaceEnv) -> BaseEnvAuxData:
+    def env_aux_data(self) -> dict:
+        if pyg_env := self.try_get_data("aux.pyg_env"):
+            # if we have already processed the environment, we can simply return the cached data
+            return pyg_env
+        env = self.env
         space = env.active_instances[0]
         logger = self._get_logger()
         logger.info(
             f"Auxiliary Data ({BaseDrive.__name__}: "
             f"problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
         )
-        data = BaseEnvAuxData(env.to_pyg_data(0))
+        pyg_env = env.to_pyg_data(0)
         logger.info(f"Auxiliary Data ({BaseDrive.__name__}): Finished.")
-        return data
+        self._save_aux_data(pyg_env=pyg_env)
+        return self.try_get_data("aux.pyg_env")
 
-    def _save_metadata(self, *extras):
-        with open(self.metadata_path, "wb") as file:
-            pickle.dump((self.metadata, *extras), file)
+    def _save_aux_data(self, **aux_data):
+        r"""Saves auxiliary data to the metabase."""
+        for key, value in aux_data.items():
+            self.metabase[f"aux.{key}"] = value
 
-    def _load_metadata(
-        self,
-    ) -> tuple[BaseDriveMetadata] | tuple[BaseDriveMetadata, Any, ...]:
-        with open(self.metadata_path, "rb") as file:
-            loaded_metadata, *extras = pickle.load(file)
+    def _save_metadata(self, **extras):
+        metad = self.metadata | extras
+        assert not callable(metad), (
+            "Metadata must not be a callable, "
+            "it should be a dataclass/dict instance."
+        )
+        try:
+            for key, value in metad.items():
+                self.metabase[f"meta.{key}"] = value
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.metabase.clear()
+            raise RuntimeError(
+                f"Failed to save metadata to metabase at {Path(self.metabase.archive.name)}. "
+                "Please check the file permissions or disk space."
+            ) from e
 
-        return (loaded_metadata, *extras)
+    def _set_desc(self, space: xmi.XStateSpace | None):
+        if space is None:
+            if hasattr(self, "problem"):
+                problem = self.problem
+            else:
+                _, problem = parse(self.domain_path, self.problem_path)
+        else:
+            problem = space.problem
+        self.desc = f"{self.__class__.__name__}({problem.name}, {problem.filepath}, state_space={str(space)})"
 
-    def _set_desc(self, space: xmi.XStateSpace):
-        self.desc = f"{self.__class__.__name__}({space.problem.name}, {space.problem.filepath}, state_space={str(space)})"
+    def _space_from_env(self):
+        r"""Returns the state space from the environment."""
+        if self.env is None:
+            raise RuntimeError(
+                "Environment is not set. Please set `env` before calling this method."
+            )
+        return self.env.active_instances[0]
 
     def _make_space(self):
+        if self._space is not None:
+            return self._space
         space = xmi.XStateSpace(
             str(self.domain_path.absolute()),
             str(self.problem_path.absolute()),
@@ -268,7 +367,7 @@ class BaseDrive(InMemoryDataset):
         return space
 
     @abstractmethod
-    def _build(self, env: ExpandedStateSpaceEnv) -> List[HeteroData]: ...
+    def _build(self) -> List[HeteroData]: ...
 
     def _get_logger(self):
         if self.logging_kwargs is not None:
@@ -301,11 +400,11 @@ class BaseDrive(InMemoryDataset):
         InMemoryDataset forgot the poor HeteroData objects, logic is equivalent.
         """
         data = self.__dict__.get("_data")
-        if isinstance(data, HeteroData) and key in data:
+        if isinstance(data, (Data, HeteroData)) and key in data:
             if self._indices is None and data.__inc__(key, data[key]) == 0:
                 return data[key]
             else:
                 data_list = [self.get(i) for i in self.indices()]
                 return Batch.from_data_list(data_list)[key]
         else:
-            return super().__getattr__(key)
+            return object.__getattribute__(self, key)
