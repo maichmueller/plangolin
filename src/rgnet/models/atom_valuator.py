@@ -11,6 +11,7 @@ from rgnet.utils.misc import num_nodes_per_entry, tolist
 from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import atom_str_template
 
+from .attention_aggr import AttentionAggregation
 from .hetero_gnn import simple_mlp
 from .mixins import DeviceAwareMixin
 from .patched_module_dict import PatchedModuleDict
@@ -94,10 +95,14 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
                 self.pooling = torch_geometric.nn.global_mean_pool
             case "max":
                 self.pooling = torch_geometric.nn.global_max_pool
+            case "attention":
+                self.pooling = AttentionAggregation(
+                    feature_size=feature_size, num_heads=1, split_features=True
+                )
             case _:
                 raise ValueError(
                     f"Unknown state pooling function: {pooling}. "
-                    f"Choose from [sum, add, max, mean]."
+                    f"Choose from [sum, add, max, mean, attention]."
                 )
         self.feature_size = feature_size
         self.assert_output = assert_output
