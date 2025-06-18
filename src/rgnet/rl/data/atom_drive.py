@@ -14,7 +14,11 @@ from tqdm.asyncio import tqdm_asyncio
 import xmimir as xmi
 from rgnet.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
 from rgnet.logging_setup import tqdm
-from rgnet.rl.envs import ExpandedStateSpaceEnv, SuccessorEnvironment
+from rgnet.rl.envs import (
+    ExpandedStateSpaceEnv,
+    PlanningEnvironment,
+    SuccessorEnvironment,
+)
 from rgnet.utils.misc import KeyAwareDefaultDict
 from xmimir import XAtom, XCategory, XState, XStateSpace, XSuccessorGenerator, parse
 from xmimir.iw import CollectorHook, IWSearch
@@ -325,15 +329,7 @@ class PartialAtomDrive(AtomDrive):
         self.iw_search = iw_search
         self.num_states = num_states
         self.seed = seed
-        domain, problem = parse(self.domain_path, self.problem_path)
-        successor_gen = XSuccessorGenerator(problem)
-        env = SuccessorEnvironment(
-            generators=[successor_gen],
-            reward_function=self.reward_function,
-            reset=True,
-            batch_size=1,
-        )
-        kwargs["env"] = env
+        kwargs["env"] = None
         super().__init__(*args, **kwargs)
 
     @property
@@ -344,6 +340,24 @@ class PartialAtomDrive(AtomDrive):
             expansion_iw_search=self.iw_search,
             **super().metadata,
         )
+
+    def get_space(self):
+        return None
+
+    @property
+    def env(self) -> PlanningEnvironment | ExpandedStateSpaceEnv | None:
+        if self._env is not None:
+            return self._env
+        domain, problem = parse(self.domain_path, self.problem_path)
+        successor_gen = XSuccessorGenerator(problem)
+        env = SuccessorEnvironment(
+            generators=[successor_gen],
+            reward_function=self.reward_function,
+            reset=True,
+            batch_size=1,
+        )
+        self._env = env
+        return env
 
     def _metadata_misaligned(self, meta: dict) -> str:
         if not super()._metadata_misaligned(meta):

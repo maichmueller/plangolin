@@ -91,8 +91,9 @@ class BaseDrive(InMemoryDataset):
         metadata_hash = persistent_hash(self.metadata.values())
         root_dir = Path(root_dir) / metadata_hash
         # initialize klepto store for modular persistence
-        os.makedirs(root_dir / "database", exist_ok=True)
-        self.metabase = shelve.open(str(root_dir / "database"), flag="c")
+        self.metabase_path = root_dir / "database"
+        os.makedirs(self.metabase_path, exist_ok=True)
+        self.metabase = shelve.open(str(self.metabase_path), flag="c")
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.
         self.desc: Optional[str] = None
@@ -197,8 +198,7 @@ class BaseDrive(InMemoryDataset):
                 )
             self._env = env
             return self._env
-        space = self._make_space()
-        self._space = space
+        space = self.get_space()
         env = ExpandedStateSpaceEnv(
             space,
             batch_size=torch.Size((len(space),)),
@@ -287,14 +287,13 @@ class BaseDrive(InMemoryDataset):
                 "Encoder factory must be provided when data has not been processed prior."
             )
 
-        space = self._make_space()
         data_list = self._build()
-        self._set_desc(space)
+        self._set_desc()
         self._save_metadata(desc=self.desc)
 
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
-            f"(problem: {self.problem.name} / {Path(self.problem.filepath).stem}, space: {space})"
+            f"(problem: {self.problem.name} / {Path(self.problem.filepath).stem}, space: {self.get_space()})"
         )
         del self.logging_kwargs
         self.save(data_list, self.processed_paths[0])
@@ -334,19 +333,16 @@ class BaseDrive(InMemoryDataset):
         except Exception as e:
             self.metabase.clear()
             raise RuntimeError(
-                f"Failed to save metadata to metabase at {Path(self.metabase.archive.name)}. "
+                f"Failed to save metadata to metabase at {self.metabase_path}. "
                 "Please check the file permissions or disk space."
             ) from e
 
-    def _set_desc(self, space: xmi.XStateSpace | None):
-        if space is None:
-            if hasattr(self, "problem"):
-                problem = self.problem
-            else:
-                _, problem = parse(self.domain_path, self.problem_path)
+    def _set_desc(self):
+        if hasattr(self, "problem"):
+            problem = self.problem
         else:
-            problem = space.problem
-        self.desc = f"{self.__class__.__name__}({problem.name}, {problem.filepath}, state_space={str(space)})"
+            _, problem = parse(self.domain_path, self.problem_path)
+        self.desc = f"{self.__class__.__name__}({problem.name}, {problem.filepath}, state_space={str(self.get_space())})"
 
     def _space_from_env(self):
         r"""Returns the state space from the environment."""
@@ -356,7 +352,7 @@ class BaseDrive(InMemoryDataset):
             )
         return self.env.active_instances[0]
 
-    def _make_space(self):
+    def get_space(self):
         if self._space is not None:
             return self._space
         space = xmi.XStateSpace(
@@ -364,6 +360,7 @@ class BaseDrive(InMemoryDataset):
             str(self.problem_path.absolute()),
             **(self.space_options or dict()),
         )
+        self._space = space
         return space
 
     @abstractmethod

@@ -51,8 +51,8 @@ class FlashDrive(BaseDrive):
             iw_search=self.iw_search,
         )
 
-    def _make_space(self):
-        space = super()._make_space()
+    def get_space(self):
+        space = super().get_space()
         if self.iw_search is not None and self.iw_search.width > 0:
             space = IWStateSpace(self.iw_search, space, **self.iw_options)
         return space
