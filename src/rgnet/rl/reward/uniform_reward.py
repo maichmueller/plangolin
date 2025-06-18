@@ -162,6 +162,4 @@ class DiscountedMacroReward(UnitReward):
 
     def _reward_macro(self, transition: XTransition, label: StateLabel):
         n = len(transition.action) - 1
-        if n == 0:
-            raise ValueError("Cannot compute reward for 0-length macro.")
         return self.regular_reward * (2 - self.gamma**n)
