@@ -1,4 +1,11 @@
 #!/usr/bin/env python
+import torch._dynamo
+
+torch._dynamo.config.suppress_errors = True  # keep runtime errors from killing compile
+
+# import torch.multiprocessing as mp
+#
+# mp.set_start_method("spawn", force=True)
 
 import argparse
 import logging
@@ -16,8 +23,8 @@ def increase_resource_limit():
     import resource
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    if soft < 3e4:
-        new_soft = int(3e4)
+    if soft != hard:
+        new_soft = hard
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
         logging.info(
             f"Changing resource limits to: [{soft = } --> {new_soft = }, {hard = }]"
@@ -40,18 +47,22 @@ def cli_main():
     cli_name = known_args.cli.lower()
     if cli_name not in CLI_REGISTRY:
         print(f"Unknown CLI name: {cli_name}. Available: {list(CLI_REGISTRY.keys())}")
-        sys.exit(1)
+        exit(1)
 
     # Delay heavy imports until after CLI selection
     import torch
 
     CLI_CLASS = CLI_REGISTRY[cli_name]
     torch.set_float32_matmul_precision("medium")
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    # use the default file descriptor–based sharing to avoid mmap exhaustion
+    torch.multiprocessing.set_sharing_strategy("file_descriptor")
+    # torch.multiprocessing.set_sharing_strategy("file_system")
     logging.info(f"Running CLI: {CLI_CLASS.__name__}")
     cli = CLI_CLASS(args=remaining_args)  # Run the correct CLI
 
 
 if __name__ == "__main__":
+    # with torch.autograd.profiler.emit_nvtx():
+    torch.multiprocessing.set_start_method("spawn", force=True)
     increase_resource_limit()
     cli_main()
