@@ -45,7 +45,7 @@ class AttentionAggregation(torch_geometric.nn.Aggregation):
         self.dim_normalize_constant = 1.0 / math.sqrt(self.feature_size)
 
         if self.num_heads > 1:
-            self.project = torch.nn.Linear(num_heads * feature_size, feature_size)
+            self.project = torch.nn.Linear(num_heads * self.feature_size, feature_size)
 
     def forward(
         self,
