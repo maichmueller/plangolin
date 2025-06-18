@@ -5,7 +5,7 @@ import logging
 import time
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
 
 import torch
 from lightning import LightningDataModule
@@ -41,8 +41,11 @@ class ThundeRLDataModule(LightningDataModule):
         collate_kwargs: Optional[Dict[str, Any]] = None,
         drive_type: type[BaseDrive] = FlashDrive,
         drive_kwargs: Optional[Dict[str, Any]] = None,
+        test_drive_type: type[BaseDrive] = None,
+        test_drive_kwargs: Optional[Dict[str, Any]] = None,
         train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         validation_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        test_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         parallel: bool = True,
         balance_by_attr: str = "",
         max_cpu_count: Optional[int] = None,
@@ -57,6 +60,9 @@ class ThundeRLDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.parallel = parallel
         self.drive_type = drive_type
+        self.test_drive_type = test_drive_type or drive_type
+        self.drive_kwargs = drive_kwargs or dict()
+        self.test_drive_kwargs = test_drive_kwargs or dict()
         self.train_dataloader_kwargs = (
             dict(num_workers=6)
             | (train_dataloader_kwargs or dict())
@@ -66,17 +72,22 @@ class ThundeRLDataModule(LightningDataModule):
             num_workers=2,
             batch_size=batch_size,
         ) | (validation_dataloader_kwargs or dict())
+        self.test_dataloader_kwargs = dict(
+            num_workers=2,
+            batch_size=batch_size,
+        ) | (test_dataloader_kwargs or dict())
         self.encoder_factory = encoder_factory
         self.balance_by_attr = balance_by_attr
         self.max_cpu_count = max_cpu_count
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
-        self.drive_kwargs = drive_kwargs or dict()
+        self.test_sets: Sequence[Dataset] = []
         self.collate_fn = collate_fn
         self.collate_kwargs = collate_kwargs or dict()
         self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
-            input_data.problem_paths + input_data.validation_problem_paths, self.get_env
+            input_data.problem_paths + (input_data.validation_problem_paths or []),
+            self.get_env,
         )
         # whether to skip the data preparation step completely (e.g. for testing)
         self.skip = skip
@@ -133,7 +144,12 @@ class ThundeRLDataModule(LightningDataModule):
         else:
             return ExpandedStateSpaceEnv(space, reset=True)
 
-    def load_datasets(self, problem_paths: Sequence[Path]) -> Dict[Path, Dataset]:
+    def load_datasets(
+        self,
+        problem_paths: Sequence[Path],
+        drive_types: Sequence[Type[BaseDrive]] | None = None,
+        drive_types_kwargs: Sequence[Dict[str, Any]] | None = None,
+    ) -> Dict[Path, Dataset]:
         nr_total = len(problem_paths)
         completed = 0
 
@@ -146,7 +162,14 @@ class ThundeRLDataModule(LightningDataModule):
             )
 
         datasets: Dict[Path, BaseDrive] = dict()
-        drive_kwargs = self.drive_kwargs | dict(
+        drive_types = drive_types or [self.drive_type] * len(
+            problem_paths
+        )  # assume all the same drive type if missing
+        drive_types_kwargs = drive_types_kwargs or [self.drive_kwargs] * len(
+            problem_paths
+        )  # assume all the same drive kwargs if missing
+        assert len(drive_types) == len(problem_paths) == len(drive_types_kwargs)
+        drive_extra_kwargs = dict(
             domain_path=self.data.domain_path,
             reward_function=self.reward_function,
             logging_kwargs=None,
@@ -155,10 +178,10 @@ class ThundeRLDataModule(LightningDataModule):
         start_time = time.time()
         if self.parallel and len(problem_paths) > 1:
 
-            def enqueue_parallel(problem_path: Path, task_id: int):
+            def enqueue_parallel(problem_path: Path, drive_t, drive_kw, task_id: int):
                 return pool.apply_async(
-                    self.drive_type,
-                    kwds=drive_kwargs
+                    drive_t,
+                    kwds=drive_kw
                     | dict(
                         problem_path=problem_path,
                         root_dir=str(self.data.dataset_dir / problem_path.stem),
@@ -180,19 +203,28 @@ class ThundeRLDataModule(LightningDataModule):
                     f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
                 )
                 results = {
-                    problem_path: enqueue_parallel(problem_path, i)
-                    for i, problem_path in enumerate(problem_paths)
+                    problem_path: enqueue_parallel(
+                        problem_path,
+                        drive_t,
+                        drive_kw | drive_extra_kwargs,
+                        i,
+                    )
+                    for i, (problem_path, drive_t, drive_kw) in enumerate(
+                        zip(problem_paths, drive_types, drive_types_kwargs)
+                    )
                 }
                 for problem_path, result in results.items():
                     datasets[problem_path] = result.get()
         else:
-            for problem_path in problem_paths:
-                drive = self.drive_type(
+            for problem_path, drive_t, drive_kw in zip(
+                problem_paths, drive_types, drive_types_kwargs
+            ):
+                drive = drive_t(
                     problem_path=problem_path,
                     root_dir=str(self.data.dataset_dir / problem_path.stem),
                     show_progress=True,
                     env=self.envs(problem_path),
-                    **drive_kwargs,
+                    **(drive_kw | drive_extra_kwargs),
                 )
                 update(drive)
                 datasets[problem_path] = drive
@@ -220,8 +252,9 @@ class ThundeRLDataModule(LightningDataModule):
             return
 
         train_prob_paths: List[Path] = self.data.problem_paths
-        validation_prob_paths: List[Path] | None = self.data.validation_problem_paths
-        problem_paths = train_prob_paths + (validation_prob_paths or [])
+        validation_prob_paths: List[Path] = self.data.validation_problem_paths or []
+        test_problem_paths: List[Path] = self.data.test_problem_paths or []
+        problem_paths = train_prob_paths + validation_prob_paths + test_problem_paths
         logging.info(f"Using #{len(problem_paths)} problems in total.")
         logging.info(
             f"Problems used for TRAINING:\n"
@@ -230,14 +263,36 @@ class ThundeRLDataModule(LightningDataModule):
         validation_string = "-NONE-"
         if validation_prob_paths:
             validation_string = "\n".join(p.stem for p in validation_prob_paths)
+        test_string = "-NONE-"
+        if test_problem_paths:
+            test_string = "\n".join(p.stem for p in test_problem_paths)
+
         logging.info(f"Problems used for VALIDATION:\n{validation_string}")
-        datasets: Dict[Path, Dataset] = self.load_datasets(problem_paths)
+        logging.info(f"Problems used for TESTING:\n{test_string}")
+
+        # the actual work intensive part of this function is loading the datasets
+        datasets: Dict[Path, Dataset] = self.load_datasets(
+            problem_paths,
+            drive_types=[self.drive_type]
+            * (len(train_prob_paths) + len(validation_prob_paths))
+            + [self.test_drive_type] * len(test_problem_paths),
+            drive_types_kwargs=[self.drive_kwargs]
+            * (len(train_prob_paths) + len(validation_prob_paths))
+            + [self.test_drive_kwargs] * len(test_problem_paths),
+        )
+
         train_desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
         logging.info(f"Loaded TRAINING datasets:\n" f"{train_desc}")
         if validation_prob_paths:
             val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
             logging.info(f"Loaded VALIDATION datasets:\n" f"{val_desc}")
-
+        if test_problem_paths:
+            logging.info(
+                f"Loaded TEST datasets:\n"
+                + "\n".join(
+                    str(self.test_sets[p]) for p in self.data.test_problem_paths
+                )
+            )
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
@@ -245,12 +300,13 @@ class ThundeRLDataModule(LightningDataModule):
             self.validation_sets = [
                 datasets[val_problem] for val_problem in validation_prob_paths
             ]
+
         self._data_prepared = True
         if self.exit_after_processing:
             logging.info("Stopping after data processing desired. Exiting now.")
             exit(0)
 
-    def _sampler(self) -> ImbalancedSampler | None:
+    def _imbalanced_sampler(self) -> ImbalancedSampler | None:
         if self.balance_by_attr:
             class_tensor = torch.cat(
                 [
@@ -280,10 +336,20 @@ class ThundeRLDataModule(LightningDataModule):
         return self.validation_sets
 
     @property
+    def test_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.test_sets
+
+    @property
     def datasets(self):
         if not self._data_prepared:
             self.prepare_data()
-        return self.train_datasets + list(self.validation_datasets)
+        return (
+            self.train_datasets
+            + list(self.validation_datasets)
+            + list(self.test_datasets)
+        )
 
     def _sanitize_dataloader_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         # remove any key value combination that are not valid for DataLoader
@@ -298,7 +364,7 @@ class ThundeRLDataModule(LightningDataModule):
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
         defaults = (
             dict(
-                sampler=self._sampler(),
+                sampler=self._imbalanced_sampler(),
                 batch_size=self.batch_size,
                 shuffle=not self.balance_by_attr,
                 collate_fn=self._make_collate(),
@@ -327,4 +393,22 @@ class ThundeRLDataModule(LightningDataModule):
                 **self._sanitize_dataloader_kwargs(defaults | kwargs),
             )
             for dataset in self.validation_sets
+        ]
+
+    def test_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
+        # Order of dataloader should be equal to order of test problems in `InputData`.
+        defaults = (
+            dict(
+                shuffle=False,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+            )
+            | self.test_dataloader_kwargs
+        )
+        return [
+            DataLoader(
+                dataset,
+                **self._sanitize_dataloader_kwargs(defaults | kwargs),
+            )
+            for dataset in self.test_sets
         ]
