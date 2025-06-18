@@ -16,7 +16,7 @@ from torch_geometric.nn.conv.hetero_conv import group
 from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
-from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
+from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.mixins import DeviceAwareMixin
 from rgnet.models.patched_module_dict import PatchedModuleDict
 

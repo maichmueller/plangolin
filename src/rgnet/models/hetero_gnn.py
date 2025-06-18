@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, Union
+import itertools
+from typing import Callable, Dict, Iterable, Optional, Union
 
 import torch
 import torch_geometric as pyg
@@ -11,25 +12,35 @@ from torch_geometric.typing import Adj
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
-from rgnet.models.logsumexp_aggregation import LogSumExpAggregation
+from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
 from rgnet.models.residual import ResidualModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def simple_mlp(
-    in_size: int, embedding_size: int, out_size: int, activation: str | None = None
+    in_size: int,
+    embedding_size: int | Iterable[int],
+    out_size: int,
+    activation: str | None = None,
 ):
     activation = activation or "mish"
-    layer = [
+    if isinstance(embedding_size, Iterable):
+        embedding_sizes = tuple(embedding_size)
+        embedding_size = embedding_sizes[0]
+    else:
+        embedding_sizes = (embedding_size,)
+    layers = [
         torch.nn.Linear(in_size, embedding_size),
         activation_resolver(activation),
-        torch.nn.Linear(embedding_size, embedding_size),
     ]
-    if out_size != embedding_size:
-        layer.append(torch.nn.Linear(embedding_size, out_size))
-
-    return torch.nn.Sequential(*layer)
+    for hidden_in_size, hidden_out_size in itertools.pairwise(embedding_sizes):
+        layers += [
+            torch.nn.Linear(hidden_in_size, hidden_out_size),
+            activation_resolver(activation),
+        ]
+    layers.append(torch.nn.Linear(embedding_sizes[-1], out_size))
+    return torch.nn.Sequential(*layers)
 
 
 class HeteroGNN(PyGHeteroModule):
