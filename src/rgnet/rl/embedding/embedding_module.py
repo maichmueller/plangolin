@@ -1,3 +1,4 @@
+from functools import singledispatchmethod
 from typing import List
 
 import torch
@@ -14,8 +15,8 @@ from rgnet.utils.object_embeddings import ObjectEmbedding
 class EmbeddingModule(torch.nn.Module):
     def __init__(
         self,
-        encoder: GraphEncoderBase,
         embedding_size: int,
+        encoder: GraphEncoderBase,
         gnn: PyGModule | PyGHeteroModule | None = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -25,15 +26,20 @@ class EmbeddingModule(torch.nn.Module):
         self.gnn = gnn
         self.encoder = encoder
 
+    @singledispatchmethod
     def forward(self, states: List[xmi.State] | NonTensorWrapper) -> ObjectEmbedding:
         states = tolist(states)
-        assert isinstance(states, List)
 
         as_batch = Batch.from_data_list(
             [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
         )
         as_batch = as_batch.to(self.device)
         return ObjectEmbedding.from_sparse(*self.gnn(as_batch))
+
+    @forward.register
+    def _(self, states: Batch) -> ObjectEmbedding:
+        """This is the case when the states are already in a Batch."""
+        return ObjectEmbedding.from_sparse(*self.gnn(states))
 
 
 def build_hetero_embedding_and_gnn(

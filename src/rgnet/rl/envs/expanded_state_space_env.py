@@ -105,7 +105,9 @@ def _serialized_action_info(transition):
     return action_data
 
 
-def _state_type(instance: XStateSpace, state: XState, goal: tuple[XLiteral, ...] = ()):
+def _state_type(
+    instance: XStateSpace, state: XState, goal: tuple[XLiteral, ...] = tuple()
+):
     if state.is_goal(goal):
         return StateType.GOAL
     elif instance.initial_state == state:
@@ -264,7 +266,7 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             rewards, done = zip(
                 *(
                     map(
-                        lambda t: t.to(device).view(1, -1),
+                        lambda t: t.view(1, -1).to(device),
                         query_env.get_reward_and_done(
                             state_transitions,
                             instances=[instance] * len(state_transitions),
@@ -279,8 +281,8 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
                     transition_probs(state, state_transitions).float(),
                     rewards,
                 )
-                .to(device)
                 .expand_as(rewards)
+                .to(device)
             )
             transition_indices = list(
                 next(transition_index) for _ in range(len(state_transitions))
@@ -485,11 +487,6 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         serializable: bool,
                 If True, only serializable (pickleable) attributes are used from the state space.
                 This is a lossy encoding.
-        use_space_directly: bool
-               If True, the state space is used directly.
-               Otherwise, the environment is used to traverse the space and generate the graph.
-               This is significantly faster for large state spaces, since default .traverse() functions
-               merely replicate the state space as a tensordict.
         natural_transitions: bool,
             If True, the natural transitions of the state space are used.
             Otherwise, the applicable transitions are used.

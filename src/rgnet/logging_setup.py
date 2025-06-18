@@ -112,7 +112,7 @@ def setup_logger(name="root"):
     return logger
 
 
-def tqdm(x, **log_kwargs):
+def tqdm(x=None, **log_kwargs):
     logger = log_kwargs.pop("logger", logging.getLogger("root"))
     ascii_ = log_kwargs.pop("ascii", False)
     return tqdm_(

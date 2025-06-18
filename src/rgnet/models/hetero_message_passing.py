@@ -118,7 +118,7 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
         self,
         update_modules: Dict[str, torch.nn.Module],
         src_type: str,
-        use_cuda_streams: bool = True,
+        use_cuda_streams: bool = False,
     ) -> None:
         """ """
         super().__init__()
@@ -165,9 +165,9 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
             update_module = self.update_modules[predicate]
             with torch.cuda.stream(self.next_stream()):
                 grouped[predicate] = update_module(stacked)
-        # if self.use_cuda_streams and (cuda_streams := self.cuda_streams) is not None:
-        #     for stream in cuda_streams:
-        #         stream.synchronize()
+        if self.use_cuda_streams and (cuda_streams := self.cuda_streams) is not None:
+            for stream in cuda_streams:
+                stream.synchronize()
         return grouped
 
 
