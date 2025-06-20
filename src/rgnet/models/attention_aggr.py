@@ -52,9 +52,11 @@ class AttentionAggregation(Aggregation):
         self.queries = torch.nn.Linear(self.key_dim, num_heads, bias=False)
         self.scale = 1.0 / math.sqrt(self.key_dim)
 
-        if num_heads > 1:
+        if num_heads > 1 or split_features:
             # to re-project concatenated heads back to feature_size
             self.project = torch.nn.Linear(num_heads * self.value_dim, feature_size)
+        else:
+            self.project = torch.nn.Identity()
 
     def forward(
         self,
@@ -80,10 +82,11 @@ class AttentionAggregation(Aggregation):
             attn = attn.unsqueeze(-1)  # [N, H, 1]
             vals = values.unsqueeze(1).expand(-1, self.num_heads, self.value_dim)
             weighted = attn * vals  # [N, H, D]
-            weighted = weighted.view(x.size(0), -1)  # [N, H*D]
-            out = self.project(weighted)  # [N, F]
+            out = weighted.view(x.size(0), -1)  # [N, H*D]
         else:
             out = attn * values  # [N, D]
+
+        out = self.project(out)  # [N, F]
 
         # sum per graph
         return self.reduce(out, index, ptr, dim_size, dim, reduce="sum")
