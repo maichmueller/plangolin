@@ -282,17 +282,15 @@ class ThundeRLDataModule(LightningDataModule):
         )
 
         train_desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
-        logging.info(f"Loaded TRAINING datasets:\n" f"{train_desc}")
+        logging.info(f"Loaded TRAINING datasets:\n{train_desc}")
         if validation_prob_paths:
             val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
-            logging.info(f"Loaded VALIDATION datasets:\n" f"{val_desc}")
+            logging.info(f"Loaded VALIDATION datasets:\n{val_desc}")
         if test_problem_paths:
-            logging.info(
-                f"Loaded TEST datasets:\n"
-                + "\n".join(
-                    str(self.test_sets[p]) for p in self.data.test_problem_paths
-                )
+            test_desc = "\n".join(
+                str(datasets[p]) for p in self.data.test_problem_paths
             )
+            logging.info(f"Loaded TEST datasets:\n{test_desc}")
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
