@@ -2,26 +2,34 @@ import math
 from typing import Optional
 
 import torch
-import torch_geometric
 from torch import Tensor
+from torch_geometric.nn import Aggregation
 from torch_geometric.utils import softmax
 
 
-class AttentionAggregation(torch_geometric.nn.Aggregation):
+class AttentionAggregation(Aggregation):
     """
-    Attention pooling layer that aggregates node features using attention scores.
+    Attention-based global pooling for graph-level readout.
 
-    Follows the standard attention mechanism where each node's feature is weighted
-    by a learned attention score, allowing the model to focus on the most relevant
-    nodes in the graph. The formula is:
+    Aggregates node features x (shape [N, F]) into graph representations (shape [B, F_out])
+    by computing attention scores per node and performing a weighted sum over nodes in each graph.
 
-    .. math::
-        \text{output} = \sum_{i} softmax(Q * K^T / \sqrt(d)) \cdot x_i
+    Follows a single- or multi-head attention mechanism. Let F be the feature size:
+        scores_h = softmax(Q_h @ K / sqrt(d_k)) * V  # shape [F] for each head h <= H
+        output = W_out @ (scores_0 * values, scores_1 * values, ..., scores_H * values)  # shape [F]
 
-    for a single head attention, where :math:`Q` is the query vector of this head and :math:`x_i`
-    is the feature vector of node :math:`i`. For multiple heads, the output is concatenated across
-    heads (:math:`Q` is a matrix of queries in this case) and then projected back to original feature size.
+    where:
+        - Q is the query matrix, each row the query of that head  # shape [H, F] learnable parameters
+        - K is the key vector of each node
+        - V is the value vector of each node
+        - d_k is the dimension of the key vectors (usually F/2 if split)
+        - W_out is a linear projection to output feature size
 
+    Args:
+        feature_size (int): Dimensionality of node features.
+        num_heads (int, optional): Number of attention heads. Default: 1.
+        split_features (bool, optional): If True, splits features into keys and values halves.
+                                         Otherwise, uses full feature for both. Default: True.
     """
 
     def __init__(
@@ -34,18 +42,19 @@ class AttentionAggregation(torch_geometric.nn.Aggregation):
         self.num_heads = int(num_heads)
         assert self.num_heads >= 1
         self.split_features = split_features
-        if split_features:
-            assert (
-                feature_size % 2 == 0
-            ), "Feature size must be divisible in two halves."
-            self.feature_size = feature_size // 2
-        else:
-            self.feature_size = feature_size
-        self.queries = torch.nn.Linear(self.feature_size, num_heads, bias=False)
-        self.dim_normalize_constant = 1.0 / math.sqrt(self.feature_size)
 
-        if self.num_heads > 1:
-            self.project = torch.nn.Linear(num_heads * self.feature_size, feature_size)
+        if split_features:
+            assert feature_size % 2 == 0
+            self.key_dim = self.value_dim = feature_size // 2
+        else:
+            self.key_dim = self.value_dim = feature_size
+
+        self.queries = torch.nn.Linear(self.key_dim, num_heads, bias=False)
+        self.scale = 1.0 / math.sqrt(self.key_dim)
+
+        if num_heads > 1:
+            # to re-project concatenated heads back to feature_size
+            self.project = torch.nn.Linear(num_heads * self.value_dim, feature_size)
 
     def forward(
         self,
@@ -55,23 +64,43 @@ class AttentionAggregation(torch_geometric.nn.Aggregation):
         dim_size: Optional[int] = None,
         dim: int = -2,
         max_num_elements: Optional[int] = None,
-    ) -> Tensor:
+    ) -> torch.Tensor:
+        # split into keys & values
         if self.split_features:
-            keys = x[..., : self.feature_size]
-            values = x[..., self.feature_size :]
+            keys, values = x[:, : self.key_dim], x[:, self.key_dim :]
         else:
             keys = values = x
-        scores = self.queries(keys) * self.dim_normalize_constant
-        scores = softmax(scores, index, ptr, dim_size, dim)
+
+        # compute & normalize attention scores
+        scores = self.queries(keys) * self.scale
+        attn = softmax(scores, index, ptr, dim_size, dim)
+
+        # weight values
         if self.num_heads > 1:
-            scores = scores.view(-1, self.num_heads, 1)
-            values = values.unsqueeze(1).expand(-1, self.num_heads, self.feature_size)
-            # this is why we need to have evenly splittable feature sizes,
-            # the elementwise multiplication would not work otherwise
-            att_values = scores * values
-            att_values = self.project(
-                att_values.view(-1, self.num_heads * self.feature_size)
-            )
+            attn = attn.unsqueeze(-1)  # [N, H, 1]
+            vals = values.unsqueeze(1).expand(-1, self.num_heads, self.value_dim)
+            weighted = attn * vals  # [N, H, D]
+            weighted = weighted.view(x.size(0), -1)  # [N, H*D]
+            out = self.project(weighted)  # [N, F]
         else:
-            att_values = scores * values
-        return self.reduce(att_values, index, ptr, dim_size, dim, reduce="sum")
+            out = attn * values  # [N, D]
+
+        # sum per graph
+        return self.reduce(out, index, ptr, dim_size, dim, reduce="sum")
+
+
+class AttentionPooling(torch.nn.Module):
+    def __init__(
+        self,
+        feature_size: int,
+        num_heads: int = 1,
+        split_features: bool = True,
+    ) -> None:
+        super().__init__()
+        self.aggregator = AttentionAggregation(feature_size, num_heads, split_features)
+
+    def forward(
+        self, x: torch.Tensor, batch: torch.Tensor, size: int | None = None
+    ) -> torch.Tensor:
+        # batch: [N] tensor mapping each node to its graph in the batch
+        return self.aggregator(x, index=batch, dim_size=size)
