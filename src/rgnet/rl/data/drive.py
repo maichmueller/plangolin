@@ -1,3 +1,4 @@
+import atexit
 import logging
 import os
 import shelve
@@ -40,6 +41,9 @@ class BaseEnvAuxData:
 
 
 class BaseDrive(InMemoryDataset):
+    # cache of open shelve databases by path
+    _shelves: dict[str, shelve.Shelf] = {}
+
     def __init__(
         self,
         root_dir: Path | str,
@@ -93,13 +97,17 @@ class BaseDrive(InMemoryDataset):
         # initialize klepto store for modular persistence
         self.metabase_path = root_dir / "database.db"
         os.makedirs(root_dir, exist_ok=True)
-        self.metabase = shelve.open(str(self.metabase_path), flag="c")
+        # reuse an already-opened shelve or open and cache it
+        dbfile = str(self.metabase_path)
+        shelf = BaseDrive._shelves.get(dbfile)
+        if shelf is None:
+            shelf = shelve.open(dbfile, flag="c")
+            BaseDrive._shelves[dbfile] = shelf
+        self.metabase = shelf
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.
-        self.desc: Optional[str] = None
-
+        self.desc: Optional[str] = self.try_get_data("desc")
         if metadata := self.try_get_data("meta"):
-            self.desc = metadata.get("desc", None)
             if mismatch_desc := self._metadata_misaligned(metadata):
                 logging.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
@@ -115,6 +123,18 @@ class BaseDrive(InMemoryDataset):
             force_reload=force_reload,
         )
         self.load(self.processed_paths[0])
+
+    @classmethod
+    def close_all_metabases(cls):
+        """
+        Close all open shelve databases and clear the cache.
+        """
+        for shelf in cls._shelves.values():
+            try:
+                shelf.close()
+            except Exception:
+                pass
+        cls._shelves.clear()
 
     def try_get_data(self, key: str) -> dict[str, Any] | None:
         r"""Attempts to retrieve metadata from the metabase."""
@@ -343,6 +363,7 @@ class BaseDrive(InMemoryDataset):
         else:
             _, problem = parse(self.domain_path, self.problem_path)
         self.desc = f"{self.__class__.__name__}({problem.name}, {problem.filepath}, state_space={str(self.get_space())})"
+        self.metabase["desc"] = self.desc
 
     def _space_from_env(self):
         r"""Returns the state space from the environment."""
@@ -405,3 +426,7 @@ class BaseDrive(InMemoryDataset):
                 return Batch.from_data_list(data_list)[key]
         else:
             return object.__getattribute__(self, key)
+
+
+# ensure all open shelves get closed when Python exits
+atexit.register(BaseDrive.close_all_metabases)
