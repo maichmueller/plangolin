@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from enum import Enum
 from itertools import chain
 from pathlib import Path
-from typing import Iterable, List, Mapping, MutableMapping
+from typing import Iterable, List, Mapping, MutableMapping, Sequence
 
 import numpy as np
 import torch
@@ -13,6 +13,7 @@ from tqdm.asyncio import tqdm_asyncio
 
 import xmimir as xmi
 from rgnet.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
+from rgnet.encoding import GraphEncoderBase
 from rgnet.logging_setup import tqdm
 from rgnet.rl.envs import (
     ExpandedStateSpaceEnv,
@@ -20,7 +21,15 @@ from rgnet.rl.envs import (
     SuccessorEnvironment,
 )
 from rgnet.utils.misc import KeyAwareDefaultDict
-from xmimir import XAtom, XCategory, XState, XStateSpace, XSuccessorGenerator, parse
+from xmimir import (
+    XAtom,
+    XCategory,
+    XState,
+    XStateSpace,
+    XSuccessorGenerator,
+    gather_objects,
+    parse,
+)
 from xmimir.iw import CollectorHook, IWSearch
 from xmimir.wrappers import CustomProblem, XLiteral, XProblem
 
@@ -136,29 +145,58 @@ class AtomDrive(BaseDrive):
         # Each data object represents one state
         states = list(space)
         atom_values = self._compute_atom_dists(env, states)
-        if self.store_values_as_tensor:
-            if isinstance(atom_values, dict):
-                atom_values = self.atom_value_dict_to_tensor(atom_values)
-        else:
-            if isinstance(atom_values, torch.Tensor):
-                atom_values = self.atom_tensor_to_dict(atom_values)
-        batched_data = self._encode(env, encoder, atom_values, states, nr_states)
+        match atom_values:
+            case dict():
+                atom_values_dict = list(atom_values.values())
+                atom_values_tensor = atom_value_dict_to_tensor(
+                    atom_values, self.atom_to_index_map
+                )
+            case torch.Tensor():
+                atom_values_dict = atom_tensor_to_dict(
+                    atom_values, self.atom_to_index_map, self.index_to_atom_map
+                )
+                atom_values_tensor = atom_values
+            case _:
+                raise ValueError(f"Unsupported atom values type: {type(atom_values)}")
+
+        batched_data = self._encode(
+            env, encoder, atom_values_dict, atom_values_tensor, states, nr_states
+        )
         logger.info(
             f"Finished {self.__class__.__name__} "
             f"(problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
         )
         return batched_data
 
-    def _encode(self, env, encoder, atom_values, states, nr_states):
+    def _encode(
+        self,
+        env: PlanningEnvironment,
+        encoder: GraphEncoderBase,
+        atom_values_dicts: list[dict[str, float]],
+        atom_values_tensor: torch.Tensor,
+        states: Sequence[XState],
+        nr_states: int,
+    ):
         instance = env.active_instances[0]
         transitions = env.get_applicable_transitions(
             states, instances=[instance] * len(states)
         )
-        iterator = zip(states, atom_values, transitions)
+        iterator = zip(
+            states,
+            atom_values_dicts,
+            atom_values_tensor,
+            transitions,
+        )
+        atom_to_index_map = self.atom_to_index_map
         if self.show_progress:
             iterator = tqdm(iterator, total=nr_states, desc="Encoding states")
         batched_data = dict()
-        for state, state_atom_values, state_transitions in iterator:
+        for (
+            state,
+            state_atom_values_dict,
+            state_atom_values_tensor,
+            state_transitions,
+        ) in iterator:
             data = encoder.to_pyg_data(encoder.encode(state))
             reward, done = env.get_reward_and_done(
                 state_transitions, instances=[instance] * len(state_transitions)
@@ -166,7 +204,22 @@ class AtomDrive(BaseDrive):
             data.reward = reward
             data.idx = state.index
             data.done = done
-            data.atom_values = state_atom_values
+            data.object_count = len(gather_objects(state))
+            atom_str_keys = {str(a) for a in state_atom_values_dict.keys()}
+            if missing_atoms := atom_to_index_map.keys() - atom_str_keys:
+                # If some atoms are not present in the state, set their values to the correct +- inf
+                if self.atom_value_method == AtomValueMethod.MESSAGE_PASSING:
+                    default = self.mp_module.init_reward
+                else:
+                    default = float("inf")
+                # convert XAtom keys to str
+                values_dict = {str(a): v for a, v in state_atom_values_dict.items()}
+                for atom in missing_atoms:
+                    values_dict[atom] = default
+            else:
+                values_dict = state_atom_values_dict
+            data.atom_values_dict = values_dict
+            data.atom_values_tensor = state_atom_values_tensor
             batched_data[state.index] = data
         return sorted(batched_data.values(), key=lambda d: d.idx)
 
@@ -194,6 +247,7 @@ class AtomDrive(BaseDrive):
                     atom_to_index_map=self.atom_to_index_map,
                     aggr="max",
                 )
+                self.mp_module = mp_module
                 pyg_data = self._make_atom_pyg_env(env, atoms=atoms)
                 pyg_data.atoms_per_state = [
                     list(state.atoms(with_statics=False)) for state in states
@@ -317,19 +371,14 @@ class PartialAtomDrive(AtomDrive):
         *args,
         iw_search: IWSearch,
         num_states: int = 0,
-        atom_value_method: bool = False,
-        store_values_as_tensor: bool = True,
         seed: int = None,
         **kwargs,
     ):
-        self._atom_to_index_map: dict[str, int] = None
-        self._index_to_atom_map: dict[int, str] = None
-        self.atom_value_method = atom_value_method
-        self.store_values_as_tensor = store_values_as_tensor
         self.iw_search = iw_search
         self.num_states = num_states
         self.seed = seed
         kwargs["env"] = None
+        kwargs["atom_value_method"] = AtomValueMethod.IW
         super().__init__(*args, **kwargs)
 
     @property
@@ -389,18 +438,20 @@ class PartialAtomDrive(AtomDrive):
         atom_id_map, atoms = make_atom_ids(problem)
         self._atom_to_index_map = atom_id_map
         states = list(atom_values.keys())
-        if self.store_values_as_tensor:
-            if isinstance(atom_values, dict):
-                atom_values = atom_value_dict_to_tensor(
-                    atom_values, self.atom_to_index_map
-                )
-        else:
-            if isinstance(atom_values, torch.Tensor):
-                atom_values = atom_tensor_to_dict(
-                    atom_values, self.atom_to_index_map, self.index_to_atom_map
-                )
+        if isinstance(atom_values, dict):
+            atom_values_dict = list(atom_values.values())
+            atom_values_tensor = atom_value_dict_to_tensor(
+                atom_values, self.atom_to_index_map
+            )
+        if isinstance(atom_values, torch.Tensor):
+            atom_values_tensor = atom_values
+            atom_values_dict = atom_tensor_to_dict(
+                atom_values, self.atom_to_index_map, self.index_to_atom_map
+            )
 
-        batched_data = self._encode(env, encoder, atom_values, states, nr_states)
+        batched_data = self._encode(
+            env, encoder, atom_values_dict, atom_values_tensor, states, nr_states
+        )
         logger.info(
             f"Finished {self.__class__.__name__} "
             f"(problem: {problem.name} / {Path(problem.filepath).stem}, #space: {self.num_states} states (max-cutoff))"

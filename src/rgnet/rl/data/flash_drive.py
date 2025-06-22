@@ -9,6 +9,7 @@ from torch_geometric.data import Data, HeteroData
 
 import xmimir as xmi
 from rgnet.logging_setup import tqdm
+from xmimir import gather_objects
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 from .drive import BaseDrive, BaseDriveMetadata
@@ -94,6 +95,7 @@ class FlashDrive(BaseDrive):
             # We need to verify if this is the case for the current implementation of pymimir.
             data.idx = state.index
             data.done = done
+            data.object_count = len(gather_objects(state))
             # Same index concerns for transition.target.index
             data.targets = list(t.target.index for t in transitions)
             distance_to_goal = space.goal_distance(state)
