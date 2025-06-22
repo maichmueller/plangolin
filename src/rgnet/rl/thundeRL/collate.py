@@ -73,7 +73,7 @@ def to_atom_values_batch(
     if isinstance(predicates, XDomain):
         predicates = predicates.predicates(XCategory.fluent, XCategory.derived)
     states_batch, info = to_states_batch(
-        data_list, exclude_keys=["targets", "atom_values"]
+        data_list, exclude_keys=["targets", "atom_values_dict", "atom_values_tensor"]
     )
     target_atom_values = dict()
     target_state_association = dict()
@@ -96,17 +96,21 @@ def to_atom_values_batch(
             for data_idx, (data, atom_objects_permutations) in enumerate(
                 zip(data_list, atom_objects_of_arity)
             ):
-                atom_values = data.atom_values
+                atom_values_dict = data.atom_values_dict
                 for objects in atom_objects_permutations:
                     atom = atom_str_template.render(
                         predicate=predicate, objects=objects
                     )
-                    value = atom_values[atom]
-                    target_values.append(
-                        value
-                        if value not in (float("inf"), float("-inf"))
-                        else unreachable_atom_value
-                    )
+                    if atom not in atom_values_dict:
+                        # augment with unreachable atom value if this atom is not present in this state
+                        # (can be for various reasons, e.g. our object permutation augmentation considers
+                        # atoms that are not found during data collection)
+                        value = unreachable_atom_value
+                    else:
+                        value = atom_values_dict[atom]
+                        if value == float("inf") or value == float("-inf"):
+                            value = unreachable_atom_value
+                    target_values.append(value)
                     association.append((data_idx, atom))
             target_atom_values[predicate] = torch.tensor(
                 target_values, dtype=torch.float
