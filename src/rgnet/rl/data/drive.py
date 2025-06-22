@@ -232,19 +232,6 @@ class BaseDrive(InMemoryDataset):
     def __str__(self):
         return self.desc
 
-    def _load(self):
-        r"""Loads the dataset from the processed file."""
-        if not self.processed_paths:
-            raise RuntimeError(
-                "Dataset not processed yet. Call `process()` before loading."
-            )
-        # avoid pickling un-pickleable pymimir objects by simply removing it
-        del self._env
-        del self._maybe_env
-        del self._space
-        del self.problem
-        self.load(self.processed_paths[0])
-
     def load(self, path: str, data_cls: Type[BaseData] = Data) -> None:
         r"""Loads the dataset from the file path :obj:`path`."""
         out = fs.torch_load(path, map_location=self.device or "cpu")
@@ -412,6 +399,39 @@ class BaseDrive(InMemoryDataset):
             slice_dict=self.slices,
             decrement=False,
         )
+
+    def __getstate__(self):
+        """
+        Custom __getstate__ to avoid pickling the metabase and other non-pickleable attributes.
+        """
+        state = self.__dict__.copy()
+        # remove non-pickleable attributes
+        state.pop("metabase", None)
+        state.pop("_shelves", None)
+        state.pop("_data_cache", None)
+        state.pop("_maybe_env", None)
+        state.pop("_env", None)
+        state.pop("_space", None)
+        state.pop("problem", None)
+        state.pop("logging_kwargs", None)
+        return state
+
+    def __setstate__(self, state):
+        """
+        Custom __setstate__ to restore the metabase and other attributes.
+        """
+        self.__dict__.update(state)
+        # reinitialize the metabase
+        dbfile = str(self.metabase_path)
+        shelf = BaseDrive._shelves.get(dbfile)
+        if shelf is None:
+            shelf = shelve.open(dbfile, flag="c")
+            BaseDrive._shelves[dbfile] = shelf
+        self.metabase = shelf
+        # reinitialize the data cache
+        self._data_cache = {}
+        # reinitialize the problem if it was not set
+        _, self.problem = parse(self.domain_path, self.problem_path)
 
     def __getattr__(self, key: str) -> Any:
         """
