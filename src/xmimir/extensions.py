@@ -41,17 +41,12 @@ def parse(
 
 
 @multimethod
-def gather_objects(state: XState) -> set[Object]:
-    return gather_objects(state.atoms())
-
-
-@multimethod
 def gather_objects(problem: XProblem) -> set[Object]:
     return set(problem.objects)
 
 
 @multimethod
-def gather_objects(atoms: Iterable[XAtom] | Generator) -> set[Object]:
+def gather_objects(atoms: Iterable[XAtom] | XState | Generator) -> set[Object]:
     return set(chain.from_iterable(atom.objects for atom in atoms))
 
 
