@@ -285,6 +285,10 @@ class OptimalAtomValuesMP(ValueIterationMP):
                 raise ValueError(
                     f"Unsupported aggregation method '{aggr}'. Supported methods are 'min' (costs) and 'max' (rewards)."
                 )
+        # Note: theoretically, we could set this to 1 / 1 - gamma for the infinite plan length dead-end case.
+        # In this case we would implicitly assume that the rewards stored in the incoming data are uniform step rewards.
+        # This limitation is unnecessarily restrictive, as we can simply use the init_reward value as value to pad.
+        # A token value of +- inf be easiest for later masking of unreachable atoms.
         self.init_reward = self.sign * torch.inf
         self.atom_to_index = atom_to_index_map
         self.num_atoms = max(atom_to_index_map.values()) + 1
@@ -366,7 +370,7 @@ if __name__ == "__main__":
     graph.add_edge(1, 2, reward=1.0, probs=0.5, idx=1)
     graph.add_edge(2, 0, reward=1.0, probs=0.5, idx=2)
 
-    atom_to_index_map = {
+    atoi_map = {
         "t": 0,
         "q": 1,
         "p": 2,
@@ -375,7 +379,7 @@ if __name__ == "__main__":
 
     pyg_graph = mdp_graph_as_pyg_data(graph)
     pyg_graph.atoms_per_state = [["p"], ["q"], ["t"]]
-    mp_module = OptimalAtomValuesMP(atom_to_index_map=atom_to_index_map, aggr="min")
+    mp_module = OptimalAtomValuesMP(atom_to_index_map=atoi_map, aggr="min")
     mp_module(pyg_graph)
     final_distances = pyg_graph[OptimalAtomValuesMP.default_attr_name]
     expected = torch.tensor([[2, 1, 0], [1, 0, 2], [0, 2, 1]], dtype=torch.float)
