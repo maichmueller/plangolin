@@ -41,6 +41,8 @@ class ThundeRLDataModule(LightningDataModule):
         collate_kwargs: Optional[Dict[str, Any]] = None,
         drive_type: type[BaseDrive] = FlashDrive,
         drive_kwargs: Optional[Dict[str, Any]] = None,
+        validation_drive_type: Optional[type[BaseDrive]] = None,
+        validation_drive_kwargs: Optional[Dict[str, Any]] = None,
         test_drive_type: type[BaseDrive] = None,
         test_drive_kwargs: Optional[Dict[str, Any]] = None,
         train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
@@ -60,8 +62,10 @@ class ThundeRLDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.parallel = parallel
         self.drive_type = drive_type
+        self.validation_drive_type = validation_drive_type or drive_type
         self.test_drive_type = test_drive_type or drive_type
         self.drive_kwargs = drive_kwargs or dict()
+        self.validation_drive_kwargs = validation_drive_kwargs or self.drive_kwargs
         self.test_drive_kwargs = test_drive_kwargs or dict()
         self.train_dataloader_kwargs = (
             dict(num_workers=6)
@@ -273,11 +277,11 @@ class ThundeRLDataModule(LightningDataModule):
         # the actual work intensive part of this function is loading the datasets
         datasets: Dict[Path, Dataset] = self.load_datasets(
             problem_paths,
-            drive_types=[self.drive_type]
-            * (len(train_prob_paths) + len(validation_prob_paths))
+            drive_types=[self.drive_type] * len(train_prob_paths)
+            + [self.validation_drive_type] * len(validation_prob_paths)
             + [self.test_drive_type] * len(test_problem_paths),
-            drive_types_kwargs=[self.drive_kwargs]
-            * (len(train_prob_paths) + len(validation_prob_paths))
+            drive_types_kwargs=[self.drive_kwargs] * len(train_prob_paths)
+            + [self.validation_drive_kwargs] * len(validation_prob_paths)
             + [self.test_drive_kwargs] * len(test_problem_paths),
         )
 
@@ -312,9 +316,10 @@ class ThundeRLDataModule(LightningDataModule):
                     for dataset in self.train_datasets
                 ]
             )
-            # Account for deadend state labels being -1 (values <0 are incompatible with bincount inside `ImbalancedSampler`)
-            # Adding the min to each distance (label) doesn't change the relative class counts, so does not change the sampling
-
+            # Account for e.g. deadend state labels being -1
+            # (values <0 are incompatible with bincount inside `ImbalancedSampler`)
+            # Adding the min to each distance (label) doesn't change the relative class counts,
+            # so does not change the sampling
             if (min_label := class_tensor.min()) < 0:
                 class_tensor = class_tensor + (-min_label)
             return ImbalancedSampler(dataset=class_tensor)
