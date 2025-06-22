@@ -115,7 +115,7 @@ class InputData:
         pddl_domains_dir: Path = Path("data/pddl_domains"),
         dataset_dir: Path = Path("data/flash_drives"),
         train_subdir: str = "train",
-        eval_subdir: Optional[str] = None,
+        val_subdir: Optional[str] = None,
         test_subdir: Optional[str] = None,
         plan_subdir: Optional[str] = None,
         instances: List[str] | Literal["all"] = "all",
@@ -141,7 +141,7 @@ class InputData:
         :param pddl_domains_dir: path to the pddl_resources (default: project/data/pddl_domains)
         :param dataset_dir: where to store datasets (default: project/data/flash_drives)
         :param train_subdir: the name of the subdirectory where the problem pddl files are located. (default: "train")
-        :param eval_subdir: the subdirectory where the validation problem files are located. (default: "train")
+        :param val_subdir: the subdirectory where the validation problem files are located. (default: "train")
         :param test_subdir: the subdirectory where the testing problem files are located. (default: "train")
         :param instances: Either an explicit list of file names (or stems) or "all". (default: "all")
         :param validation_instances: None to skip validation, an explicit list or "all". (default: None)
@@ -151,7 +151,7 @@ class InputData:
             (default: the project source directory)
         """
         self.train_subdir = train_subdir
-        self.eval_subdir = eval_subdir or self.train_subdir
+        self.val_subdir = val_subdir or self.train_subdir
         self.test_subdir = test_subdir or self.train_subdir
         self.plan_subdir = plan_subdir or self.test_subdir
         self.plan_subdir_was_specified = plan_subdir is not None
@@ -310,7 +310,7 @@ class InputData:
             self._validation_instances = None
             return
         else:
-            input_dir = self.pddl_domains_dir / self.eval_subdir
+            input_dir = self.pddl_domains_dir / self.val_subdir
             instances, problems = self._resolve_instances(
                 input_dir, _all_or_filter(validation_instances)
             )
