@@ -1,4 +1,3 @@
-import atexit
 import logging
 import os
 import shelve
@@ -41,9 +40,6 @@ class BaseEnvAuxData:
 
 
 class BaseDrive(InMemoryDataset):
-    # cache of open shelve databases by path
-    _shelves: dict[str, shelve.Shelf] = {}
-
     def __init__(
         self,
         root_dir: Path | str,
@@ -97,17 +93,13 @@ class BaseDrive(InMemoryDataset):
         # initialize klepto store for modular persistence
         self.metabase_path = root_dir / "database.db"
         os.makedirs(root_dir, exist_ok=True)
-        # reuse an already-opened shelve or open and cache it
-        dbfile = str(self.metabase_path)
-        shelf = BaseDrive._shelves.get(dbfile)
-        if shelf is None:
-            shelf = shelve.open(dbfile, flag="c")
-            BaseDrive._shelves[dbfile] = shelf
-        self.metabase = shelf
+        self.metabase: shelve.Shelf | None = None
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.
-        self.desc: Optional[str] = self.try_get_data("desc")
+        self.desc: Optional[str] = None
         if metadata := self.try_get_data("meta"):
+            # desc is not explicit part of metadata, but also stored there anyway
+            self.desc = metadata["desc"]
             if mismatch_desc := self._metadata_misaligned(metadata):
                 logging.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
@@ -124,17 +116,53 @@ class BaseDrive(InMemoryDataset):
         )
         self.load(self.processed_paths[0])
 
-    @classmethod
-    def close_all_metabases(cls):
+    def close_all_metabases(self):
         """
         Close all open shelve databases and clear the cache.
         """
-        for shelf in cls._shelves.values():
-            try:
-                shelf.close()
-            except Exception:
-                pass
-        cls._shelves.clear()
+        self.metabase.sync()
+        self.metabase.close()
+
+    def try_open_metabase(self) -> bool:
+        """
+        Attempts to open the metabase. Returns True if successful, False otherwise.
+        This is useful for checking if the metabase is accessible before performing operations.
+        """
+        try:
+            if not os.path.exists(self.metabase_path):
+                raise FileNotFoundError(
+                    f"Metabase at {self.metabase_path} does not exist."
+                )
+            self.metabase = shelve.open(str(self.metabase_path), flag="r")
+            is_empty = len(self.metabase) == 0
+            if is_empty:
+                logging.warning(
+                    f"Metabase at {self.metabase_path} is empty. "
+                    "This indicates a corrupted database. Deleting it and reopening with flag 'c'."
+                )
+                self.metabase.close()
+                os.remove(self.metabase_path)
+                return self.try_open_metabase()
+            return True
+        except FileNotFoundError:
+            self.metabase = shelve.open(str(self.metabase_path), flag="c")
+            return True
+        except PermissionError:
+            logging.error(
+                f"Permission denied when trying to open metabase at {self.metabase_path}."
+            )
+            return False
+        except OSError as e:
+            logging.error(
+                f"OS error when trying to open metabase at {self.metabase_path}: {e}"
+            )
+            return False
+        except KeyboardInterrupt as e:
+            logging.warning("Interrupted while trying to open metabase.")
+            raise e
+        except Exception as e:
+            logging.error(f"Failed to open metabase at {self.metabase_path}: {e}")
+            return False
 
     def try_get_data(self, key: str) -> dict[str, Any] | None:
         r"""Attempts to retrieve metadata from the metabase."""
@@ -142,7 +170,9 @@ class BaseDrive(InMemoryDataset):
             if key in self._data_cache:
                 # if we have already loaded this key, return the cached value
                 return self._data_cache[key]
+            self.try_open_metabase()
             data = self.metabase[key]
+            self.metabase.close()
             self._data_cache[key] = data
             return data
         except KeyError:
@@ -338,7 +368,6 @@ class BaseDrive(InMemoryDataset):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            self.metabase.clear()
             raise RuntimeError(
                 f"Failed to save metadata to metabase at {self.metabase_path}. "
                 "Please check the file permissions or disk space."
@@ -422,12 +451,7 @@ class BaseDrive(InMemoryDataset):
         """
         self.__dict__.update(state)
         # reinitialize the metabase
-        dbfile = str(self.metabase_path)
-        shelf = BaseDrive._shelves.get(dbfile)
-        if shelf is None:
-            shelf = shelve.open(dbfile, flag="c")
-            BaseDrive._shelves[dbfile] = shelf
-        self.metabase = shelf
+        self.try_open_metabase()
         # reinitialize the data cache
         self._data_cache = {}
         # reinitialize the problem if it was not set
@@ -446,7 +470,3 @@ class BaseDrive(InMemoryDataset):
                 return Batch.from_data_list(data_list)[key]
         else:
             return object.__getattribute__(self, key)
-
-
-# ensure all open shelves get closed when Python exits
-atexit.register(BaseDrive.close_all_metabases)

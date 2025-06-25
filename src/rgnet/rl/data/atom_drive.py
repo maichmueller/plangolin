@@ -286,10 +286,10 @@ class AtomDrive(BaseDrive):
     def env_aux_data(self) -> dict:
         base_data = super().env_aux_data()
         env = self.env
-        if self.try_get_data("aux.atom_to_index_map") is not None:
-            self._atom_to_index_map = self.try_get_data("aux.atom_to_index_map")
-        if self.try_get_data("aux.pyg_atom_data") is not None:
-            pyg_atom_data = self.try_get_data("aux.pyg_atom_data")
+        if data := self.try_get_data("aux.atom_to_index_map") is not None:
+            self._atom_to_index_map = data
+        if data := self.try_get_data("aux.pyg_atom_data") is not None:
+            pyg_atom_data = data
             if pyg_atom_data is not None:
                 return base_data | dict(
                     pyg_atom_data=pyg_atom_data,
