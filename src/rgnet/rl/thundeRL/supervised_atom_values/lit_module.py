@@ -126,6 +126,9 @@ class AtomValuesLitModule(lightning.LightningModule):
         self._exit_stack = ExitStack()
         self._validation_start_time = None
         self._collector_pbar = None
+        self._prev_validation_dataloader_idx = -1
+        self._total_val_batches: int | None = None
+        self._validation_batch_counter = 0
         # Batches that are queued for processing in separate streams
         self._queued_batches: list[ProcessBatch] = []
         self._max_queued_batches = (
@@ -164,6 +167,7 @@ class AtomValuesLitModule(lightning.LightningModule):
                 for i, count in enumerate(num_batches)
             )
         )
+        self._total_val_batches = sum(num_batches)
         self._validation_start_time = time.time()
         if self._num_workers > 0:
             if not self._val_workers:
@@ -309,7 +313,7 @@ class AtomValuesLitModule(lightning.LightningModule):
             l1loss = torch.nn.functional.l1_loss(out, target_values, reduction="none")
             norm_l1loss = l1loss / normalization_values
 
-            # Reduce per predicate (prevents high-arity predicates from dominating)
+            # Reduce per predicate (prevents high-arity predicates - those with many permutations - from dominating)
             reduced_loss = torch_reduce(l1loss)
             reduced_norm_loss = torch_reduce(norm_l1loss)
 
@@ -359,6 +363,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         (receive -> compute loss -> log / hooks) is done
         asynchronously in _collector_loop().
         """
+        self._validation_batch_counter += 1
         if self._num_workers == 0:
             self._enqueue_batch(ProcessBatch(batch_tuple, batch_idx, dataloader_idx))
         else:
@@ -374,7 +379,15 @@ class AtomValuesLitModule(lightning.LightningModule):
         self,
         batch: ProcessBatch,
     ) -> None:
-        if len(self._queued_batches) >= len(self.cuda_streams):
+        is_new_dataloader = batch.dataloader_idx != self._prev_validation_dataloader_idx
+        if (
+            len(self._queued_batches) >= len(self.cuda_streams)
+            or is_new_dataloader
+            or self._validation_batch_counter >= self._total_val_batches
+        ):
+            if is_new_dataloader:
+                # if we are switching dataloaders, we need to clear the queued batches
+                self._prev_validation_dataloader_idx = batch.dataloader_idx
             outputs = [
                 self._local_validation_step(
                     proc_batch.batch,
@@ -500,6 +513,8 @@ class AtomValuesLitModule(lightning.LightningModule):
                     )
 
     def on_validation_epoch_end(self) -> None:
+        self._prev_validation_dataloader_idx = -1
+        self._validation_batch_counter = 0
         if self._num_workers > 0:
             self._collector_pbar = tqdm(
                 range(sum(worker.in_q.qsize() for worker in self._val_workers)),
