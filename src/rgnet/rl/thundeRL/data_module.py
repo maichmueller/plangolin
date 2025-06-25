@@ -29,6 +29,22 @@ def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
 
 
+class CachedDataset(Dataset):
+    """A wrapper around a dataset that caches items on first access."""
+
+    def __init__(self, base_ds):
+        self.base = base_ds
+        self.cache = {}
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        if idx not in self.cache:
+            self.cache[idx] = self.base[idx]
+        return self.cache[idx]
+
+
 class ThundeRLDataModule(LightningDataModule):
     def __init__(
         self,
@@ -48,6 +64,7 @@ class ThundeRLDataModule(LightningDataModule):
         train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         validation_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         test_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        cache_validation_batches: bool = False,
         parallel: bool = True,
         balance_by_attr: str = "",
         max_cpu_count: Optional[int] = None,
@@ -83,6 +100,7 @@ class ThundeRLDataModule(LightningDataModule):
         self.encoder_factory = encoder_factory
         self.balance_by_attr = balance_by_attr
         self.max_cpu_count = max_cpu_count
+        self.cache_validation_batches = cache_validation_batches
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
@@ -302,6 +320,10 @@ class ThundeRLDataModule(LightningDataModule):
             self.validation_sets = [
                 datasets[val_problem] for val_problem in validation_prob_paths
             ]
+            if self.cache_validation_batches:
+                self.validation_sets = [
+                    CachedDataset(dataset) for dataset in self.validation_sets
+                ]
 
         self._data_prepared = True
         if self.exit_after_processing:
