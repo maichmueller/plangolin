@@ -14,8 +14,9 @@ from rgnet.encoding.hetero_encoder import PredicateEdgeType
 from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
 from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
-from rgnet.models.residual import ResidualModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
+
+from .mlp import MLPFactory
 
 
 def simple_mlp(
@@ -51,7 +52,9 @@ class HeteroGNN(PyGHeteroModule):
         aggr: Optional[str | pyg.nn.aggr.Aggregation],
         obj_type_id: str,
         arity_dict: Dict[str, int],
+        predicate_module_factory: Callable[[str, int], torch.nn.Module] | None = None,
         activation: Union[str, Callable, None] = None,
+        skip_zero_arity_predicates: bool = True,
     ):
         """
         :param embedding_size: The size of object embeddings.
@@ -75,21 +78,27 @@ class HeteroGNN(PyGHeteroModule):
             elif aggr.lower() == "softmax":
                 aggr = SoftmaxAggregation()
 
-        mlp_dict = {
+        activation = activation or "mish"
+
+        if predicate_module_factory is None:
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object.
-            pred: ResidualModule(
-                simple_mlp(
-                    *([embedding_size * arity] * 3),
-                    activation=activation,
-                )
+            predicate_module_factory = MLPFactory(
+                feature_size=embedding_size,
+                added_arity=0,  # no additional arity
+                residual=True,
+                padding=None,  # no padding
+                num_layers=1,  # one layer per predicate
+                activation=activation,
             )
+        predicate_module_dict = {
+            pred: predicate_module_factory(pred, arity)
             for pred, arity in arity_dict.items()
-            if arity > 0
+            if arity > 0 or not skip_zero_arity_predicates
         }
 
-        self.objects_to_atom_mp = FanOutMP(mlp_dict, src_type=obj_type_id)
+        self.objects_to_atom_mp = FanOutMP(predicate_module_dict, src_type=obj_type_id)
         self.atoms_to_object_mp = FanInMP(
             embedding_size=embedding_size,
             dst_name=obj_type_id,

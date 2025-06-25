@@ -5,7 +5,7 @@ import threading
 import time
 from contextlib import ExitStack
 from functools import cached_property
-from typing import Any, List, NamedTuple, Optional, Union
+from typing import Any, List, NamedTuple, Optional
 
 import lightning
 import torch
@@ -16,6 +16,7 @@ from torch.nn import ModuleList
 from torch_geometric.data import Batch
 
 from rgnet.logging_setup import tqdm
+from rgnet.models import HeteroGNN
 from rgnet.models.atom_valuator import AtomValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.thundeRL.validation import ValidationCallback
@@ -72,20 +73,37 @@ class EmbeddingAndValuator(torch.nn.Module):
 class AtomValuesLitModule(lightning.LightningModule):
     def __init__(
         self,
-        gnn: Union[PyGModule, PyGHeteroModule],
+        gnn: PyGModule | PyGHeteroModule,
         atom_valuator: AtomValuator,
         optim: torch.optim.Optimizer,
         validation_hooks: Optional[List[ValidationCallback]] = None,
         normalize_loss: bool = True,
         assert_output: bool = False,
         max_queued_batches: int = 0,
+        share_predicate_modules: bool = False,
     ) -> None:
         super().__init__()
         assert isinstance(optim, torch.optim.Optimizer)
         if not isinstance(gnn, PyGHeteroModule) and not isinstance(gnn, PyGModule):
-            raise ValueError(f"Unknown GNN type: {gnn}")
+            raise ValueError(f"Unknown GNN type: {self.gnn}")
         self.gnn = gnn
         self.atom_valuator = atom_valuator
+        if share_predicate_modules:
+            # if we want to share the MLPs, we need to ensure that the AtomValuator's MLPs are shared
+            # with the GNN's predicate modules.
+            if isinstance(self.gnn, HeteroGNN):
+                # the valuator's mlps are a subset of the GNN's predicate modules, dont test the other way around
+                valuators = atom_valuator.valuator_by_predicate
+                for predicate in valuators:
+                    assert isinstance(valuators[predicate], torch.nn.Sequential)
+                    # replace the first module in the Sequential with the GNN's predicate module
+                    valuators[predicate][0] = gnn.objects_to_atom_mp.update_modules[
+                        predicate
+                    ]
+            else:
+                logging.warning(
+                    "Sharing MLPs is only supported for HeteroGNN instances. Silently ignoring."
+                )
         self.embedder_and_valuator = EmbeddingAndValuator(
             gnn=self.gnn, atom_valuator=self.atom_valuator
         )

@@ -12,10 +12,9 @@ from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import atom_str_template
 
 from .attention_aggr import AttentionPooling
-from .hetero_gnn import simple_mlp
 from .mixins import DeviceAwareMixin
+from .mlp import MLPFactory
 from .patched_module_dict import PatchedModuleDict
-from .residual import ResidualModule
 
 
 class OutputInfo(NamedTuple):
@@ -27,9 +26,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
     def __init__(
         self,
         predicates: Iterable[XPredicate] | XDomain,
-        predicate_module_factory: (
-            Callable[[XPredicate, int], torch.nn.Module] | None
-        ) = None,
+        predicate_module_factory: Callable[[str, int], torch.nn.Module] | None = None,
         pooling: str = "sum",
         activation: str = "mish",
         feature_size: int = 64,
@@ -61,27 +58,19 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
             self.predicates_dict
         )
         self.max_arity = max(self.arity_dict.values())
+        if predicate_module_factory is None:
+            predicate_module_factory = MLPFactory(
+                feature_size, added_arity=1, num_layers=3, activation=activation
+            )
         self.valuator_by_predicate = PatchedModuleDict(
             {
                 # One Module per predicate
                 # For a predicate p(o_1,...,o_k) the corresponding Module gets k object
                 # embeddings as input and generates k outputs, one for each object.
-                pred: (
-                    torch.nn.Sequential(
-                        ResidualModule(
-                            simple_mlp(
-                                # arity + 1 to allow for entering the aggregated state information
-                                *[feature_size * (arity + 1)] * 3,
-                                activation=activation,
-                            )
-                        ),
-                        activation_resolver(activation),
-                        torch.nn.Linear(feature_size * (arity + 1), 1),
-                    )
-                    if predicate_module_factory is None
-                    else predicate_module_factory(
-                        self.predicates_dict[pred], feature_size
-                    )
+                pred: torch.nn.Sequential(
+                    predicate_module_factory(pred, arity),
+                    activation_resolver(activation),
+                    torch.nn.Linear(feature_size * (arity + 1), 1),
                 )
                 for pred, arity in self.arity_dict.items()
             }
@@ -97,7 +86,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
                 self.pooling = torch_geometric.nn.global_max_pool
             case "attention":
                 self.pooling = AttentionPooling(
-                    feature_size=feature_size, num_heads=1, split_features=True
+                    feature_size=feature_size, num_heads=10, split_features=True
                 )
             case _:
                 raise ValueError(
