@@ -173,8 +173,8 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         ) = None,
         natural_transitions: bool = False,
         problems: tuple[XProblem, ...] | None = None,
-        # progressbar: bool = False,
-        progressbar: bool = True,
+        progressbar: bool = False,
+        # progressbar: bool = True,
     ) -> pyg.data.Data:
         r"""Converts a :obj:`networkx.Graph` or :obj:`networkx.DiGraph` to a
         :class:`torch_geometric.data.Data` instance_list.
@@ -209,7 +209,12 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
 
         if natural_transitions:
             transitions = tuple(
-                tuple(space.forward_transitions(state)) for state in space
+                (
+                    tuple(space.forward_transitions(state))
+                    if not space.is_deadend(state)
+                    else self.get_applicable_transitions([state], instances=[space])[0]
+                )
+                for state in space
             )
         else:
             transitions = self.get_applicable_transitions(
