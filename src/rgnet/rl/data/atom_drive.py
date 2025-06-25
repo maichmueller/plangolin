@@ -197,7 +197,9 @@ class AtomDrive(BaseDrive):
             state_atom_values_tensor,
             state_transitions,
         ) in iterator:
-            data = encoder.to_pyg_data(encoder.encode(state))
+            data = encoder.to_pyg_data(
+                encoder.encode(state.atoms(with_statics=True))
+            )  # do not encode the goal!
             reward, done = env.get_reward_and_done(
                 state_transitions, instances=[instance] * len(state_transitions)
             )
@@ -438,16 +440,19 @@ class PartialAtomDrive(AtomDrive):
         atom_id_map, atoms = make_atom_ids(problem)
         self._atom_to_index_map = atom_id_map
         states = list(atom_values.keys())
-        if isinstance(atom_values, dict):
-            atom_values_dict = list(atom_values.values())
-            atom_values_tensor = atom_value_dict_to_tensor(
-                atom_values, self.atom_to_index_map
-            )
-        if isinstance(atom_values, torch.Tensor):
-            atom_values_tensor = atom_values
-            atom_values_dict = atom_tensor_to_dict(
-                atom_values, self.atom_to_index_map, self.index_to_atom_map
-            )
+        match atom_values:
+            case dict():
+                atom_values_dict = list(atom_values.values())
+                atom_values_tensor = atom_value_dict_to_tensor(
+                    atom_values, self.atom_to_index_map
+                )
+            case torch.Tensor():
+                atom_values_dict = atom_tensor_to_dict(
+                    atom_values, self.atom_to_index_map, self.index_to_atom_map
+                )
+                atom_values_tensor = atom_values
+            case _:
+                raise ValueError(f"Unsupported atom values type: {type(atom_values)}")
 
         batched_data = self._encode(
             env, encoder, atom_values_dict, atom_values_tensor, states, nr_states
@@ -476,7 +481,7 @@ class PartialAtomDrive(AtomDrive):
             while len(closed_states) < self.num_states or not open_states:
                 state = open_states.pop()
                 closed_states.add(state)
-                atom_dists = defaultdict(lambda: float("inf"))
+                atom_dists = defaultdict(lambda: float("-inf"))
                 dists[state] = atom_dists
                 collector = CollectorHook()
                 self.iw_search.solve(
@@ -492,7 +497,8 @@ class PartialAtomDrive(AtomDrive):
                     for atom_tuples in node.novelty_trace[-1]:
                         for atom in atom_tuples:
                             if len(atom_tuples) == 1:
-                                atom_dists[atom] = node.depth
+                                # -1 because we always look at rewards!
+                                atom_dists[atom] = -1 * node.depth
                 if pbar:
                     pbar.update(1)
         return dists
