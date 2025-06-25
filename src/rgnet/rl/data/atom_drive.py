@@ -206,6 +206,7 @@ class AtomDrive(BaseDrive):
             data.reward = reward
             data.idx = state.index
             data.done = done
+            data.state_desc = str(state)
             data.object_count = len(gather_objects(state))
             atom_str_keys = {str(a) for a in state_atom_values_dict.keys()}
             if missing_atoms := atom_to_index_map.keys() - atom_str_keys:

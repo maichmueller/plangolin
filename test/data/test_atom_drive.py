@@ -15,24 +15,20 @@ from xmimir import XAtom
 from xmimir.iw import CollectorHook, IWSearch
 
 
-def validate_drive(drive: AtomDrive, space, invert_values: bool = False):
+def validate_drive(drive: AtomDrive, space):
     assert len(drive) == len(space)
     encoder = HeteroGraphEncoder(space.problem.domain)
-    sign = -1 if invert_values else 1
-    expected_values = drive.atom_value_dict_to_tensor(
-        dict(
-            sorted(
-                _expected_optimal_atom_values(space).items(),
-                key=operator.itemgetter(0),
-            )
+    expected_values_dict = dict(
+        sorted(
+            _expected_optimal_atom_values(space).items(),
+            key=operator.itemgetter(0),
         )
     )
-    computed_values = drive.atom_values.view(len(drive), -1)
+    expected_values = drive.atom_value_dict_to_tensor(expected_values_dict)
+    computed_values = drive.atom_values_tensor.view(len(drive), -1)
     assert computed_values.shape == expected_values.shape
     both_finite = ~(torch.isinf(computed_values) & torch.isinf(expected_values))
-    if not torch.allclose(
-        sign * computed_values[both_finite], expected_values[both_finite]
-    ):
+    if not torch.allclose(computed_values[both_finite], expected_values[both_finite]):
         for state in tqdm(space, desc="Validating AtomDrive"):
             num_transitions = space.forward_transition_count(state)
             i = state.index
@@ -44,13 +40,13 @@ def validate_drive(drive: AtomDrive, space, invert_values: bool = False):
                 assert not drive.done.all()
                 assert data.done.numel() == num_transitions
                 assert data.reward.numel() == num_transitions
-            expected = encoder.to_pyg_data(encoder.encode(state))
+            expected = encoder.to_pyg_data(
+                encoder.encode(state.atoms(with_statics=True))
+            )
             assert hetero_data_equal(data, expected)
-            atom_values = data.atom_values
+            atom_values = data.atom_values_dict
             validate_atom_values(
-                lambda atom_str: (
-                    sign * atom_values[drive.atom_to_index_map[atom_str]]
-                ).item(),
+                lambda atom_str: (atom_values[atom_str]).item(),
                 space,
                 state,
             )
@@ -90,7 +86,7 @@ def _expected_optimal_atom_values(space, state=None) -> dict[int, dict[XAtom, fl
             for atom_tuples in node.novelty_trace[-1]:
                 for atom in atom_tuples:
                     if len(atom_tuples) == 1:
-                        expected_values[state.index][atom] = float(node.depth)
+                        expected_values[state.index][atom] = -float(node.depth)
     return expected_values
 
 
@@ -107,7 +103,7 @@ def _expected_optimal_atom_values(space, state=None) -> dict[int, dict[XAtom, fl
 def test_process(problem, fresh_atomdrive, request):
     # Dynamically get the fixture by name
     problem = request.getfixturevalue(problem)
-    validate_drive(fresh_atomdrive, problem[0], invert_values=True)
+    validate_drive(fresh_atomdrive, problem[0])
 
 
 @pytest.mark.parametrize(
@@ -136,7 +132,7 @@ def test_save_and_load(problem, fresh_atomdrive, request):
     mockito.verify(AtomDrive, times=0).process()
     mockito.unstub(AtomDrive)
 
-    validate_drive(drive, problem[0], invert_values=True)
+    validate_drive(drive, problem[0])
 
 
 @pytest.mark.parametrize(
@@ -174,7 +170,7 @@ def test_atom_dist_mp_module(request, problem):
             state.index
         ]
         validate_atom_values(
-            lambda atom_str: dist_tensor[mp_module.atom_to_index[atom_str]].item(),
+            lambda atom_str: -dist_tensor[mp_module.atom_to_index[atom_str]].item(),
             space,
             state,
         )
