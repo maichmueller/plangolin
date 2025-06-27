@@ -80,7 +80,7 @@ class DirectGraphEncoder(GraphEncoderBase[nx.DiGraph]):
         else:
             graph.add_edge(source_obj, target_obj, feature=feature)
 
-    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
+    def _encode(self, items: Sequence[XAtom | XLiteral], graph: GraphT):
         objects = self._contained_objects(items)
         for obj in objects:
             graph.add_node(self.node_factory(obj), feature=self._feature_map(None))

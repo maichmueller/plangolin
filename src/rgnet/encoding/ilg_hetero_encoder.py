@@ -102,14 +102,14 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             )
         )
 
-    def _encode(self, atoms: Sequence[XAtom | XLiteral], graph: GraphT):
+    def _encode(self, items: Sequence[XAtom | XLiteral], graph: GraphT):
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
         goals: list[XLiteral] = []
         actual_atoms: list[XAtom] = []
-        for atom_or_literal in atoms:
+        for atom_or_literal in items:
             if isinstance(atom_or_literal, XLiteral):
                 if getattr(atom_or_literal, "is_not_goal", False):
                     raise ValueError(
@@ -144,7 +144,7 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                 else:
                     statuses[atom] = AtomStatus.UNSATISFIED_GOAL
 
-        for obj in self._contained_objects(atoms):
+        for obj in self._contained_objects(items):
             graph.add_node(
                 self.node_factory(obj), type=self.obj_type_id, name=obj.get_name()
             )

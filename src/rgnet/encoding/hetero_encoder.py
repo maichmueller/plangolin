@@ -4,7 +4,7 @@ import logging
 import operator
 from collections import defaultdict
 from functools import cache
-from typing import Dict, Iterable, List, NamedTuple, Sequence
+from typing import Dict, List, NamedTuple, Sequence
 
 import networkx as nx
 import torch
@@ -61,7 +61,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     @staticmethod
     @cache
     def make_arity_dict(
-        predicates: Iterable[XPredicate], node_factory: NodeFactory = NodeFactory()
+        predicates: tuple[XPredicate], node_factory: NodeFactory = NodeFactory()
     ) -> Dict[Node, int]:
         return dict(
             sorted(
@@ -78,7 +78,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             )
         )
 
-    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
+    def _encode(self, items: Sequence[XAtom | XLiteral], graph: GraphT):
         # Build hetero graph from state
         # One node for each object
         # One node for each atom

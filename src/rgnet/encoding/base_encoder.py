@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import warnings
 from abc import ABC, abstractmethod
+from itertools import chain
 from typing import Any, Generic, Iterable, Optional, Sequence, Type, TypeVar, get_args
 
 import networkx as nx
@@ -46,9 +47,7 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
     @abstractmethod
     def __eq__(self, other): ...
 
-    def encode(
-        self, state: XState | Iterable[XAtom] | Iterable[XLiteral], **kwargs
-    ) -> GraphT:
+    def encode(self, state: XState | Iterable[XAtom | XLiteral], **kwargs) -> GraphT:
         """
         Encodes the state/atoms/literals into a networkx-graph representation.
 
@@ -65,10 +64,9 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
         if isinstance(state, XState):
             graph = self._graph_t(encoding=self, state=state)
             self._encode(
-                tuple(state.atoms(with_statics=True)),
+                tuple(chain(state.atoms(with_statics=True), state.problem.goal())),
                 graph,
             )
-            self._encode(tuple(state.problem.goal()), graph)
         else:
             state = tuple(state)
             graph = self._graph_t(encoding=self, state=state)
@@ -77,12 +75,12 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
 
     @abstractmethod
     def _encode(
-        self, items: Sequence[XAtom] | Sequence[XLiteral], graph: nx.Graph | nx.DiGraph
+        self, items: Sequence[XAtom | XLiteral], graph: nx.Graph | nx.DiGraph
     ): ...
 
     @staticmethod
     def _contained_objects(
-        items: Sequence[XAtom] | Sequence[XLiteral],
+        items: Sequence[XAtom | XLiteral],
     ) -> list[Object]:
         if len(items) == 0:
             warnings.warn(
@@ -90,10 +88,8 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
             )
             return []
         return sorted(
-            (
-                gather_objects(items)
-                if isinstance(items[0], XAtom)
-                else gather_objects(item.atom for item in items)
+            gather_objects(
+                [item if isinstance(item, XAtom) else item.atom for item in items]
             ),
             key=lambda obj: obj.get_name(),
         )

@@ -53,7 +53,7 @@ class ColorGraphEncoder(GraphEncoderBase[nx.Graph]):
     def feature_map(self):
         return self._feature_map
 
-    def _encode(self, items: Sequence[XAtom] | Sequence[XLiteral], graph: GraphT):
+    def _encode(self, items: Sequence[XAtom | XLiteral], graph: GraphT):
         for obj in self._contained_objects(items):
             graph.add_node(self.node_factory(obj), feature=self.feature_map(None))
 
