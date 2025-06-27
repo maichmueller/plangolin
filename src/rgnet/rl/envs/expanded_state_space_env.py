@@ -210,9 +210,15 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
         if natural_transitions:
             transitions = tuple(
                 (
-                    tuple(space.forward_transitions(state))
-                    if not space.is_deadend(state)
-                    else self.get_applicable_transitions([state], instances=[space])[0]
+                    self.get_applicable_transitions([state], instances=[space])[0]
+                    if (
+                        space.is_deadend(state)
+                        or (
+                            space.is_goal(state)
+                            and space.forward_transition_count(state) == 0
+                        )
+                    )
+                    else tuple(space.forward_transitions(state))
                 )
                 for state in space
             )
@@ -353,8 +359,8 @@ class MultiInstanceStateSpaceEnv(PlanningEnvironment[xmi.XStateSpace]):
             else:
                 try:
                     data_dict[key] = torch.as_tensor(value, device=device)
-                except KeyboardInterrupt:
-                    raise KeyboardInterrupt
+                except KeyboardInterrupt as e:
+                    raise e
                 except Exception:
                     pass
 

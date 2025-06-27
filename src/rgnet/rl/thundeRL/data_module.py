@@ -318,12 +318,13 @@ class ThundeRLDataModule(LightningDataModule):
         )
         if validation_prob_paths:
             self.validation_sets = [
-                datasets[val_problem] for val_problem in validation_prob_paths
+                (
+                    CachedDataset(datasets[val_problem])
+                    if self.cache_validation_batches
+                    else datasets[val_problem]
+                )
+                for val_problem in validation_prob_paths
             ]
-            if self.cache_validation_batches:
-                self.validation_sets = [
-                    CachedDataset(dataset) for dataset in self.validation_sets
-                ]
 
         self._data_prepared = True
         if self.exit_after_processing:
