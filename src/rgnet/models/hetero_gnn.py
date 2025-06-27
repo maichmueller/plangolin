@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 from typing import Callable, Dict, Iterable, Optional, Union
 
 import torch
@@ -55,6 +56,9 @@ class HeteroGNN(PyGHeteroModule):
         predicate_module_factory: Callable[[str, int], torch.nn.Module] | None = None,
         activation: Union[str, Callable, None] = None,
         skip_zero_arity_predicates: bool = True,
+        random_init: bool = False,
+        random_init_dims: int | None = None,
+        random_init_percent: float | None = None,
     ):
         """
         :param embedding_size: The size of object embeddings.
@@ -70,6 +74,23 @@ class HeteroGNN(PyGHeteroModule):
         super().__init__()
 
         self.embedding_size: int = embedding_size
+        self.random_initialization: bool = random_init
+        self.random_initialization_dims: int
+        if random_init_dims is not None:
+            self.random_initialization_dims = random_init_dims
+        elif random_init_percent is not None:
+            self.random_initialization_dims = int(random_init_percent * embedding_size)
+        else:
+            self.random_initialization_dims = embedding_size
+        self.random_initialization_dims = max(
+            min(self.random_initialization_dims, embedding_size), 0
+        )
+        if self.random_initialization_dims == 0:
+            logging.warning(
+                "Random initialization dimensions are set to 0, random initialization will not be applied."
+            )
+            self.random_initialization = False
+
         self.num_layer: int = num_layer
         self.obj_type_id: str = obj_type_id
         if isinstance(aggr, str) or aggr is None:
@@ -119,9 +140,22 @@ class HeteroGNN(PyGHeteroModule):
         # embedding-dims of atoms = (arity of predicate) * embedding_size
         for key, x in x_dict.items():
             assert x.dim() == 2
-            x_dict[key] = torch.zeros(
-                x.shape[0], x.shape[1] * self.embedding_size, device=x.device
-            )
+            if self.random_initialization:
+                # Random initialization of embeddings
+                init_embed = torch.nn.init.xavier_uniform_(
+                    torch.empty(
+                        x.shape[0], x.shape[1] * self.embedding_size, device=x.device
+                    )
+                )
+                if self.random_initialization_dims is not None:
+                    init_embed[
+                        :, : self.embedding_size - self.random_initialization_dims
+                    ].zero_()
+                x_dict[key] = init_embed
+            else:
+                x_dict[key] = torch.zeros(
+                    x.shape[0], x.shape[1] * self.embedding_size, device=x.device
+                )
         return x_dict
 
     def layer(self, x_dict, edge_index_dict):
@@ -222,3 +256,43 @@ class ValueHeteroGNN(HeteroGNN):
             *super().forward(x_dict, edge_index_dict, batch_dict)
         )
         return self.readout(self.pooling(object_embeddings)).view(-1)
+
+
+class ILGHeteroGNN(HeteroGNN):
+    def __init__(
+        self,
+        *args,
+        arity_dict: Dict[str, int],
+        **kwargs,
+    ):
+        arity_dict = {pred: arity for pred, arity in arity_dict.items() if arity > 0}
+        super().__init__(
+            *args,
+            arity_dict=arity_dict,
+            **kwargs,
+        )
+
+    def _filter_out_goal_predicates(
+        self, edge_index_dict: Dict[PredicateEdgeType, Adj]
+    ) -> Dict[PredicateEdgeType, Adj]:
+        """
+        Filter out goal predicates from the edge_index_dict.
+        Goal predicates are those with arity 0.
+        """
+        return {
+            edge_type: edge_index
+            for edge_type, edge_index in edge_index_dict.items()
+            if edge_type.predicate not in self.objects_to_atom_mp.predicate_module_dict
+        }
+
+    def forward(
+        self,
+        x_dict: Dict[str, Tensor],
+        edge_index_dict: Dict[PredicateEdgeType, Adj],
+        batch_dict: Optional[Dict[str, Tensor]] = None,
+        info_dict: Optional[Dict[str, Tensor]] = None,
+    ) -> torch.Tensor:
+        object_embeddings = ObjectEmbedding.from_sparse(
+            *super().forward(x_dict, edge_index_dict, batch_dict)
+        )
+        return self.readout(object_embeddings).view(-1)
