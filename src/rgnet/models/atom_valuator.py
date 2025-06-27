@@ -13,7 +13,7 @@ from xmimir.wrappers import atom_str_template
 
 from .attention_aggr import AttentionPooling
 from .mixins import DeviceAwareMixin
-from .mlp import MLPFactory
+from .mlp import ArityMLPFactory
 from .patched_module_dict import PatchedModuleDict
 
 
@@ -59,7 +59,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         )
         self.max_arity = max(self.arity_dict.values())
         if predicate_module_factory is None:
-            predicate_module_factory = MLPFactory(
+            predicate_module_factory = ArityMLPFactory(
                 feature_size, added_arity=1, num_layers=3, activation=activation
             )
         self.valuator_by_predicate = PatchedModuleDict(

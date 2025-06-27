@@ -4,7 +4,6 @@ import abc
 import itertools
 import logging
 import operator
-from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -43,9 +42,9 @@ class HeteroRouting(torch.nn.Module):
     def _accepts_edge(self, edge_type: EdgeType) -> bool: ...
 
     @abc.abstractmethod
-    def _internal_forward(self, x, edges_index, edge_type: EdgeType): ...
+    def _internal_forward(self, x, edges_index, edge_type: EdgeType, **kwargs): ...
 
-    def forward(self, x_dict, edge_index_dict):
+    def forward(self, x_dict, edge_index_dict, **kwargs) -> Dict[str, Tensor]:
         """
         Apply message passing to each edge_index key if the edge-type is accepted.
 
@@ -55,7 +54,7 @@ class HeteroRouting(torch.nn.Module):
         :param edge_index_dict: One edge_index adjacency matrix for each edge type.
         :return: Dictionary with each processed dst as key and their updated embedding as value.
         """
-        out_dict: Dict[str, Any] = defaultdict(list)
+        out_dict: Dict[str, Any] = dict()
         for edge_type in filter(self._accepts_edge, edge_index_dict.keys()):
             src, rel, dst = edge_type
             if src == dst and src in x_dict:
@@ -66,16 +65,20 @@ class HeteroRouting(torch.nn.Module):
                     x_dict.get(dst, None),
                 )
             else:
-                raise ValueError(
-                    f"Neither src ({src}) nor destination ({dst})"
-                    + f" found in x_dict ({x_dict})"
+                raise KeyError(
+                    f"Neither src ({src}) nor destination ({dst}) found in x_dict ({x_dict})"
                 )
-            out = self._internal_forward(x, edge_index_dict[edge_type], edge_type)
-            out_dict[dst].append(out)
+            out = self._internal_forward(
+                x, edge_index_dict[edge_type], edge_type, **kwargs
+            )
+            if dst not in out_dict:
+                dst_list = out_dict[dst] = []
+            else:
+                dst_list = out_dict[dst]
+            dst_list.append(out)
+        return self._group_output(out_dict, **kwargs)
 
-        return self._group_output({k: v for k, v in out_dict.items()})
-
-    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List], **kwargs) -> Dict[str, Tensor]:
         aggregated: Dict[str, Tensor] = {}
         for key, value in out_dict.items():
             # `hetero_conv.group` does not yet support Aggregation modules
@@ -126,7 +129,8 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
         self.use_cuda_streams = torch.cuda.is_available() and use_cuda_streams
         self._cuda_streams = None
         self._cuda_pool = None
-        self.static_simple_conv = SimpleConv()
+        # simple conv merely groups the messages of source nodes to target nodes without modifying them.
+        self.group_incoming_features = SimpleConv()
         self.src_type = src_type
 
     @property
@@ -152,12 +156,12 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
         src, *_ = edge_type
         return src == self.src_type
 
-    def _internal_forward(self, x, edge_index, edge_type: EdgeType):
+    def _internal_forward(self, x, edge_index, edge_type: EdgeType, **kwargs):
         position = int(edge_type[1])
-        out = self.static_simple_conv(x, edge_index)
+        out = self.group_incoming_features(x, edge_index)
         return position, out
 
-    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List], **kwargs) -> Dict[str, Tensor]:
         grouped = dict()
         for predicate, value in out_dict.items():
             sorted_out = sorted(value, key=operator.itemgetter(0))
@@ -165,9 +169,34 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
             update_module = self.update_modules[predicate]
             with torch.cuda.stream(self.next_stream()):
                 grouped[predicate] = update_module(stacked)
+        self._sync_streams()
+        return grouped
+
+    def _sync_streams(self):
         if self.use_cuda_streams and (cuda_streams := self.cuda_streams) is not None:
             for stream in cuda_streams:
                 stream.synchronize()
+
+
+class ConditionalFanOutMP(FanOutMP):
+    def _group_output(
+        self, out_dict: Dict[str, List], condition: Tensor = None, **kwargs
+    ) -> Dict[str, Tensor]:
+        """
+        Group the output by predicate and apply the update module to each predicate's messages.
+
+        Also requires a condition tensor that is concatenated to the messages at the end.
+        """
+        grouped = dict()
+        for predicate, value in out_dict.items():
+            sorted_out = sorted(value, key=operator.itemgetter(0))
+            stacked = torch.cat(
+                tuple(itertools.chain((out for _, out in sorted_out), condition)), dim=1
+            )
+            update_module = self.update_modules[predicate]
+            with torch.cuda.stream(self.next_stream()):
+                grouped[predicate] = update_module(stacked)
+        self._sync_streams()
         return grouped
 
 
@@ -189,10 +218,10 @@ class FanInMP(HeteroRouting):
         *_, dst = edge_type
         return dst == self.dst_name
 
-    def _internal_forward(self, x, edges_index, edge_type):
+    def _internal_forward(self, x, edges_index, edge_type, **kwargs):
         return self.select(x, edges_index, int(edge_type[1]))
 
-    def _group_output(self, out_dict: Dict[str, List]) -> Dict[str, Tensor]:
+    def _group_output(self, out_dict: Dict[str, List], **kwargs) -> Dict[str, Tensor]:
         aggregated = {}
         for dst, values in out_dict.items():
             if dst == self.dst_name:

@@ -190,7 +190,9 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         # For object nodes, we use a uniform feature vector of size 1.
         for node_type, nodes_of_type in nodes_dict.items():
             if node_type == self.obj_type_id:
-                x = torch.zeros((len(nodes_of_type), 1), dtype=torch.float32)
+                # we give x two dimensions of features here (instead of just 1), to make it easier to later simply call
+                # x.shape[1] - 1 to get the arity of the atom without accidentally ruining object initialization
+                x = torch.zeros((len(nodes_of_type), 2), dtype=torch.float32)
             else:
                 arity = self.arity_dict[node_type]
                 # ensure arity 0 also has a non-empty status vector

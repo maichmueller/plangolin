@@ -53,7 +53,7 @@ class PaddingMixin:
         return super().forward(x, *args, **kwargs)
 
 
-class MLPFactory:
+class ArityMLPFactory:
     class PaddingMLP(PaddingMixin, MLP): ...
 
     class PaddingResidualModule(PaddingMixin, ResidualModule): ...
@@ -61,6 +61,8 @@ class MLPFactory:
     def __init__(
         self,
         feature_size: int,
+        in_extra_features: int | None = None,
+        out_extra_features: int | None = None,
         added_arity: int = 0,
         residual: bool = True,
         padding: str | None = None,
@@ -82,6 +84,8 @@ class MLPFactory:
         :param feature_size: The feature size to use for the MLP.
         """
         self.feature_size = feature_size
+        self.in_extra_features = in_extra_features or 0
+        self.out_extra_features = out_extra_features or 0
         self.added_arity = added_arity
         self.residual = residual
         self.padding = padding
@@ -118,11 +122,11 @@ class MLPFactory:
         outer_kwargs: dict[str, Any] = {}
         if not self.residual:
             return self._make_mlp(
-                MLP if self.padding is None else MLPFactory.PaddingMLP, arity
+                MLP if self.padding is None else ArityMLPFactory.PaddingMLP, arity
             )
         else:
             if self.padding is not None:
-                outer = MLPFactory.PaddingResidualModule
+                outer = ArityMLPFactory.PaddingResidualModule
                 outer_kwargs = {
                     "expected_input_dim": arity_feature_size,
                     "loc": self.padding,
@@ -134,9 +138,9 @@ class MLPFactory:
     def _make_mlp(self, class_: type[MLP], arity: int) -> torch.nn.Module:
         arity_feature_size = self.arity_feature_size(arity)
         return class_(
-            in_features=arity_feature_size,
+            in_features=arity_feature_size + self.in_extra_features,
             num_cells=[arity_feature_size] * self.num_layers,
-            out_features=arity_feature_size,
+            out_features=arity_feature_size + self.out_extra_features,
             activation_class=type(activation_resolver(self.activation)),
             **self.kwargs,
         )

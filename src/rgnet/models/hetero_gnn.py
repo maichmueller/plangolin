@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import logging
-from typing import Callable, Dict, Iterable, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Union
 
 import torch
 import torch_geometric as pyg
@@ -12,12 +12,12 @@ from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
-from rgnet.models.hetero_message_passing import FanInMP, FanOutMP
+from rgnet.models.hetero_message_passing import ConditionalFanOutMP, FanInMP, FanOutMP
 from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
 from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
-from .mlp import MLPFactory
+from .mlp import ArityMLPFactory
 
 
 def simple_mlp(
@@ -101,11 +101,42 @@ class HeteroGNN(PyGHeteroModule):
 
         activation = activation or "mish"
 
+        # the module to send node-features from objects to atoms
+        self.objects_to_atom_mp: torch.nn.Module
+        # the module to send created messages from atoms back to objects
+        self.atoms_to_object_mp: torch.nn.Module
+        # the module to update object embeddings based on the final object messages
+        self.embedding_updater: torch.nn.Module
+        self._init_modules(
+            embedding_size,
+            num_layer,
+            obj_type_id,
+            arity_dict,
+            aggr,
+            predicate_module_factory,
+            activation,
+            skip_zero_arity_predicates,
+        )
+
+    def _init_modules(
+        self,
+        embedding_size: int,
+        num_layer: int,
+        obj_type_id: str,
+        arity_dict: Dict[str, int],
+        aggr: Optional[str | pyg.nn.aggr.Aggregation],
+        predicate_module_factory: Callable[[str, int], torch.nn.Module],
+        activation: Union[str, Callable, None],
+        skip_zero_arity_predicates: bool = True,
+    ):
+        """
+        Initializes the modules for the HeteroGNN.
+        """
         if predicate_module_factory is None:
             # One MLP per predicate (goal-predicates included)
             # For a predicate p(o1,...,ok) the corresponding MLP gets k object
             # embeddings as input and generates k outputs, one for each object.
-            predicate_module_factory = MLPFactory(
+            predicate_module_factory = ArityMLPFactory(
                 feature_size=embedding_size,
                 added_arity=0,  # no additional arity
                 residual=True,
@@ -134,31 +165,27 @@ class HeteroGNN(PyGHeteroModule):
             activation=activation,
         )
 
-    def initialize_embeddings(self, x_dict: Dict[str, Tensor]):
+    def initialize_embeddings(
+        self, x_dict: Dict[str, Tensor]
+    ) -> tuple[Dict[str, Tensor], Any]:
         # Initialize embeddings for objects and atoms with 0s.
         # embedding-dims of objects = embedding_size
         # embedding-dims of atoms = (arity of predicate) * embedding_size
         for key, x in x_dict.items():
             assert x.dim() == 2
+            init_embed = torch.zeros(
+                x.shape[0], x.shape[1] * self.embedding_size, device=x.device
+            )
             if self.random_initialization:
                 # Random initialization of embeddings
-                init_embed = torch.nn.init.xavier_uniform_(
-                    torch.empty(
-                        x.shape[0], x.shape[1] * self.embedding_size, device=x.device
-                    )
-                )
                 if self.random_initialization_dims is not None:
-                    init_embed[
-                        :, : self.embedding_size - self.random_initialization_dims
-                    ].zero_()
-                x_dict[key] = init_embed
-            else:
-                x_dict[key] = torch.zeros(
-                    x.shape[0], x.shape[1] * self.embedding_size, device=x.device
-                )
-        return x_dict
+                    init_embed = torch.nn.init.xavier_uniform_(
+                        init_embed[:, -self.random_initialization_dims :]
+                    )
+            x_dict[key] = init_embed
+        return x_dict, None
 
-    def layer(self, x_dict, edge_index_dict):
+    def layer(self, x_dict, edge_index_dict, extra=None):
         """
         # Groups object embeddings that are part of an atom and applies predicate-specific Module (e.g. MLP) based on the edge type.
         """
@@ -202,15 +229,13 @@ class HeteroGNN(PyGHeteroModule):
         Note that the number of objects is not necessarily equal for each state. This tuple can be used to instantiate an `ObjectEmbedding`.
         We do not return this object directly since pytorch would refuse to accept hooks with this return type.
         """
-        # Filter out dummies
-        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
-        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+        x_dict, edge_index_dict = self._filter(x_dict, edge_index_dict)
 
-        # Resize everything by the embedding_size
-        self.initialize_embeddings(x_dict)
+        # Initialize embeddings for objects and atoms.
+        x_dict, extra = self.initialize_embeddings(x_dict)
 
         for _ in range(self.num_layer):
-            self.layer(x_dict, edge_index_dict)
+            self.layer(x_dict, edge_index_dict, extra=extra)
 
         obj_emb = x_dict[self.obj_type_id]
         batch = (
@@ -219,6 +244,11 @@ class HeteroGNN(PyGHeteroModule):
             else torch.zeros(obj_emb.shape[0], dtype=torch.long, device=obj_emb.device)
         )
         return obj_emb, batch
+
+    def _filter(self, x_dict, edge_index_dict):
+        x_dict = {k: v for k, v in x_dict.items() if v.numel() != 0}
+        edge_index_dict = {k: v for k, v in edge_index_dict.items() if v.numel() != 0}
+        return x_dict, edge_index_dict
 
 
 class ValueHeteroGNN(HeteroGNN):
@@ -259,40 +289,87 @@ class ValueHeteroGNN(HeteroGNN):
 
 
 class ILGHeteroGNN(HeteroGNN):
-    def __init__(
-        self,
-        *args,
-        arity_dict: Dict[str, int],
-        **kwargs,
-    ):
-        arity_dict = {pred: arity for pred, arity in arity_dict.items() if arity > 0}
+    def __init__(self, embedding_size: int, *args, **kwargs):
+        # +1 embedding size to add a condition input for each MLP corresponding the the atom status.
         super().__init__(
+            embedding_size + 1,
             *args,
-            arity_dict=arity_dict,
             **kwargs,
         )
 
-    def _filter_out_goal_predicates(
-        self, edge_index_dict: Dict[PredicateEdgeType, Adj]
-    ) -> Dict[PredicateEdgeType, Adj]:
+    def _init_modules(
+        self,
+        embedding_size: int,
+        num_layer: int,
+        obj_type_id: str,
+        arity_dict: Dict[str, int],
+        aggr: Optional[str | pyg.nn.aggr.Aggregation],
+        predicate_module_factory: Callable[[str, int], torch.nn.Module],
+        activation: Union[str, Callable, None],
+        skip_zero_arity_predicates: bool = True,
+    ):
         """
-        Filter out goal predicates from the edge_index_dict.
-        Goal predicates are those with arity 0.
+        Initializes the modules for the HeteroGNN.
         """
-        return {
-            edge_type: edge_index
-            for edge_type, edge_index in edge_index_dict.items()
-            if edge_type.predicate not in self.objects_to_atom_mp.predicate_module_dict
+        if predicate_module_factory is None:
+            # One MLP per predicate (goal-predicates included)
+            # For a predicate p(o1,...,ok) the corresponding MLP gets k object
+            # embeddings as input and generates k outputs, one for each object.
+            predicate_module_factory = ArityMLPFactory(
+                feature_size=embedding_size,
+                in_extra_features=1,  # single value feature for the atom status condition
+                added_arity=0,  # no additional arity
+                residual=True,
+                padding=None,  # no padding
+                num_layers=1,  # one layer per predicate
+                activation=activation,
+            )
+        predicate_module_dict = {
+            pred: predicate_module_factory(pred, arity)
+            for pred, arity in arity_dict.items()
+            if arity > 0 or not skip_zero_arity_predicates
         }
 
-    def forward(
-        self,
-        x_dict: Dict[str, Tensor],
-        edge_index_dict: Dict[PredicateEdgeType, Adj],
-        batch_dict: Optional[Dict[str, Tensor]] = None,
-        info_dict: Optional[Dict[str, Tensor]] = None,
-    ) -> torch.Tensor:
-        object_embeddings = ObjectEmbedding.from_sparse(
-            *super().forward(x_dict, edge_index_dict, batch_dict)
+        self.objects_to_atom_mp = ConditionalFanOutMP(
+            predicate_module_dict, src_type=obj_type_id
         )
-        return self.readout(object_embeddings).view(-1)
+        self.atoms_to_object_mp = FanInMP(
+            embedding_size=embedding_size,
+            dst_name=obj_type_id,
+            aggr=aggr,
+        )
+        # Updates object embedding from embedding of last iteration and current iteration:
+        # `X_o = comb([X_o, m_o])` where `m_o` is the final object message
+        self.embedding_updater = simple_mlp(
+            in_size=2 * embedding_size,
+            embedding_size=2 * embedding_size,
+            out_size=embedding_size,
+            activation=activation,
+        )
+
+    def initialize_embeddings(
+        self, x_dict: Dict[str, Tensor]
+    ) -> tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+        x_dict_copy = dict()
+        atom_status_condition = dict()
+        for key, x in x_dict.items():
+            assert x.dim() == 2
+            # remove the last column (it was added extra for 0-arity predicates)
+            x_trunc = x[:, :-1]
+            if x_trunc.numel() > 0:
+                # this model does not support 0-arity predicates, so such atoms are left out
+                x_dict_copy[key] = x_trunc
+                condition: torch.Tensor = x_trunc.flatten()[0]
+                atom_status_condition[key] = condition * torch.ones(
+                    (x.shape[0], 1), device=x.device
+                )
+        x_dict, _ = super().initialize_embeddings(x_dict)
+        return x_dict, atom_status_condition
+
+    def layer(self, x_dict, edge_index_dict, extra: dict[str, Tensor] | None = None):
+        assert extra is not None, "extra must contain atom-label condition"
+        x_dict = {
+            k: torch.cat([extra[k], v], dim=1) if k in extra else v
+            for k, v in x_dict.items()
+        }
+        return super().layer(x_dict, edge_index_dict, extra=None)
