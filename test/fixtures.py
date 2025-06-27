@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 import xmimir as xmi
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory, GraphEncoderBase
+from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import FlashDrive
 from rgnet.rl.data.atom_drive import AtomDrive
@@ -182,6 +183,17 @@ def hetero_encoded_state(request):
         prob_param,
         which_state_param,
         HeteroGraphEncoder,
+    )
+
+
+@pytest.fixture
+def ilg_hetero_encoded_state(request):
+    domain_param, prob_param, which_state_param = request.param
+    return encoded_state(
+        domain_param,
+        prob_param,
+        which_state_param,
+        HeteroILGGraphEncoder,
     )
 
 

@@ -14,7 +14,62 @@ from torch_geometric.data import HeteroData
 
 import xmimir as xmi
 from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
+from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
 from rgnet.utils import import_all_from
+
+
+# ——————————————
+# 1) data → validate
+# ——————————————
+@pytest.mark.parametrize(
+    "encoder_type",
+    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    ids=["hetero", "hetero_ilg"],
+)
+@pytest.mark.parametrize("domain", ["blocks", "blocks_eq"])
+def test_hetero_data(domain, encoder_type):
+    domain_name, problems = import_all_from(f"test/pddl_instances/{domain}")
+    for prob in problems:
+        if "large" in prob.filepath:
+            continue
+        logging.info(f"testing {prob.name} with {encoder_type.__name__!r}")
+        state_space = xmi.XStateSpace(prob)
+        encoder = encoder_type(state_space.problem.domain)
+
+        for state in state_space:
+            data = encoder.to_pyg_data(encoder.encode(state))
+            data.validate()
+            validate_hetero_data(data, encoder)
+
+
+# ——————————————
+# 2) round‐trip decode
+# ——————————————
+#
+# we parametrize over the two different indirect fixtures you already have,
+# plus the right node‐matching keys for each encoder.
+#
+@pytest.mark.parametrize(
+    "fixture_name,node_keys,node_defaults",
+    [
+        ("hetero_encoded_state", ["type"], [None]),
+        ("ilg_hetero_encoded_state", ["type", "status"], [None, None]),
+    ],
+    ids=["hetero", "hetero_ilg"],
+)
+def test_decode(fixture_name, node_keys, node_defaults, request):
+    # get the (graph, encoder) pair from the named fixture
+    graph, encoder = request.getfixturevalue(fixture_name)
+
+    data = encoder.to_pyg_data(graph)
+    decoded = encoder.from_pyg_data(data)
+
+    node_match = iso.categorical_node_match(node_keys, node_defaults)
+    edge_match = iso.numerical_multiedge_match("position", None)
+
+    assert nx.is_isomorphic(
+        graph, decoded, node_match=node_match, edge_match=edge_match
+    )
 
 
 @pytest.mark.parametrize("domain", ["blocks", "blocks_eq"])
@@ -56,32 +111,62 @@ def test_hetero_data(domain):
         "blocks_eq-medium-goal",
     ],
 )
-def test_decode(hetero_encoded_state):
+@pytest.mark.parametrize(
+    ["encoder_type", "node_attrs", "node_defaults", "edge_attrs", "edge_defaults"],
+    list(
+        zip(
+            [HeteroGraphEncoder, HeteroILGGraphEncoder],
+            [["type"], ["type", "status"]],
+            [[None], [None, None]],
+            [["position"], ["position"]],
+            [[None], [None]],
+        )
+    ),
+    ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
+)
+def test_decode(
+    hetero_encoded_state,
+    encoder_type,
+    node_attrs,
+    node_defaults,
+    edge_attrs,
+    edge_defaults,
+):
     graph, encoder = hetero_encoded_state
     data = encoder.to_pyg_data(graph)
     decoded = encoder.from_pyg_data(data)
-    node_match = iso.categorical_node_match("type", None)
-    edge_match = iso.numerical_multiedge_match("position", None)
+    node_match = iso.categorical_node_match(node_attrs, node_defaults)
+    edge_match = iso.numerical_multiedge_match(edge_attrs, edge_defaults)
     assert nx.is_isomorphic(
         graph, decoded, node_match=node_match, edge_match=edge_match
     )
 
 
-def test_consistent_order_of_objects(small_blocks):
+@pytest.mark.parametrize(
+    "encoder_type",
+    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
+)
+def test_consistent_order_of_objects(encoder_type, small_blocks):
     """
     Its quite important that the order of objects in the torch_geometric encoding is consistent.
     Meaning that if object 'A' in encoder.to_pyg_data(encoder.encode(state)).x_dict["obj"] is at index i,
     then 'A' is also at index i for all other states of the same problem.
     """
     space, domain, medium_problem = small_blocks
-    encoder = HeteroGraphEncoder(domain)
+    encoder = encoder_type(domain)
     initial = space.initial_state
     initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
 
     def obj_to_on_g_edge_index(graph):
-        return graph.get_edge_store(
-            encoder.obj_type_id, "0", "on" + encoder.node_factory.goal_suffix
-        ).edge_index
+        if isinstance(encoder, HeteroILGGraphEncoder):
+            # we dont separate on and on_g in ILG encodings, so just use "on"
+            # (which we know is in the graph due to the goal having an "on" atom)
+            return graph.get_edge_store(encoder.obj_type_id, "0", "on").edge_index
+        else:
+            return graph.get_edge_store(
+                encoder.obj_type_id, "0", "on" + encoder.node_factory.goal_suffix
+            ).edge_index
 
     obj_0_on_g_index: torch.Tensor = obj_to_on_g_edge_index(initial_pyg)
 
@@ -98,10 +183,15 @@ def test_consistent_order_of_objects(small_blocks):
     )
 
 
-def test_consistent_object_node_to_names(small_blocks, medium_blocks):
+@pytest.mark.parametrize(
+    "encoder_type",
+    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
+)
+def test_consistent_object_node_to_names(encoder_type, small_blocks, medium_blocks):
     space, domain, medium_problem = small_blocks
     space2, domain2, medium_problem2 = medium_blocks
-    encoder = HeteroGraphEncoder(domain)
+    encoder = encoder_type(domain)
     initial = space.initial_state
     initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
     successors = [
@@ -131,7 +221,9 @@ def test_consistent_object_node_to_names(small_blocks, medium_blocks):
     )
 
 
-def validate_hetero_data(data: HeteroData, encoder: HeteroGraphEncoder):
+def validate_hetero_data(
+    data: HeteroData, encoder: HeteroILGGraphEncoder | HeteroGraphEncoder
+):
     # for ["obj", *, pred], and ["obj", *, pred] there are exactly arity(pred) many edges
     assert encoder.obj_type_id in data.node_types
     x_dict = data.x_dict
