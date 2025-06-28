@@ -116,7 +116,16 @@ class ExpansionNode(NamedTuple):
 
 class ExpansionStrategy:
     def __init__(self):
-        self.options = None
+        self.options: list[ExpansionNode] | None = None
+        self._start_state: XState | None = None
+
+    @property
+    def start_state(self) -> XState:
+        return self._start_state
+
+    @start_state.setter
+    def start_state(self, state: XState):
+        self._start_state = state
 
     def consume(self, options: List[ExpansionNode]):
         self.options = options
@@ -130,6 +139,21 @@ class ExpansionStrategy:
 
     def __str__(self):
         return f"{self.__class__.__name__}()"
+
+    def __getstate__(self):
+        """
+        Custom serialization to avoid issues with unhashable types in options.
+        """
+        state = self.__dict__.copy()
+        state["options"] = None
+        state["_start_state"] = None
+        return state
+
+    def __setstate__(self, state):
+        """
+        Custom deserialization to avoid issues with unhashable types in options.
+        """
+        self.__dict__.update(state)
 
 
 class InOrderExpansion(ExpansionStrategy):
@@ -159,6 +183,79 @@ class RandomizedExpansion(ExpansionStrategy):
 
     def __str__(self):
         return f"{self.__class__.__name__}(seed={self.seed})"
+
+
+class GoalProgressionExpansion(ExpansionStrategy):
+    """
+    An expansion strategy that expands nodes based whether they do not undo already satisfied goals.
+    Nodes that maintain the goal progression are expanded first.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._goal: tuple[XLiteral, ...] | None = None
+        self._nr_goals: int | None = None
+        self._satisfied_goals: set[XLiteral] | None = None
+
+    @property
+    def start_state(self) -> XState | None:
+        return self._start_state
+
+    @start_state.setter
+    def start_state(self, state: XState):
+        """
+        Sets the start state for the expansion strategy.
+        This is used to determine the goal literals that should not be undone.
+        """
+        self._start_state = state
+        self._goal = state.problem.goal()
+        self._nr_goals = len(self._goal)
+        self._satisfied_goals = set(state.satisfied_literals(self._goal))
+
+    def consume(self, options: List[ExpansionNode]):
+        """
+        Consumes the options and sets the goal for the expansion strategy.
+        This is used to determine which nodes should be expanded first based on goal satisfaction.
+        """
+        # sort in descending order, the higher the number the better
+        options = sorted(options, key=self._goal_satisfaction_order, reverse=True)
+        self.options = options
+        return self
+
+    def _goal_satisfaction_order(self, node: ExpansionNode) -> int:
+        """
+        Returns the number of goal literals that are satisfied by the node's state.
+        This is used to determine the order in which nodes should be expanded.
+        """
+        node_satisfied_literals = set(node.state.satisfied_literals(self._goal))
+        undone_goals = self._satisfied_goals - node_satisfied_literals
+        newly_satisfied_goals = node_satisfied_literals - self._satisfied_goals
+        # Ranking by undone goals first, and new goals added second.
+        # Since #new_goals <= #goals each undone goal lowers the score to a new plateau
+        # that cannot be surpassed by new goals added, hence ensuring the factored ranking.
+        return -(len(undone_goals) * self._nr_goals) + len(newly_satisfied_goals)
+
+    def __iter__(self):
+        return iter(self.options)
+
+    def __getstate__(self):
+        """
+        Custom serialization to avoid issues with unhashable types in options.
+        """
+        state = super().__getstate__()
+        state["_goal"] = None
+        state["_nr_goals"] = None
+        state["_satisfied_goals"] = None
+        return state
+
+    def __setstate__(self, state):
+        """
+        Custom deserialization to avoid issues with unhashable types in options.
+        """
+        super().__setstate__(state)
+        self._goal = None
+        self._nr_goals = None
+        self._satisfied_goals = None
 
 
 class CollectorHook:
@@ -221,6 +318,9 @@ class IWSearch:
 
         if start_state is None:
             start_state = successor_generator.initial_state
+        # reset the start state for the expansion strategy
+        self.expansion_strategy.start_state = start_state
+
         novelty_condition.test(start_state)
         if atom_tuples_to_avoid is not None:
             novelty_condition.add_known_tuples(atom_tuples_to_avoid)
