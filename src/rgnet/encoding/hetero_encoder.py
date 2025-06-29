@@ -30,19 +30,25 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
 
     """
 
+    goal_satisfied_suffix = "_sat"
+
     def __init__(
         self,
         domain: XDomain,
         node_factory: NodeFactory | None = None,
         obj_type_id: str = "obj",
+        add_goal_satisfied_atoms: bool = False,
     ) -> None:
         super().__init__(domain)
         self.obj_type_id: str = obj_type_id
         # Initialize the default here to please jsonargparse.
         self.node_factory: NodeFactory = node_factory or NodeFactory()
+        self.add_goal_satisfied_atoms = add_goal_satisfied_atoms
         self.predicates: tuple[XPredicate, ...] = self.domain.predicates()
         self.arity_dict: Dict[Node, int] = HeteroGraphEncoder.make_arity_dict(
-            self.predicates, self.node_factory
+            self.predicates,
+            self.node_factory,
+            add_goal_satisfied_atoms=add_goal_satisfied_atoms,
         )
         # Generate all possible edge types
         self.all_edge_types: List[EdgeType] = []
@@ -61,24 +67,35 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     @staticmethod
     @cache
     def make_arity_dict(
-        predicates: tuple[XPredicate], node_factory: NodeFactory = NodeFactory()
+        predicates: tuple[XPredicate],
+        node_factory: NodeFactory = NodeFactory(),
+        add_goal_satisfied_atoms: bool = False,
     ) -> Dict[Node, int]:
-        return dict(
-            sorted(
-                (
-                    (node_factory(predicate, **kwargs_dict), predicate.arity)
-                    for predicate in predicates
-                    for kwargs_dict in (
-                        {"is_goal": True, "is_negated": False},
-                        {"is_goal": False, "is_negated": False},
-                        {"is_goal": True, "is_negated": True},
-                    )
-                ),
-                key=operator.itemgetter(0),
+        ad = [
+            (node_factory(predicate, **kwargs_dict), predicate.arity)
+            for predicate in predicates
+            for kwargs_dict in (
+                {"is_goal": True, "is_negated": False},
+                {"is_goal": False, "is_negated": False},
+                {"is_goal": True, "is_negated": True},
             )
-        )
+        ]
+        if add_goal_satisfied_atoms:
+            for predicate in predicates:
+                ad.append(
+                    (
+                        f"{node_factory(predicate, is_goal=True, is_negated=False)}_sat",
+                        predicate.arity,
+                    )
+                )
+        ad = dict(sorted(ad, key=operator.itemgetter(0)))
+        return ad
 
-    def _encode(self, items: Sequence[XAtom | XLiteral], graph: GraphT):
+    def _encode(
+        self,
+        items: Sequence[XAtom | XLiteral],
+        graph: GraphT,
+    ) -> None:
         # Build hetero graph from state
         # One node for each object
         # One node for each atom
@@ -102,14 +119,41 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             if arity == 0:
                 continue
 
-            atom_node = self.node_factory(atom_or_literal)
+            atom_or_literal_node = self.node_factory(atom_or_literal)
             graph.add_node(
-                atom_node, type=self.node_factory(predicate, is_goal=is_goal)
+                atom_or_literal_node, type=self.node_factory(predicate, is_goal=is_goal)
             )
 
             for pos, obj in enumerate(atom.objects):
                 # Connect predicate node to object node
-                graph.add_edge(self.node_factory(obj), atom_node, position=pos)
+                graph.add_edge(
+                    self.node_factory(obj), atom_or_literal_node, position=pos
+                )
+        # Add goal satisfied atoms if requested
+        if self.add_goal_satisfied_atoms:
+            goals = []
+            actual_atoms = []
+            for item in items:
+                if isinstance(item, XAtom):
+                    actual_atoms.append(item)
+                else:
+                    goals.append(item)
+            satisfied_goals = [
+                goal
+                for goal in goals
+                if any(goal.atom.semantic_eq(atom) for atom in actual_atoms)
+                != goal.is_negated
+            ]
+            for goal in satisfied_goals:
+                literal_node = self.node_factory(goal) + self.goal_satisfied_suffix
+                graph.add_node(
+                    literal_node,
+                    type=self.node_factory(goal.atom.predicate, is_goal=True)
+                    + self.goal_satisfied_suffix,
+                )
+                for pos, obj in enumerate(goal.atom.objects):
+                    # Connect satisfied goal node to object node
+                    graph.add_edge(self.node_factory(obj), literal_node, position=pos)
 
     @check_encoded_by_this
     def to_pyg_data(self, graph: GraphT) -> HeteroData:
@@ -185,7 +229,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     def from_pyg_data(self, data: HeteroData) -> GraphT:
         """
         Reconstruct a graph from a HeteroData object.
-        Every node has a type attribute, either self.obj_type_id or a predicate name.
+        Every node has a type attribute, either self.obj_type_id or a ext_predicate name.
         Node names are the concatenation of the type and the index in the feature matrix.
         Edge labels are the position in the atom.
         The returned graph is not the exact same as one returned by encode, but isomorphic.
@@ -222,6 +266,14 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                 f"{self.node_factory.negation_prefix}{pred}"
                 for pred in self.arity_dict.keys()
             }
+            | {
+                f"{pred}{self.node_factory.goal_suffix}{self.goal_satisfied_suffix}"
+                for pred in self.arity_dict.keys()
+            }
+            | {
+                f"{self.node_factory.negation_prefix}{pred}{self.node_factory.goal_suffix}{self.goal_satisfied_suffix}"
+                for pred in self.arity_dict.keys()
+            }
         ):
             raise ValueError(
                 f"Graph predicates are not a subset of the encoder's domain predicates: "
@@ -247,23 +299,25 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                     raise ValueError(
                         f"Both src and dst are objects: {edge_type=}, {src_idx=}, {dst_idx=}."
                     )
-        for (predicate, atom_idx), obj_dict in atoms.items():
+        for (ext_predicate, atom_idx), obj_dict in atoms.items():
             pos_obj_tuples = sorted(obj_dict.items(), key=operator.itemgetter(0))
-            is_goal = predicate.endswith(self.node_factory.goal_suffix)
-            is_negated = predicate.startswith(self.node_factory.negation_prefix)
-            predicate_name = predicate[
-                len(self.node_factory.negation_prefix) * is_negated : len(predicate)
-                - (len(self.node_factory.goal_suffix) * is_goal)
-            ]
-            atom_str = (
-                (self.node_factory.negation_prefix if is_negated else "")
-                + atom_str_template.render(
-                    predicate=predicate_name,
-                    objects=[obj for pos, obj in pos_obj_tuples],
-                )
-                + (self.node_factory.goal_suffix if is_goal else "")
+            predicate = ext_predicate[:]
+            prefix, goal_suffix, goal_sat_suffix = "", "", ""
+            if predicate.endswith(self.goal_satisfied_suffix):
+                predicate = predicate[: -len(self.goal_satisfied_suffix)]
+                goal_sat_suffix = self.goal_satisfied_suffix
+            if predicate.endswith(self.node_factory.goal_suffix):
+                predicate = predicate[: -len(self.node_factory.goal_suffix)]
+                goal_suffix = self.node_factory.goal_suffix
+            if ext_predicate.startswith(self.node_factory.negation_prefix):
+                predicate = predicate[len(self.node_factory.negation_prefix) :]
+                prefix = self.node_factory.negation_prefix
+            atom_str = atom_str_template.render(
+                predicate=predicate,
+                objects=[obj for pos, obj in pos_obj_tuples],
             )
-            graph.add_node(atom_str, type=predicate)
+            atom_str = f"{prefix}{atom_str}{goal_suffix}{goal_sat_suffix}"
+            graph.add_node(atom_str, type=ext_predicate)
             for pos, obj in pos_obj_tuples:
                 graph.add_edge(
                     atom_str,

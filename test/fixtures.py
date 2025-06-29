@@ -154,35 +154,49 @@ def encoded_state(
 
 @pytest.fixture
 def color_encoded_state(request):
-    domain_param, prob_param, which_state_param, add_param = request.param
+    if len(request.param) == 4:
+        domain_param, prob_param, which_state_param, kwargs = request.param
+    else:
+        domain_param, prob_param, which_state_param = request.param
+        kwargs = {}
     return encoded_state(
         domain_param,
         prob_param,
         which_state_param,
         ColorGraphEncoder,
-        enable_global_predicate_nodes=add_param,
+        **kwargs,
     )
 
 
 @pytest.fixture
 def direct_encoded_state(request):
-    domain_param, prob_param, which_state_param = request.param
+    if len(request.param) == 4:
+        domain_param, prob_param, which_state_param, kwargs = request.param
+    else:
+        domain_param, prob_param, which_state_param = request.param
+        kwargs = {}
     return encoded_state(
         domain_param,
         prob_param,
         which_state_param,
         DirectGraphEncoder,
+        **kwargs,
     )
 
 
 @pytest.fixture
 def hetero_encoded_state(request):
-    domain_param, prob_param, which_state_param = request.param
+    if len(request.param) == 4:
+        domain_param, prob_param, which_state_param, kwargs = request.param
+    else:
+        domain_param, prob_param, which_state_param = request.param
+        kwargs = {}
     return encoded_state(
         domain_param,
         prob_param,
         which_state_param,
         HeteroGraphEncoder,
+        **kwargs,
     )
 
 

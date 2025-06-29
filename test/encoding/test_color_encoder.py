@@ -1,11 +1,13 @@
-from test.fixtures import color_encoded_state
-
 import pytest
+from fixtures import *  # noqa: F401, F403
 
 
 @pytest.mark.parametrize(
     "color_encoded_state",
-    [["blocks", "small", "initial", False], ["blocks", "small", "initial", True]],
+    [
+        ["blocks", "small", "initial", {"enable_global_predicate_nodes": False}],
+        ["blocks", "small", "initial", {"enable_global_predicate_nodes": True}],
+    ],
     indirect=True,
 )
 def test_color_encoding_initial(color_encoded_state):
@@ -28,7 +30,7 @@ def test_color_encoding_initial(color_encoded_state):
 
 @pytest.mark.parametrize(
     "color_encoded_state",
-    [["blocks", "small", "goal", False]],
+    [["blocks", "small", "goal", {"enable_global_predicate_nodes": False}]],
     indirect=True,
 )
 def test_color_encoding_goal(color_encoded_state):

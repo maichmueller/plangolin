@@ -1,3 +1,4 @@
+import itertools
 import logging
 from collections import defaultdict
 from test.fixtures import (  # noqa: F401
@@ -18,15 +19,12 @@ from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
 from rgnet.utils import import_all_from
 
 
-# ——————————————
-# 1) data → validate
-# ——————————————
 @pytest.mark.parametrize(
     "encoder_type",
     [HeteroGraphEncoder, HeteroILGGraphEncoder],
     ids=["hetero", "hetero_ilg"],
 )
-@pytest.mark.parametrize("domain", ["blocks", "blocks_eq"])
+@pytest.mark.parametrize("domain", ["blocks", "blocks_eq", "spanner"])
 def test_hetero_data(domain, encoder_type):
     domain_name, problems = import_all_from(f"test/pddl_instances/{domain}")
     for prob in problems:
@@ -42,101 +40,114 @@ def test_hetero_data(domain, encoder_type):
             validate_hetero_data(data, encoder)
 
 
-# ——————————————
-# 2) round‐trip decode
-# ——————————————
-#
-# we parametrize over the two different indirect fixtures you already have,
-# plus the right node‐matching keys for each encoder.
-#
-@pytest.mark.parametrize(
-    "fixture_name,node_keys,node_defaults",
-    [
-        ("hetero_encoded_state", ["type"], [None]),
-        ("ilg_hetero_encoded_state", ["type", "status"], [None, None]),
-    ],
-    ids=["hetero", "hetero_ilg"],
-)
-def test_decode(fixture_name, node_keys, node_defaults, request):
-    # get the (graph, encoder) pair from the named fixture
-    graph, encoder = request.getfixturevalue(fixture_name)
-
-    data = encoder.to_pyg_data(graph)
-    decoded = encoder.from_pyg_data(data)
-
-    node_match = iso.categorical_node_match(node_keys, node_defaults)
-    edge_match = iso.numerical_multiedge_match("position", None)
-
-    assert nx.is_isomorphic(
-        graph, decoded, node_match=node_match, edge_match=edge_match
-    )
-
-
-@pytest.mark.parametrize("domain", ["blocks", "blocks_eq"])
-def test_hetero_data(domain):
-    domain, problems = import_all_from(f"test/pddl_instances/{domain}")
+@pytest.mark.parametrize("domain", ["blocks", "blocks_eq", "spanner"])
+def test_hetero_sat_goal_encoding(domain):
+    domain_name, problems = import_all_from(f"test/pddl_instances/{domain}")
     for prob in problems:
         if "large" in prob.filepath:
             continue
-        logging.info("Testing problem: " + prob.name)
         state_space = xmi.XStateSpace(prob)
-        encoder = HeteroGraphEncoder(state_space.problem.domain)
+        encoder = HeteroGraphEncoder(
+            state_space.problem.domain, add_goal_satisfied_atoms=True
+        )
+
+        goals = state_space.problem.goal()
         for state in state_space:
-            data = encoder.to_pyg_data(encoder.encode(state))
-            data.validate()
-            validate_hetero_data(data, encoder)
+            sat_goals = tuple(state.satisfied_literals(goals))
+            graph = encoder.encode(state)
+            enc_sat_nodes = list(
+                filter(lambda n: n.endswith(encoder.goal_satisfied_suffix), graph.nodes)
+            )
+            assert len(enc_sat_nodes) == len(sat_goals)
+            sat_atom_edges = defaultdict(list)
+            for node in enc_sat_nodes:
+                for atom, obj in graph.edges(node):
+                    sat_atom_edges[atom].append(obj)
+            for goal in sat_goals:
+                gatom = goal.atom
+                objs = set(o.get_name() for o in gatom.objects)
+                enc_atom_str = (
+                    encoder.node_factory(goal) + encoder.goal_satisfied_suffix
+                )
+                enc_objs = sat_atom_edges[enc_atom_str]
+                assert len(enc_objs) == len(objs), (
+                    f"Encoded objects {enc_objs} for goal {goal} "
+                    f"do not match expected objects {objs}."
+                )
+                for enc_obj in enc_objs:
+                    assert enc_obj in objs, (
+                        f"Encoded object {enc_obj} for goal {goal} "
+                        f"not in expected objects {objs}."
+                    )
 
 
 @pytest.mark.parametrize(
     "hetero_encoded_state",
     [
-        ["blocks", "small", "initial"],
-        ["blocks", "small", "goal"],
-        ["blocks", "medium", "initial"],
-        ["blocks", "medium", "goal"],
-        ["blocks_eq", "small", "initial"],
-        ["blocks_eq", "small", "goal"],
-        ["blocks_eq", "medium", "initial"],
-        ["blocks_eq", "medium", "goal"],
+        a + b
+        for a, b in itertools.product(
+            [
+                ["blocks", "small", "initial"],
+                ["blocks", "small", "goal"],
+                ["blocks", "medium", "initial"],
+                ["blocks", "medium", "goal"],
+                ["blocks_eq", "small", "initial"],
+                ["blocks_eq", "small", "goal"],
+                ["blocks_eq", "medium", "initial"],
+                ["blocks_eq", "medium", "goal"],
+            ],
+            [
+                [{"add_goal_satisfied_atoms": False}],
+                [{"add_goal_satisfied_atoms": True}],
+            ],
+        )
     ],
     indirect=True,
     ids=[
-        "blocks-small-initial",
-        "blocks-small-goal",
-        "blocks-medium-initial",
-        "blocks-medium-goal",
-        "blocks_eq-small-initial",
-        "blocks_eq-small-goal",
-        "blocks_eq-medium-initial",
-        "blocks_eq-medium-goal",
+        f"{a}-{b}"
+        for a, b in itertools.product(
+            [
+                "blocks-small-initial",
+                "blocks-small-goal",
+                "blocks-medium-initial",
+                "blocks-medium-goal",
+                "blocks_eq-small-initial",
+                "blocks_eq-small-goal",
+                "blocks_eq-medium-initial",
+                "blocks_eq-medium-goal",
+            ],
+            [
+                "no_goal_satisfied_atoms",
+                "goal_satisfied_atoms",
+            ],
+        )
     ],
 )
 @pytest.mark.parametrize(
-    ["encoder_type", "node_attrs", "node_defaults", "edge_attrs", "edge_defaults"],
+    ["encoder_type", "node_attrs", "node_defaults"],
     list(
         zip(
             [HeteroGraphEncoder, HeteroILGGraphEncoder],
             [["type"], ["type", "status"]],
             [[None], [None, None]],
-            [["position"], ["position"]],
-            [[None], [None]],
         )
     ),
-    ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
+    ids=[
+        "HeteroGraphEncoder",
+        "HeteroILGGraphEncoder",
+    ],
 )
 def test_decode(
     hetero_encoded_state,
     encoder_type,
     node_attrs,
     node_defaults,
-    edge_attrs,
-    edge_defaults,
 ):
     graph, encoder = hetero_encoded_state
     data = encoder.to_pyg_data(graph)
     decoded = encoder.from_pyg_data(data)
     node_match = iso.categorical_node_match(node_attrs, node_defaults)
-    edge_match = iso.numerical_multiedge_match(edge_attrs, edge_defaults)
+    edge_match = iso.numerical_multiedge_match(["position"], [None])
     assert nx.is_isomorphic(
         graph, decoded, node_match=node_match, edge_match=edge_match
     )
