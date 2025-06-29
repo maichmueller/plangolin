@@ -107,6 +107,31 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         # One node for each object
         # One node for each atom
         # Edge label = position in atom
+
+        actual_atoms, missing_goal_atoms, statuses = self._compute_statuses(items)
+
+        for obj in self._contained_objects(items):
+            graph.add_node(
+                self.node_factory(obj), type=self.obj_type_id, name=obj.get_name()
+            )
+
+        for atom in chain(actual_atoms, missing_goal_atoms):
+            predicate = atom.predicate
+            atom_node = self.node_factory(atom)
+            graph.add_node(
+                atom_node,
+                type=self.node_factory(predicate),
+                status=statuses[atom],
+            )
+            if predicate.arity == 0:
+                # If the predicate has arity 0, we add a self-loop to the atom node to ensure it  is connected
+                graph.add_edge(atom_node, atom_node, position=-1)
+            else:
+                for pos, obj in enumerate(atom.objects):
+                    # Connect atom node to object nodes
+                    graph.add_edge(self.node_factory(obj), atom_node, position=pos)
+
+    def _compute_statuses(self, items):
         goals: list[XLiteral] = []
         actual_atoms: list[XAtom] = []
         for atom_or_literal in items:
@@ -143,27 +168,7 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                     statuses[atom] = AtomStatus.SATISFIED_NEGATED_GOAL
                 else:
                     statuses[atom] = AtomStatus.UNSATISFIED_GOAL
-
-        for obj in self._contained_objects(items):
-            graph.add_node(
-                self.node_factory(obj), type=self.obj_type_id, name=obj.get_name()
-            )
-
-        for atom in chain(actual_atoms, missing_goal_atoms):
-            predicate = atom.predicate
-            atom_node = self.node_factory(atom)
-            graph.add_node(
-                atom_node,
-                type=self.node_factory(predicate),
-                status=statuses[atom],
-            )
-            if predicate.arity == 0:
-                # If the predicate has arity 0, we add a self-loop to the atom node to ensure it  is connected
-                graph.add_edge(atom_node, atom_node, position=-1)
-            else:
-                for pos, obj in enumerate(atom.objects):
-                    # Connect atom node to object nodes
-                    graph.add_edge(self.node_factory(obj), atom_node, position=pos)
+        return actual_atoms, missing_goal_atoms, statuses
 
     @check_encoded_by_this
     def to_pyg_data(self, graph: GraphT) -> HeteroData:

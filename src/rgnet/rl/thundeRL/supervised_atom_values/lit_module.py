@@ -1,3 +1,4 @@
+import datetime
 import itertools
 import logging
 import queue
@@ -80,6 +81,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         normalize_loss: bool = True,
         assert_output: bool = False,
         max_queued_batches: int = 0,
+        num_streams: int = 10,
         share_predicate_modules: bool = False,
     ) -> None:
         super().__init__()
@@ -117,6 +119,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         self._in_q: torch.multiprocessing.Queue | None = None
         self._out_q: torch.multiprocessing.Queue | None = None
         self._num_workers = 0  # Default number of workers, can be overridden
+        self._num_streams = num_streams
         self._completion_tags_received = {i: False for i in range(self._num_workers)}
         self._collector_thread = None
         self._collector_running = False
@@ -137,16 +140,30 @@ class AtomValuesLitModule(lightning.LightningModule):
 
     @property
     def cuda_streams(self):
-        if self._cuda_streams is None:
-            self._cuda_streams = [torch.cuda.Stream(self.device) for _ in range(10)]
+        if (
+            self._cuda_streams is None
+            and self._num_streams > 0
+            and self.device.type == "cuda"
+        ):
+            self._cuda_streams = [
+                torch.cuda.Stream(self.device) for _ in range(self._num_streams)
+            ]
             self._cuda_pool = itertools.cycle(self._cuda_streams)
+        else:
+            self._cuda_streams = None
+            self._cuda_pool = itertools.repeat(None)
         return self._cuda_streams
 
     def next_stream(self):
-        if self.device.type != "cuda":
-            return None
-        assert self.cuda_streams
         return next(self._cuda_pool)
+
+    def to(self, device: torch.device):
+        """
+        Override to ensure that the model is moved to the correct device.
+        """
+        out = super().to(device)
+        _ = self.cuda_streams
+        return out
 
     def on_fit_start(self):
         # pass the device to the DataModule
@@ -513,6 +530,9 @@ class AtomValuesLitModule(lightning.LightningModule):
                     )
 
     def on_validation_epoch_end(self) -> None:
+        elapsed = time.time() - self._validation_start_time
+        td = datetime.timedelta(seconds=elapsed)
+        logging.info("Validation epoch finished in %s", str(td))
         self._prev_validation_dataloader_idx = -1
         self._validation_batch_counter = 0
         if self._num_workers > 0:
