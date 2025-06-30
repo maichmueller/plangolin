@@ -1,9 +1,9 @@
 import itertools
 import logging
-import multiprocessing as mp
 import time
 from abc import abstractmethod
 from collections import defaultdict, deque
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
@@ -17,7 +17,7 @@ from rgnet.logging_setup import tqdm
 from rgnet.utils.misc import env_aware_cpu_count
 
 # from .extensions import *
-from xmimir.wrappers import *
+from .wrappers import *
 
 __all__ = [
     "Novelty",
@@ -675,24 +675,23 @@ class IWStateSpace(XStateSpace):
             self.max_time,
         )
         nr_transitions = 0
-        with mp.Pool(
-            processes=num_workers,
+        with ProcessPoolExecutor(
+            max_workers=num_workers,
             initializer=initialize_iw_state_space_worker,
             initargs=worker_args,
-        ) as pool:
-            iterable = pool.imap(IWStateSpace.worker_build_transitions, chunks)
-            for result in (
-                pbar := (
-                    tqdm(
-                        iterable,
-                        total=len(chunks),
-                        desc=f"Building IWStateSpace({Path(self.problem.filepath).stem}) - #Proc: {num_workers}",
-                        ncols=80 + len(f" - #Proc: {num_workers}"),
-                    )
-                    if self.pbar
-                    else iterable
+        ) as executor:
+            iterable = executor.map(IWStateSpace.worker_build_transitions, chunks)
+            progress_iterable = (
+                tqdm(
+                    iterable,
+                    total=len(chunks),
+                    desc=f"Building IWStateSpace({Path(self.problem.filepath).stem}) - #Proc: {num_workers}",
+                    ncols=80 + len(f" - #Proc: {num_workers}"),
                 )
-            ):
+                if self.pbar
+                else iterable
+            )
+            for result in progress_iterable:
                 self._serialized_transitions.extend(result)
                 self._load_from_serialized_transitions(result)
                 nr_transitions += len(result)

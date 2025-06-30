@@ -78,7 +78,12 @@ def test_siw(problem, width):
             raise ValueError(f"Problem {problem.name} not tested.")
 
     successor_gen = xmi.XSuccessorGenerator(problem)
-    state = siw(successor_gen.initial_state, decomposition, successor_gen, width)
+    state = siw(
+        successor_gen.initial_state,
+        decomposition,
+        successor_gen,
+        IWSearch(width, expansion_strategy=InOrderExpansion()),
+    )
 
     assert state.is_goal()
 
@@ -87,9 +92,8 @@ def siw(
     init_state: XState,
     decomposition: Sequence[Sequence[str]],
     successor_generator: XSuccessorGenerator,
-    width: int,
+    iw: IWSearch,
 ):
-    iw = IWSearch(width, expansion_strategy=InOrderExpansion())
     prev_state = init_state
     state = prev_state
     # for each subgoal: run iw from the current state and check if the subgoal is in the novelty traces
@@ -130,7 +134,7 @@ def siw(
 @pytest.mark.parametrize(
     "space_fixture, expected_solution_upper_bound_cost",
     [
-        # ("small_blocks", 1),
+        ("small_blocks", 1),
         ("medium_blocks", 3),
         # ("largish_blocks_unbound_goal", 9),
         ("medium_spanner", 10),
