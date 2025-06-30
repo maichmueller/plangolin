@@ -3,8 +3,11 @@ seed_everything: true
 data:
   batch_size: 26
   parallel: False
-  balance_by_attr: ''
   collate_fn: rgnet.rl.thundeRL.to_transitions_batch
+  train_dataloader_kwargs:
+      num_workers: 0
+      pin_memory: false
+      persistent_workers: false
 
 encoder:
   class_path: HeteroGraphEncoder

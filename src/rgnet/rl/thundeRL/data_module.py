@@ -76,7 +76,7 @@ class ThundeRLDataModule(LightningDataModule):
         test_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         cache_validation_batches: bool = False,
         parallel: bool = True,
-        balance_by_attr: str = "",
+        balance_by_attrs: str | Iterable[str] | None = None,
         max_cpu_count: Optional[int] = None,
         skip: bool = False,
         exit_after_processing: bool = False,
@@ -108,7 +108,16 @@ class ThundeRLDataModule(LightningDataModule):
             batch_size=batch_size,
         ) | (test_dataloader_kwargs or dict())
         self.encoder_factory = encoder_factory
-        self.balance_by_attr = balance_by_attr
+        if balance_by_attrs is None:
+            balance_by_attrs = []
+        elif isinstance(balance_by_attrs, str):
+            if balance_by_attrs == "":
+                balance_by_attrs = []
+            else:
+                balance_by_attrs = [balance_by_attrs]
+        else:
+            balance_by_attrs = list(balance_by_attrs)
+        self.balance_by_attrs = balance_by_attrs
         self.max_cpu_count = max_cpu_count
         self.cache_validation_batches = cache_validation_batches
         self.exit_after_processing = exit_after_processing
@@ -329,20 +338,61 @@ class ThundeRLDataModule(LightningDataModule):
             exit(0)
 
     def _imbalanced_sampler(self) -> ImbalancedSampler | None:
-        if self.balance_by_attr:
-            class_tensor = torch.cat(
-                [
-                    getattr(dataset, self.balance_by_attr)
-                    for dataset in self.train_datasets
-                ]
+        """
+        Creates an `ImbalancedSampler` for the training datasets based on the attributes in `self.balance_by_attrs`.
+
+        Note that this sampler is not magic and cannot balance a dataset that does not represent the joint distribution
+        of multiple attributes in its totality.
+        For example, if you have a dataset with two attributes, `#Objects` and `#DistanceToGoal`, a 2D Histogram with
+         Colorbar (log scale counts) of X := #DistanceToGoal, Y := #Objects may look like this:
+
+          Y
+        7 | ..:**##########***::...
+        6 | ..:*########****:::....
+        5 | .:*#####**:::::::...---
+        4 | .:******:::::....------
+        3 | .::::.....-------------
+        2 | .....------------------
+
+            0     5     10    15    20   X
+
+        Color‐scale (log counts):
+          '-' : 0
+          '.' : 10–100
+          ':' : 100–1'000
+          '*' : 1'000–10'000
+          '#' : > 10'000
+
+        The problem is that there are e.g. no samples with `#Objects` < 4  and `#DistanceToGoal` > 10. This leads to
+        the problem that an oversampling to balance the distances to goal will lead to unbalancing in object counts,
+        because you cannot find a countersample (15, 2) for a sample (15, 6). This data would need to be synthesized.
+        In consequence, the sampler will not be able to balance the dataset over both attributes, you can only balance
+        multiple attributes if the dataset contains all combinations of the attributes, otherwise the data is slightly
+        skewed in both attributes.
+        """
+        if self.balance_by_attrs:
+            class_tensors = [
+                torch.cat([getattr(dataset, attr) for dataset in self.train_datasets])
+                for attr in self.balance_by_attrs
+            ]
+            label_matrix = torch.stack(class_tensors, dim=1)
+
+            # shift negatives → non-negative so bincount works
+            for col in range(label_matrix.shape[1:]):
+                mn = label_matrix[:, col].min()
+                if mn < 0:
+                    # Account for e.g. deadend state labels being -1
+                    # (values <0 are incompatible with bincount inside `ImbalancedSampler`)
+                    # Adding the min to each distance (label) doesn't change the relative class counts,
+                    # so does not change the sampling
+                    label_matrix[:, col] += -mn
+
+            # Factor each unique row → a class index
+            # unique_rows is [#unique × #attrs], joint_labels is [num_samples]
+            unique_rows, joint_labels = torch.unique(
+                label_matrix, dim=0, return_inverse=True
             )
-            # Account for e.g. deadend state labels being -1
-            # (values <0 are incompatible with bincount inside `ImbalancedSampler`)
-            # Adding the min to each distance (label) doesn't change the relative class counts,
-            # so does not change the sampling
-            if (min_label := class_tensor.min()) < 0:
-                class_tensor = class_tensor + (-min_label)
-            return ImbalancedSampler(dataset=class_tensor)
+            return ImbalancedSampler(dataset=joint_labels)
         else:
             return None
 
@@ -385,11 +435,12 @@ class ThundeRLDataModule(LightningDataModule):
         return kwargs
 
     def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
+        sampler = self._imbalanced_sampler()
         defaults = (
             dict(
-                sampler=self._imbalanced_sampler(),
+                sampler=sampler,
                 batch_size=self.batch_size,
-                shuffle=not self.balance_by_attr,
+                shuffle=sampler is None,
                 collate_fn=self._make_collate(),
                 pin_memory=True,
             )
