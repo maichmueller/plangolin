@@ -3,9 +3,19 @@ from __future__ import annotations
 import datetime
 import logging
 import time
-from multiprocessing import Pool
+from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Type,
+)
 
 import torch
 from lightning import LightningDataModule
@@ -199,44 +209,31 @@ class ThundeRLDataModule(LightningDataModule):
         )
         start_time = time.time()
         if self.parallel and len(problem_paths) > 1:
-
-            def enqueue_parallel(problem_path: Path, drive_t, drive_kw, task_id: int):
-                return pool.apply_async(
-                    drive_t,
-                    kwds=drive_kw
-                    | dict(
-                        problem_path=problem_path,
-                        root_dir=str(self.data.dataset_dir / problem_path.stem),
-                        show_progress=False,
-                        logging_kwargs=dict(
-                            log_level=logging.root.level, task_id=task_id
-                        ),
-                    ),
-                    callback=update,
-                )
-
             pool_size = min(
                 env_aware_cpu_count(),
                 len(problem_paths),
                 self.max_cpu_count or float("inf"),
             )
-            with Pool(pool_size, initializer=set_sharing_strategy) as pool:
+            with Pool(max_workers=pool_size, initializer=set_sharing_strategy) as pool:
                 logging.info(
                     f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
                 )
-                results = {
-                    problem_path: enqueue_parallel(
-                        problem_path,
-                        drive_t,
-                        drive_kw | drive_extra_kwargs,
-                        i,
+                futures: Dict[Path, any] = {}
+                for i, (problem_path, drive_t, drive_kw) in enumerate(
+                    zip(problem_paths, drive_types, drive_types_kwargs)
+                ):
+                    merged_kwargs = drive_kw | drive_extra_kwargs
+                    task_kwargs = merged_kwargs | dict(
+                        problem_path=problem_path,
+                        root_dir=str(self.data.dataset_dir / problem_path.stem),
+                        show_progress=False,
+                        logging_kwargs=dict(log_level=logging.root.level, task_id=i),
                     )
-                    for i, (problem_path, drive_t, drive_kw) in enumerate(
-                        zip(problem_paths, drive_types, drive_types_kwargs)
-                    )
-                }
-                for problem_path, result in results.items():
-                    datasets[problem_path] = result.get()
+                    future = pool.submit(drive_t, **task_kwargs)
+                    future.add_done_callback(lambda fut: update(fut.result()))
+                    futures[problem_path] = future
+                for problem_path, future in futures.items():
+                    datasets[problem_path] = future.result()
         else:
             for problem_path, drive_t, drive_kw in zip(
                 problem_paths, drive_types, drive_types_kwargs
