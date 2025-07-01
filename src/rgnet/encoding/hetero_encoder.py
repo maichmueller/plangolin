@@ -84,7 +84,8 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             for predicate in predicates:
                 ad.append(
                     (
-                        f"{node_factory(predicate, is_goal=True, is_negated=False)}_sat",
+                        f"{node_factory(predicate, is_goal=True, is_negated=False)}"
+                        f"{HeteroGraphEncoder.goal_satisfied_suffix}",
                         predicate.arity,
                     )
                 )

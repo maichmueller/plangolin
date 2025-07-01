@@ -4,7 +4,7 @@ import torch._dynamo
 torch._dynamo.config.suppress_errors = True  # keep runtime errors from killing compile
 
 # import torch.multiprocessing as mp
-#
+# spawn leads to deadlocks in some tests (e.g. test_iw.py and sometimes data_module.py)
 # mp.set_start_method("spawn", force=True)
 
 import argparse

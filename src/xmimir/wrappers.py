@@ -1089,6 +1089,17 @@ class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
             **options,
         )
 
+    @multimethod
+    def __init__(self, space: None):  # noqa: F811
+        """
+        Init for when state space creation failed (e.g. due to options constraining the construction).
+        """
+        raise ValueError(
+            "State space creation failed. "
+            "This is likely due to the options provided to the constructor. "
+            "Please check the options and try again."
+        )
+
     def __len__(self):
         return len(self._vertices)
 
