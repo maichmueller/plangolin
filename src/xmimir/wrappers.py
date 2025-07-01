@@ -516,6 +516,13 @@ class CustomProblem(XProblem):
 
 class XActionSchema(MimirWrapper[Action]):
     @property
+    def index(self) -> int:
+        """
+        Get the index of the action schema in the domain.
+        """
+        return self.base.get_index()
+
+    @property
     def name(self) -> str:
         return self.base.get_name()
 
@@ -943,6 +950,16 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
 
     def get_action(self, index: int):
         return XAction(self.action_grounder.get_ground_action(index), self)
+
+    def ground_action(
+        self, schema: XActionSchema, objects: Sequence[Object]
+    ) -> XAction:
+        return XAction(
+            self.action_grounder.ground_action(
+                self.problem.domain.actions[schema.index].base, ObjectList(objects)
+            ),
+            self,
+        )
 
     def generate_actions(self, state: XState) -> Iterator[XAction]:
         for action in self.base.generate_applicable_actions(state.base):

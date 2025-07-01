@@ -23,6 +23,4 @@ def test_build_space_with_options(domain, problem):
     domain_path = source_dir / "pddl_instances" / domain / "domain.pddl"
     problem_path = source_dir / "pddl_instances" / domain / f"{problem}.pddl"
     with pytest.raises(ValueError):
-        XStateSpace(
-            domain_path, problem_path, max_num_states=10, use_unit_cost_one=False
-        )
+        XStateSpace(domain_path, problem_path, max_num_states=10)
