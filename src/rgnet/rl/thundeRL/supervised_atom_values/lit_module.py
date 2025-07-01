@@ -81,7 +81,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         normalize_loss: bool = True,
         assert_output: bool = False,
         max_queued_batches: int = 0,
-        num_streams: int = 10,
+        num_streams: int = 0,
         share_predicate_modules: bool = False,
     ) -> None:
         super().__init__()
@@ -119,7 +119,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         self._in_q: torch.multiprocessing.Queue | None = None
         self._out_q: torch.multiprocessing.Queue | None = None
         self._num_workers = 0  # Default number of workers, can be overridden
-        self._num_streams = num_streams
+        self._num_streams = num_streams or 0
         self._completion_tags_received = {i: False for i in range(self._num_workers)}
         self._collector_thread = None
         self._collector_running = False
@@ -132,6 +132,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         self._prev_validation_dataloader_idx = -1
         self._total_val_batches: int | None = None
         self._validation_batch_counter = 0
+        self._training_start_time = None
         # Batches that are queued for processing in separate streams
         self._queued_batches: list[ProcessBatch] = []
         self._max_queued_batches = (
@@ -144,6 +145,7 @@ class AtomValuesLitModule(lightning.LightningModule):
             self._cuda_streams is None
             and self._num_streams > 0
             and self.device.type == "cuda"
+            and torch.cuda.is_available()
         ):
             self._cuda_streams = [
                 torch.cuda.Stream(self.device) for _ in range(self._num_streams)
@@ -263,6 +265,17 @@ class AtomValuesLitModule(lightning.LightningModule):
                 "Check the data-collate function for the batch building logic per predicate for deviations "
                 "from the logic within this module."
             )
+
+    def on_train_epoch_start(self) -> None:
+        self._training_start_time = time.time()
+        super().on_train_epoch_start()
+
+    def on_train_epoch_end(self) -> None:
+        elapsed = time.time() - self._training_start_time
+        self._training_start_time = None
+        td = datetime.timedelta(seconds=elapsed)
+        logging.info("Training epoch finished in %s", str(td))
+        super().on_train_epoch_end()
 
     def training_step(
         self,
@@ -396,9 +409,10 @@ class AtomValuesLitModule(lightning.LightningModule):
         self,
         batch: ProcessBatch,
     ) -> None:
+        self._queued_batches.append(batch)
         is_new_dataloader = batch.dataloader_idx != self._prev_validation_dataloader_idx
         if (
-            len(self._queued_batches) >= len(self.cuda_streams)
+            len(self._queued_batches) >= self._num_streams
             or is_new_dataloader
             or self._validation_batch_counter >= self._total_val_batches
         ):
@@ -413,7 +427,7 @@ class AtomValuesLitModule(lightning.LightningModule):
                 )
                 for proc_batch in self._queued_batches
             ]
-            if self.device.type == "cuda":
+            if self.device.type == "cuda" and self._num_streams > 0:
                 # synchronize the CUDA streams to ensure all operations are completed
                 for stream in self.cuda_streams:
                     stream.synchronize()
@@ -428,7 +442,6 @@ class AtomValuesLitModule(lightning.LightningModule):
                     dataloader_idx,
                 )
             self._queued_batches.clear()
-        self._queued_batches.append(batch)
 
     def _local_validation_step(self, batch_tuple, batch_idx, dataloader_idx):
         with torch.cuda.stream(self.next_stream()):
