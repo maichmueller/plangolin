@@ -9,6 +9,12 @@ from .expanded_state_space_env import (
     UniformRandomReset,
     WeightedRandomReset,
 )
+from .hindsight_env import (
+    HERReplayBuffer,
+    HindsightEnvironment,
+    HindsightStrategy,
+    RandomSubgoalHindsightStrategy,
+)
 from .planning_env import (
     InstanceReplacementStrategy,
     PlanningEnvironment,
