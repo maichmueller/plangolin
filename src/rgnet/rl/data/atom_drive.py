@@ -380,6 +380,7 @@ class PartialAtomDrive(AtomDrive):
         self.iw_search = iw_search
         self.num_states = num_states
         self.seed = seed
+        self._rng = None
         kwargs["env"] = None
         kwargs["atom_value_method"] = AtomValueMethod.IW
         super().__init__(*args, **kwargs)
@@ -392,6 +393,12 @@ class PartialAtomDrive(AtomDrive):
             expansion_iw_search=self.iw_search,
             **super().metadata,
         )
+
+    @property
+    def rng(self) -> np.random.Generator:
+        if self._rng is None:
+            self._rng = np.random.default_rng(self.seed)
+        return self._rng
 
     def get_space(self):
         return None
@@ -437,10 +444,9 @@ class PartialAtomDrive(AtomDrive):
             f"(problem: {problem.name} / {Path(problem.filepath).stem}, #space: {self.num_states} states (max-cutoff))"
         )
         atom_values = self._sample_atom_dists(env)
-        nr_states: int = self.num_states
+        states = list(atom_values.keys())
         atom_id_map, atoms = make_atom_ids(problem)
         self._atom_to_index_map = atom_id_map
-        states = list(atom_values.keys())
         match atom_values:
             case dict():
                 atom_values_dict = list(atom_values.values())
@@ -456,7 +462,7 @@ class PartialAtomDrive(AtomDrive):
                 raise ValueError(f"Unsupported atom values type: {type(atom_values)}")
 
         batched_data = self._encode(
-            env, encoder, atom_values_dict, atom_values_tensor, states, nr_states
+            env, encoder, atom_values_dict, atom_values_tensor, states, self.num_states
         )
         logger.info(
             f"Finished {self.__class__.__name__} "
