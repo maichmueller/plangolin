@@ -378,7 +378,7 @@ class ThundeRLDataModule(LightningDataModule):
             label_matrix = torch.stack(class_tensors, dim=1)
 
             # shift negatives → non-negative so bincount works
-            for col in range(label_matrix.shape[1:]):
+            for col in range(label_matrix.shape[1]):
                 mn = label_matrix[:, col].min()
                 if mn < 0:
                     # Account for e.g. deadend state labels being -1
