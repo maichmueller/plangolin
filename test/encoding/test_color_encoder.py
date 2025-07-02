@@ -1,5 +1,6 @@
+from test.fixtures import *  # noqa: F401, F403
+
 import pytest
-from fixtures import *  # noqa: F401, F403
 
 
 @pytest.mark.parametrize(
