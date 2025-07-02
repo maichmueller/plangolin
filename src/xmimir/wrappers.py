@@ -21,7 +21,8 @@ from typing import (
 from jinja2 import Template
 from multimethod import multimethod
 from pymimir import *
-from pymimir.hints import *  # because PyCharm needs some help
+
+from .hints import *
 
 atom_str_template = Template(
     "({{ predicate.name if predicate is not string and predicate.name is defined else predicate }}"
@@ -261,7 +262,7 @@ class XLiteral(MimirWrapper[GroundLiteral]):
         return obj
 
     def __str__(self):
-        return f"{'-' if self.base.is_negated() else '+'}{self.atom}"
+        return f"{'-' if self.is_negated else '+'}{self.atom}"
 
     def _hollow_eq(self, other):
         if not isinstance(other, type(self)):
