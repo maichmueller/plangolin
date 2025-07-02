@@ -110,8 +110,8 @@ class AtomDrive(BaseDrive):
         store_values_as_tensor: bool = True,
         **kwargs,
     ):
-        self._atom_to_index_map: dict[str, int] = None
-        self._index_to_atom_map: dict[int, str] = None
+        self._atom_to_index_map: dict[str, int] | None = None
+        self._index_to_atom_map: dict[int, str] | None = None
         self.atom_value_method = AtomValueMethod(atom_value_method)
         self.store_values_as_tensor = store_values_as_tensor
         super().__init__(*args, **kwargs)
@@ -289,9 +289,9 @@ class AtomDrive(BaseDrive):
     def env_aux_data(self) -> dict:
         base_data = super().env_aux_data()
         env = self.env
-        if data := self.try_get_data("aux.atom_to_index_map") is not None:
+        if (data := self.try_get_data("aux.atom_to_index_map")) is not None:
             self._atom_to_index_map = data
-        if data := self.try_get_data("aux.pyg_atom_data") is not None:
+        if (data := self.try_get_data("aux.pyg_atom_data")) is not None:
             pyg_atom_data = data
             if pyg_atom_data is not None:
                 return base_data | dict(

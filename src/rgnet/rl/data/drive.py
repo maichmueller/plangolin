@@ -344,20 +344,21 @@ class BaseDrive(InMemoryDataset):
         If the auxiliary data has already been processed and saved, it will return the cached data.
         Otherwise, it will process the environment to generate the auxiliary data and save it to the metabase.
         """
-        if pyg_env := self.try_get_data("aux.pyg_env"):
+        if (pyg_env := self.try_get_data("aux.pyg_env")) is not None:
             # if we have already processed the environment, we can simply return the cached data
-            return pyg_env
-        env = self.env
-        space = env.active_instances[0]
-        logger = self._get_logger()
-        logger.info(
-            f"Auxiliary Data ({BaseDrive.__name__}: "
-            f"problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
-        )
-        pyg_env = env.to_pyg_data(0)
-        logger.info(f"Auxiliary Data ({BaseDrive.__name__}): Finished.")
-        self._save_aux_data(pyg_env=pyg_env)
-        return self.try_get_data("aux.pyg_env")
+            ...
+        else:
+            env = self.env
+            space = env.active_instances[0]
+            logger = self._get_logger()
+            logger.info(
+                f"Auxiliary Data ({BaseDrive.__name__}: "
+                f"problem: {space.problem.name} / {Path(space.problem.filepath).stem}, #space: {space})"
+            )
+            pyg_env = env.to_pyg_data(0)
+            logger.info(f"Auxiliary Data ({BaseDrive.__name__}): Finished.")
+            self._save_aux_data(pyg_env=pyg_env)
+        return {"pyg_env": pyg_env}
 
     def _save_aux_data(self, **aux_data):
         r"""Saves auxiliary data to the metabase."""
