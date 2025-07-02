@@ -657,7 +657,11 @@ class PolicyEvaluationValidation(ValidationCallback):
                 case ExpandedStateSpaceEnv():
                     pyg_graph = env.to_pyg_data(0)
                 case BaseDrive():
-                    pyg_graph = env.env_aux_data.pyg_env
+                    pyg_graph = env.try_get_data("aux.pyg_env")
+                    if pyg_graph is None:
+                        raise ValueError(
+                            f"BaseDrive {env} does not have a pyg_env in its aux data."
+                        )
                 case _:
                     raise TypeError(
                         f"Unsupported environment type {type(env)}. "

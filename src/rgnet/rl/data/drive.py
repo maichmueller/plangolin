@@ -164,7 +164,7 @@ class BaseDrive(InMemoryDataset):
             logging.error(f"Failed to open metabase at {self.metabase_path}: {e}")
             return False
 
-    def try_get_data(self, key: str) -> dict[str, Any] | None:
+    def try_get_data(self, key: str) -> Any | dict[str, Any] | None:
         r"""Attempts to retrieve metadata from the metabase."""
         try:
             if key in self._data_cache:
@@ -327,6 +327,8 @@ class BaseDrive(InMemoryDataset):
         data_list = self._build()
         self._set_desc()
         self._save_metadata(desc=self.desc)
+        # save auxiliary data to the database
+        self.env_aux_data()
 
         self._get_logger().info(
             f"Saving {self.__class__.__name__} "
@@ -336,6 +338,12 @@ class BaseDrive(InMemoryDataset):
         self.save(data_list, self.processed_paths[0])
 
     def env_aux_data(self) -> dict:
+        """
+        Retrieves auxiliary data from the environment, such as the PyG representation of the environment.
+
+        If the auxiliary data has already been processed and saved, it will return the cached data.
+        Otherwise, it will process the environment to generate the auxiliary data and save it to the metabase.
+        """
         if pyg_env := self.try_get_data("aux.pyg_env"):
             # if we have already processed the environment, we can simply return the cached data
             return pyg_env
