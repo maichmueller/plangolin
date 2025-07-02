@@ -97,7 +97,7 @@ class BaseDrive(InMemoryDataset):
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.
         self.desc: Optional[str] = None
-        if metadata := self.try_get_data("meta"):
+        if (metadata := self.try_get_data("meta")) is not None:
             # desc is not explicit part of metadata, but also stored there anyway
             self.desc = metadata["desc"]
             if mismatch_desc := self._metadata_misaligned(metadata):
@@ -123,7 +123,7 @@ class BaseDrive(InMemoryDataset):
         self.metabase.sync()
         self.metabase.close()
 
-    def try_open_metabase(self) -> bool:
+    def try_open_metabase(self, flag=None) -> bool:
         """
         Attempts to open the metabase. Returns True if successful, False otherwise.
         This is useful for checking if the metabase is accessible before performing operations.
@@ -133,7 +133,7 @@ class BaseDrive(InMemoryDataset):
                 raise FileNotFoundError(
                     f"Metabase at {self.metabase_path} does not exist."
                 )
-            self.metabase = shelve.open(str(self.metabase_path), flag="r")
+            self.metabase = shelve.open(str(self.metabase_path), flag=flag or "r")
             is_empty = len(self.metabase) == 0
             if is_empty:
                 logging.warning(
@@ -360,10 +360,24 @@ class BaseDrive(InMemoryDataset):
             self._save_aux_data(pyg_env=pyg_env)
         return {"pyg_env": pyg_env}
 
-    def _save_aux_data(self, **aux_data):
+    def _save_aux_data(self, _retry: bool = False, **aux_data):
         r"""Saves auxiliary data to the metabase."""
-        for key, value in aux_data.items():
-            self.metabase[f"aux.{key}"] = value
+        try:
+            for key, value in aux_data.items():
+                self.metabase[f"aux.{key}"] = value
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.metabase.close()
+            if not _retry:
+                self.try_open_metabase(flag="w")
+                self._save_aux_data(_retry=True, **aux_data)
+                self.metabase.close()
+                self.try_open_metabase()
+            else:
+                raise RuntimeError(
+                    f"Failed to save auxiliary data to metabase at {self.metabase_path}. Error: {e}. "
+                )
 
     def _save_metadata(self, **extras):
         metad = self.metadata | extras
