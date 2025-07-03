@@ -116,13 +116,6 @@ class BaseDrive(InMemoryDataset):
         )
         self.load(self.processed_paths[0])
 
-    def close_all_metabases(self):
-        """
-        Close all open shelve databases and clear the cache.
-        """
-        self.metabase.sync()
-        self.metabase.close()
-
     def try_open_metabase(self, flag=None) -> bool:
         """
         Attempts to open the metabase. Returns True if successful, False otherwise.

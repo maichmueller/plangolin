@@ -290,7 +290,12 @@ class InputData:
                     logging.warning(f"{domain_warn_message}\n{warn_message}")
                 else:
                     logging.warning(warn_message)
-        return all_instances, problems
+        sort_indices = [
+            i for i, _ in sorted(enumerate(all_instances), key=lambda x: x[1].name)
+        ]
+        return [all_instances[i] for i in sort_indices], [
+            problems[i] for i in sort_indices
+        ]
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
         train_dir = self.pddl_domains_dir / self.train_subdir

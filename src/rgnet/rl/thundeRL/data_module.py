@@ -235,7 +235,7 @@ class ThundeRLDataModule(LightningDataModule):
                     task_kwargs = merged_kwargs | dict(
                         problem_path=problem_path,
                         root_dir=str(self.data.dataset_dir / problem_path.stem),
-                        show_progress=False,
+                        show_progress=drive_kw.get("show_progress", False),
                         logging_kwargs=dict(log_level=logging.root.level, task_id=i),
                     )
                     future = pool.submit(drive_t, **task_kwargs)
@@ -248,11 +248,16 @@ class ThundeRLDataModule(LightningDataModule):
                 problem_paths, drive_types, drive_types_kwargs
             ):
                 drive = drive_t(
-                    problem_path=problem_path,
-                    root_dir=str(self.data.dataset_dir / problem_path.stem),
-                    show_progress=True,
-                    env=self.envs(problem_path),
-                    **(drive_kw | drive_extra_kwargs),
+                    **(
+                        drive_kw
+                        | drive_extra_kwargs
+                        | dict(
+                            problem_path=problem_path,
+                            root_dir=str(self.data.dataset_dir / problem_path.stem),
+                            show_progress=drive_kw.get("show_progress", True),
+                            env=self.envs(problem_path),
+                        )
+                    ),
                 )
                 update(drive)
                 datasets[problem_path] = drive
