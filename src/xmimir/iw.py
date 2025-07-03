@@ -14,7 +14,7 @@ import torch
 from multimethod import multimethod
 
 from rgnet.logging_setup import tqdm
-from rgnet.utils.misc import env_aware_cpu_count
+from rgnet.utils.misc import env_aware_cpu_count, return_true
 
 # from .extensions import *
 from .wrappers import *
@@ -311,7 +311,7 @@ class IWSearch:
         atom_tuples_to_avoid: Iterable[tuple[XAtom, ...]] | None = None,
         novel_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         goal_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
-        expansion_budget: int = float("inf"),
+        expansion_budget: Callable[[int], bool] = return_true,
     ) -> List[ExpansionNode]:
         if novelty_condition is None:
             novelty_condition = Novelty(self.width, successor_generator.problem)
@@ -369,7 +369,7 @@ class IWSearch:
             current_depth += 1
 
         goal_found = False
-        while iteration < expansion_budget and not (
+        while expansion_budget(iteration) and not (
             (goal_found and stop_on_goal) or (not visit_queue and not nodes)
         ):
             if not visit_queue:
