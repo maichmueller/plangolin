@@ -290,7 +290,7 @@ class ValueHeteroGNN(HeteroGNN):
 
 class ILGHeteroGNN(HeteroGNN):
     def __init__(self, embedding_size: int, *args, **kwargs):
-        # +1 embedding size to add a condition input for each MLP corresponding the the atom status.
+        # +1 embedding size to add a condition input for each MLP corresponding to the atom status.
         super().__init__(
             embedding_size + 1,
             *args,

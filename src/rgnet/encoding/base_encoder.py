@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 import warnings
 from abc import ABC, abstractmethod
 from itertools import chain
@@ -131,7 +132,17 @@ class EncoderFactory:
         self, encoder_class: Type[GraphEncoderBase], kwargs: Optional[dict] = None
     ):
         self.encoder_class = encoder_class
-        self.kwargs = kwargs or dict()
+        signature = inspect.signature(encoder_class.__init__)
+        actual_kwargs = dict()
+        for kwarg in kwargs or dict():
+            if kwarg not in ("self", "domain") and kwarg in signature.parameters.keys():
+                param = signature.parameters[kwarg]
+                if (
+                    param.default is not inspect.Parameter.empty
+                    and kwargs[kwarg] != param.default
+                ):
+                    actual_kwargs[kwarg] = kwargs[kwarg]
+        self.kwargs = actual_kwargs
 
     def __eq__(self, other):
         if not isinstance(other, EncoderFactory):

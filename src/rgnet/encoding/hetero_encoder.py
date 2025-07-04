@@ -62,6 +62,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             self.obj_type_id == other.obj_type_id
             and self.node_factory == other.node_factory
             and self.predicates == other.predicates
+            and self.add_goal_satisfied_atoms == other.add_goal_satisfied_atoms
         )
 
     @staticmethod

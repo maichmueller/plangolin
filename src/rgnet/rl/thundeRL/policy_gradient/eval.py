@@ -101,6 +101,7 @@ class ModelData:
         # we cant do strict=True, since validation_hooks are often present in the state dict
         policy_gradient_module.load_state_dict(checkpoint["state_dict"], strict=False)
         embedding = EmbeddingModule(
+            policy_gradient_module.gnn.embedding_size,
             encoder=HeteroGraphEncoder(self._parent.in_data.domain),
             gnn=policy_gradient_module.gnn,
             device=self._parent.device,
@@ -640,7 +641,7 @@ class CycleAvoidingTransform(torchrl.envs.Transform):
         self, batched_transitions: List[List[xmi.XTransition]] | NonTensorStack
     ) -> NonTensorStack:
         batched_transitions = tolist(batched_transitions)
-        filtered_transitions = []
+        filtered_transitions: list[list[xmi.XTransition]] = []
         for batch_idx, transitions in enumerate(batched_transitions):
             assert (
                 len(transitions) > 0

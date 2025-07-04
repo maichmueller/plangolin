@@ -135,8 +135,7 @@ class ThundeRLCLI(LightningCLI):
         parser.link_arguments(
             "encoder.init_args",
             "encoder_factory.kwargs",
-            apply_on="instantiate",
-            compute_fn=lambda namespace: vars(namespace),
+            apply_on="parse",
         )
         parser.link_arguments(
             "encoder_factory",
