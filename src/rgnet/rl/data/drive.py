@@ -53,6 +53,7 @@ class BaseDrive(InMemoryDataset):
         transform: Callable[[HeteroData | Data], HeteroData | Data] = None,
         log: bool = False,
         force_reload: bool = False,
+        cache_items: bool = False,
         show_progress: bool = True,
         logging_kwargs: Optional[Mapping[str, Any]] = None,
         space_options: Optional[Mapping[str, Any]] = None,
@@ -80,6 +81,8 @@ class BaseDrive(InMemoryDataset):
         self.encoder_factory = encoder_factory
         self.encoder = None
         self.reward_function = reward_function or getattr(env, "reward_function")
+        # whether to cache access to the actual data of the dataset (as the base class does)
+        self.cache_items = cache_items
         self._maybe_env: PlanningEnvironment | ExpandedStateSpaceEnvLoader | None = env
         self._env: PlanningEnvironment | None = None
         self._space: XStateSpace | None = None
@@ -429,14 +432,16 @@ class BaseDrive(InMemoryDataset):
             logger = logging.root
         return logger
 
-    def get(self, idx: int) -> Union[HeteroData, Data]:
+    def get(self, idx: int) -> BaseData:
         """
         Get the data object at the given index.
 
         NOTE:
-            Override the base-method to avoid caching previously fetched datapoints
-             and increasing memory usage without gain.
+            Overrides the base-method to avoid caching previously fetched datapoints and increasing memory usage
+            without gain. If `self.cache_items` is True, it will use the base class method as normal.
         """
+        if self.cache_items:
+            return super().get(idx)
         return separate(
             cls=self._data.__class__,
             batch=self._data,
