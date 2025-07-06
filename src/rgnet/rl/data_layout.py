@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import atexit
 import datetime
 import itertools
 import logging
 import os
+import signal
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +57,7 @@ class OutputData:
                 self.out_dir.mkdir(exist_ok=not ensure_new_out_dir, parents=True)
                 break
             except FileExistsError:
-                if self.out_dir.is_dir() and len(list(self.out_dir.iterdir())) == 0:
+                if self.out_dir.is_dir() and self.all_dirs_empty(self.out_dir):
                     # If the directory exists but is empty, we can use it.
                     logging.warning(
                         f"Output directory {self.out_dir} already exists but is empty. Using it."
@@ -69,10 +71,40 @@ class OutputData:
                     output_dir_order,
                 )
                 suffix += 1
+        self.on_program_exit()
+        logging.info("Using " + str(self.out_dir) + " for output data.")
         if suffix > 0:
             experiment_name = f"{experiment_name}_{suffix}"
-        logging.info("Using " + str(self.out_dir) + " for output data.")
         self.experiment_name = experiment_name
+
+    # Register a signal handler to delete the output directory on SIGINT (Ctrl+C)
+    def on_program_exit(self):
+        """
+        Register a signal handler to delete the output directory on program exit.
+        This is useful to clean up the output directory if the program is interrupted.
+        """
+
+        def handler(*args, **kwargs):
+            if self.out_dir.is_dir() and self.all_dirs_empty(self.out_dir):
+                self.out_dir.rmdir()
+
+        atexit.register(lambda: handler())
+        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
+
+    @staticmethod
+    def all_dirs_empty(root: Path) -> bool:
+        """
+        Return True if there are no files anywhere under `root`.
+        """
+        root = Path(root)
+        if not root.exists():
+            raise FileNotFoundError(f"{root!r} does not exist")
+        if not root.is_dir():
+            raise NotADirectoryError(f"{root!r} is not a directory")
+
+        # rglob('*') yields every descendant; stop if you see any file
+        return not any(p.is_file() for p in root.rglob("*"))
 
     def _make_outdir_name(
         self, out_dir, domain_name, experiment_name, output_dir_order
