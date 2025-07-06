@@ -245,16 +245,19 @@ class ThundeRLCLI(LightningCLI):
         return mapping
 
     def before_fit(self):
-        self.trainer.logger.log_hyperparams(
-            self.convert_to_nested_dict(self.config["fit"])
-        )
-        wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
-        if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
-            self.trainer.logger.watch(self.model, log_freq=wandb_extra.log_frequency)
-        if wandb_extra.log_code:  # save everything inside src/rgnet
-            self.trainer.logger.experiment.log_code(
-                str((Path(__file__) / ".." / ".." / "..").resolve())
+        if self.trainer.logger is not None:
+            self.trainer.logger.log_hyperparams(
+                self.convert_to_nested_dict(self.config["fit"])
             )
+            wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
+            if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
+                self.trainer.logger.watch(
+                    self.model, log_freq=wandb_extra.log_frequency
+                )
+            if wandb_extra.log_code:  # save everything inside src/rgnet
+                self.trainer.logger.experiment.log_code(
+                    str((Path(__file__) / ".." / ".." / "..").resolve())
+                )
 
     def before_instantiate_classes(self):
         num_threads = self.config.get("data.max_cpu_count")
