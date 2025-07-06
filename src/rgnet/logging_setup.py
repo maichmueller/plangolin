@@ -1,6 +1,7 @@
 import datetime
 import logging
 import logging.handlers
+from functools import cache
 from io import StringIO
 
 from colorama import Fore, Style, init
@@ -109,6 +110,13 @@ def setup_logger(name="root"):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(SPDLOGFormatter())
     logger.addHandler(console_handler)
+    return logger
+
+
+@cache
+def get_logger(name="root"):
+    logger = logging.getLogger(name)
+    setup_logger(name)
     return logger
 
 

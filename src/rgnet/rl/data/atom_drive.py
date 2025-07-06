@@ -159,7 +159,7 @@ class AtomDrive(BaseDrive):
                 )
             case torch.Tensor():
                 atom_values_dict = atom_value_tensor_to_dict(
-                    atom_values, self.atom_to_index_map, self.index_to_atom_map
+                    atom_values, self.index_to_atom_map
                 )
                 atom_values_tensor = atom_values
             case _:

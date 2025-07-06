@@ -58,6 +58,15 @@ class EmbeddingAndValuator(torch.nn.Module):
         provide_output_metadata: bool | None = None,
         info_dict: Optional[dict[str, Any]] = None,
     ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
+        """
+        Batch is a PyG Batch object containing the graphs of batch_size many states.
+
+        We compute the embeddings of the objects in the states and split up the tensor into state-respective
+        object-embedding pieces, i.e. each state has its own object-embedding 2D-tensor where dim-0 is the object
+        dimension and dim-1 the feature dimension.
+        We then compute all possible permutations of object-embeddings of size `arity(predicate)` in each state
+        and batch them together again. The predicate-specific MLP then performs a readout of the atom values.
+        """
         embeddings, batch_info = self.gnn(batch)
         return self.atom_valuator(
             embeddings,
@@ -226,26 +235,10 @@ class AtomValuesLitModule(lightning.LightningModule):
             )
             self._collector_thread.start()
 
-    def forward(
-        self,
-        states_batch: Batch,
-        provide_output_metadata: bool | None = None,
-        info_dict: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
-        """
-        Batch is a PyG Batch object containing the graphs of batch_size many states.
-
-        We compute the embeddings of the objects in the states and split up the tensor into state-respective
-        object-embedding pieces, i.e. each state has its own object-embedding 2D-tensor where dim-0 is the object
-        dimension and dim-1 the feature dimension.
-        We then compute all possible permutations of object-embeddings of size `arity(predicate)` in each state
-        and batch them together again. The predicate-specific MLP then performs a readout of the atom values.
-        """
-        if provide_output_metadata is None:
-            provide_output_metadata = self.assert_output
-        return self.embedder_and_valuator(
-            states_batch, provide_output_metadata, info_dict=info_dict
-        )
+    def forward(self, *args, **kwargs):
+        if kwargs.get("provide_output_metadata", None) is None:
+            kwargs["provide_output_metadata"] = self.assert_output
+        return self.embedder_and_valuator(*args, **kwargs)
 
     @staticmethod
     def _assert_output(

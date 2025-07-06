@@ -6,7 +6,9 @@ import hashlib
 import logging
 import os
 import pathlib
+import random
 import time
+from collections import deque
 from datetime import timedelta
 from functools import singledispatch
 from inspect import signature
@@ -238,3 +240,56 @@ def as_forwarding_args(func, args, kwargs, defaults: dict[str, Any] | None = Non
     bound_args = parent_sig.bind_partial(*args, **kwargs)
     bound_args.apply_defaults()
     return bound_args
+
+
+def return_true(*args, **kwargs) -> bool:
+    return True
+
+
+def identity(x: Any) -> Any:
+    """
+    Identity function that returns the input unchanged.
+    Useful as a default function argument.
+    """
+    return x
+
+
+class ProbabilisticBuffer:
+    """
+    A fixed-size buffer that acts like a queue, but when full
+    each new append has a 1/capacity chance to replace a random element.
+    """
+
+    def __init__(self, capacity: int):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        self.capacity = capacity
+        self._buffer = deque()
+
+    def append(self, item):
+        """
+        Add an item to the buffer.
+        - If buffer not yet full: enqueue it.
+        - If full: with probability 1/self.capacity, replace one random element.
+        """
+        if len(self._buffer) < self.capacity:
+            self._buffer.append(item)
+        else:
+            if random.random() < 1 / self.capacity:
+                self._buffer.pop()
+                self._buffer.append(item)
+
+    def pop(self):
+        """
+        Remove and return the oldest item. Raises IndexError if empty.
+        """
+        return self._buffer.popleft()
+
+    def __len__(self):
+        return len(self._buffer)
+
+    def __iter__(self):
+        return iter(self._buffer)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(capacity={self.capacity}, buffer={list(self._buffer)})"

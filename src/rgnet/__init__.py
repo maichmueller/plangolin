@@ -1,6 +1,6 @@
 from .logging_setup import setup_logger
 
-setup_logger("root")
+setup_logger(__name__)
 
 import torch
 import torch_geometric as pyg

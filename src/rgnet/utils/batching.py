@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable, Generator, Generic, Sequence, TypeVar
 
 import torch
+from torch.utils.data import BatchSampler, ConcatDataset, Dataset, SequentialSampler
 
 try:
     from itertools import batched
@@ -114,3 +115,39 @@ def batched_permutations(
                 batch = []
     if batch:
         yield yield_batch(batch)
+
+
+class SeparatingSequentialBatchSampler(torch.utils.data.BatchSampler):
+    """
+    A BatchSampler that separates batches for each dataset in a ConcatDataset.
+
+    Useful for validation datasets where you want to keep the batches separated by dataset,
+    but want to use a single DataLoader.
+    """
+
+    def __init__(
+        self,
+        datasets: Sequence[Dataset],
+        batch_size: int,
+        drop_last: bool = False,
+    ):
+        super().__init__(None, batch_size, drop_last)
+        self.separation_indices = [0] + ConcatDataset.cumsum(datasets)[:-1]
+        self.batch_samplers = [
+            BatchSampler(
+                SequentialSampler(dataset),
+                batch_size=batch_size,
+                drop_last=drop_last,
+            )
+            for dataset in datasets
+        ]
+
+    def __iter__(self):
+        for start_index, batch_sampler in zip(
+            self.separation_indices, self.batch_samplers, strict=True
+        ):
+            for batch in batch_sampler:
+                yield [start_index + i for i in batch]
+
+    def __len__(self):
+        return sum(map(len, self.batch_samplers))
