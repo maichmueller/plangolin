@@ -1,5 +1,4 @@
 import dataclasses
-import logging
 from argparse import Namespace
 from os import PathLike
 from pathlib import Path
@@ -21,6 +20,7 @@ from torchrl.objectives import ValueEstimators
 # avoids specifying full class_path for encoder in cli
 from rgnet.encoding import *  # noqa: F401
 from rgnet.encoding.base_encoder import EncoderFactory
+from rgnet.logging_setup import get_logger
 from rgnet.models import *  # noqa: F401
 from rgnet.rl.data import *  # noqa: F401
 
@@ -268,7 +268,7 @@ class ThundeRLCLI(LightningCLI):
             else limited_num_threads
         )
         torch.set_num_threads(num_threads)
-        logging.info(f"[CLI] Set torch cpu threads to {num_threads}.")
+        get_logger(__name__).info(f"[CLI] Set torch cpu threads to {num_threads}.")
 
     def instantiate_trainer(self, **kwargs: Dict) -> Trainer:
         """

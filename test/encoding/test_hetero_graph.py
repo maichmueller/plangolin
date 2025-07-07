@@ -30,7 +30,7 @@ def test_hetero_data(domain, encoder_type):
     for prob in problems:
         if "large" in prob.filepath:
             continue
-        logging.info(f"testing {prob.name} with {encoder_type.__name__!r}")
+        get_logger(__name__).info(f"testing {prob.name} with {encoder_type.__name__!r}")
         state_space = xmi.XStateSpace(prob)
         encoder = encoder_type(state_space.problem.domain)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Callable, List, Literal, Union
 
 import torch
@@ -8,6 +7,7 @@ import torch_geometric as pyg
 from tensordict import TensorDict
 from torch import Tensor
 
+from rgnet.logging_setup import get_logger
 from rgnet.utils.reshape import unsqueeze_right, unsqueeze_right_like
 
 
@@ -86,7 +86,7 @@ class ObjectEmbedding:
 
     def tensor_split(self, split_indices_tensor: torch.Tensor) -> List[ObjectEmbedding]:
         if not split_indices_tensor.is_cpu:
-            logging.info(
+            get_logger(__name__).info(
                 "Received split tensor that was on the GPU."
                 " Torch requires it to be on the CPU."
                 " Performing implicit device move."

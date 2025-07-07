@@ -25,6 +25,7 @@ from torch_geometric.loader import ImbalancedSampler
 
 import rgnet.rl.thundeRL.collate as collate  # noqa: F401
 from rgnet.encoding import GraphEncoderBase
+from rgnet.logging_setup import get_logger, tqdm
 from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
@@ -197,7 +198,7 @@ class ThundeRLDataModule(LightningDataModule):
         def update(dataset):
             nonlocal completed
             completed += 1
-            logging.info(
+            get_logger(__name__).info(
                 f"Finished loading {completed}/{nr_total} problems - Most recent loaded: {dataset.problem_path.stem} "
                 f"(#{len(dataset)} states)."
             )
@@ -224,7 +225,7 @@ class ThundeRLDataModule(LightningDataModule):
                 self.max_cpu_count or float("inf"),
             )
             with Pool(max_workers=pool_size, initializer=set_sharing_strategy) as pool:
-                logging.info(
+                get_logger(__name__).info(
                     f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
                 )
                 futures: Dict[Path, any] = {}
@@ -267,7 +268,7 @@ class ThundeRLDataModule(LightningDataModule):
             datetime.timedelta(seconds=elapsed).total_seconds(), 3600
         )
         minutes, seconds = divmod(remainder, 60)
-        logging.info(
+        get_logger(__name__).info(
             f"Loading problems took {hours:.0f} hours, {minutes:.0f} minutes, {seconds:.0f} seconds."
         )
         return datasets
@@ -288,8 +289,8 @@ class ThundeRLDataModule(LightningDataModule):
         validation_prob_paths: List[Path] = self.data.validation_problem_paths or []
         test_problem_paths: List[Path] = self.data.test_problem_paths or []
         problem_paths = train_prob_paths + validation_prob_paths + test_problem_paths
-        logging.info(f"Using #{len(problem_paths)} problems in total.")
-        logging.info(
+        get_logger(__name__).info(f"Using #{len(problem_paths)} problems in total.")
+        get_logger(__name__).info(
             f"Problems used for TRAINING:\n"
             + "\n".join(p.stem for p in train_prob_paths)
         )
@@ -300,8 +301,8 @@ class ThundeRLDataModule(LightningDataModule):
         if test_problem_paths:
             test_string = "\n".join(p.stem for p in test_problem_paths)
 
-        logging.info(f"Problems used for VALIDATION:\n{validation_string}")
-        logging.info(f"Problems used for TESTING:\n{test_string}")
+        get_logger(__name__).info(f"Problems used for VALIDATION:\n{validation_string}")
+        get_logger(__name__).info(f"Problems used for TESTING:\n{test_string}")
 
         # the actual work intensive part of this function is loading the datasets
         datasets: Dict[Path, Dataset] = self.load_datasets(
@@ -315,31 +316,28 @@ class ThundeRLDataModule(LightningDataModule):
         )
 
         train_desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
-        logging.info(f"Loaded TRAINING datasets:\n{train_desc}")
+        get_logger(__name__).info(f"Loaded TRAINING datasets:\n{train_desc}")
         if validation_prob_paths:
             val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
-            logging.info(f"Loaded VALIDATION datasets:\n{val_desc}")
+            get_logger(__name__).info(f"Loaded VALIDATION datasets:\n{val_desc}")
         if test_problem_paths:
             test_desc = "\n".join(
                 str(datasets[p]) for p in self.data.test_problem_paths
             )
-            logging.info(f"Loaded TEST datasets:\n{test_desc}")
+            get_logger(__name__).info(f"Loaded TEST datasets:\n{test_desc}")
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
         if validation_prob_paths:
             self.validation_sets = [
-                (
-                    CachedDataset(datasets[val_problem])
-                    if self.cache_validation_batches
-                    else datasets[val_problem]
-                )
-                for val_problem in validation_prob_paths
+                datasets[val_problem] for val_problem in validation_prob_paths
             ]
 
         self._data_prepared = True
         if self.exit_after_processing:
-            logging.info("Stopping after data processing desired. Exiting now.")
+            get_logger(__name__).info(
+                "Stopping after data processing desired. Exiting now."
+            )
             exit(0)
 
     def _imbalanced_sampler(self) -> ImbalancedSampler | None:

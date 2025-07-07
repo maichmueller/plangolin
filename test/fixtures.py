@@ -55,7 +55,7 @@ def request_accelerator_for_test(test_name: str) -> torch.device:
     if torch.mps.is_available():
         return torch.device("mps:0")
 
-    logging.warning(
+    get_logger(__name__).warning(
         f"Tried to run device sensitive test {test_name} but accelerator was not available."
     )
     return torch.device("cpu")

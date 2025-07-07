@@ -16,7 +16,7 @@ from torch import Tensor
 from torch.nn import ModuleList
 from torch_geometric.data import Batch
 
-from rgnet.logging_setup import tqdm
+from rgnet.logging_setup import get_logger, tqdm
 from rgnet.models import HeteroGNN
 from rgnet.models.atom_valuator import AtomValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
@@ -112,7 +112,7 @@ class AtomValuesLitModule(lightning.LightningModule):
                         predicate
                     ]
             else:
-                logging.warning(
+                get_logger(__name__).warning(
                     "Sharing MLPs is only supported for HeteroGNN instances. Silently ignoring."
                 )
         self.embedder_and_valuator = EmbeddingAndValuator(
@@ -178,7 +178,7 @@ class AtomValuesLitModule(lightning.LightningModule):
 
     def on_fit_start(self):
         # pass the device to the DataModule
-        logging.info(f"using device: {self.device}")
+        get_logger(__name__).info(f"using device: {self.device}")
         self.trainer.datamodule.device = self.device
 
     def on_validation_start(self) -> None:
@@ -188,7 +188,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         # have one val-loader, or a list/tuple of ints if multiple.
         num_batches = self.trainer.num_val_batches
 
-        logging.info(
+        get_logger(__name__).info(
             f"Running {n_val_loaders} validation-loaders:\n"
             + "\n".join(
                 f"{i:<3}: {count} batches for {self.dataloader_names[i]}"
@@ -267,7 +267,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         elapsed = time.time() - self._training_start_time
         self._training_start_time = None
         td = datetime.timedelta(seconds=elapsed)
-        logging.info("Training epoch finished in %s", str(td))
+        get_logger(__name__).info("Training epoch finished in %s", str(td))
         super().on_train_epoch_end()
 
     def training_step(
@@ -538,7 +538,7 @@ class AtomValuesLitModule(lightning.LightningModule):
     def on_validation_epoch_end(self) -> None:
         elapsed = time.time() - self._validation_start_time
         td = datetime.timedelta(seconds=elapsed)
-        logging.info("Validation epoch finished in %s", str(td))
+        get_logger(__name__).info("Validation epoch finished in %s", str(td))
         self._prev_validation_dataloader_idx = -1
         self._validation_batch_counter = 0
         if self._num_workers > 0:

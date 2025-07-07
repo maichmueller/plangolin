@@ -1,4 +1,3 @@
-import logging
 from abc import ABCMeta, abstractmethod
 from typing import Any, Callable, Dict, List
 
@@ -8,12 +7,12 @@ from torchrl.modules import ValueOperator
 from torchrl.trainers import Trainer, TrainerHookBase
 
 import xmimir as xmi
+from rgnet.logging_setup import get_logger
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs.planning_env import PlanningEnvironment
 
 
 class EarlyStoppingTrainerHook(TrainerHookBase, metaclass=ABCMeta):
-
     def __init__(self):
         self.trainer = None
 
@@ -29,7 +28,9 @@ class EarlyStoppingTrainerHook(TrainerHookBase, metaclass=ABCMeta):
 
     def __call__(self, *args, **kwargs):
         if self.should_stop():
-            logging.info("Early stopping condition met. Stopping training.")
+            get_logger(__name__).info(
+                "Early stopping condition met. Stopping training."
+            )
             self.trainer.total_frames = 1
 
     def register(self, trainer: Trainer, name: str):
@@ -38,7 +39,6 @@ class EarlyStoppingTrainerHook(TrainerHookBase, metaclass=ABCMeta):
 
 
 class ValueFunctionConverged(EarlyStoppingTrainerHook):
-
     def __init__(
         self,
         value_operator,
@@ -75,7 +75,6 @@ class ValueFunctionConverged(EarlyStoppingTrainerHook):
 
 
 class ConsecutiveStopping(EarlyStoppingTrainerHook):
-
     def __init__(self, times: int, stopping_module):
         super().__init__()
         self.stopping_module = stopping_module
@@ -92,7 +91,6 @@ class ConsecutiveStopping(EarlyStoppingTrainerHook):
 
 
 class LoggingHook(TrainerHookBase):
-
     def state_dict(self) -> Dict[str, Any]:
         pass
 
@@ -117,7 +115,6 @@ class LoggingHook(TrainerHookBase):
 
 
 class ValueFunctionLoggingHook(TrainerHookBase):
-
     def __init__(
         self,
         td_generator: Callable[[], TensorDict],

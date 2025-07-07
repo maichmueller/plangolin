@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import abc
 import itertools
-import logging
 import operator
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -15,6 +14,7 @@ from torch_geometric.nn.conv.hetero_conv import group
 from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
+from rgnet.logging_setup import get_logger
 from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.mixins import DeviceAwareMixin
 from rgnet.models.patched_module_dict import PatchedModuleDict
@@ -33,7 +33,9 @@ class HeteroRouting(torch.nn.Module):
                 self.aggr = aggregation_resolver(query=aggr)
             except ValueError:
                 if aggr != "cat" and aggr != "stack":
-                    logging.warning("Failed to resolve aggregation: " + aggr)
+                    get_logger(__name__).warning(
+                        "Failed to resolve aggregation: " + aggr
+                    )
                 self.aggr = aggr
         else:
             self.aggr = aggr

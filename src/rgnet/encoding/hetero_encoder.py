@@ -191,7 +191,7 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
             data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
         if self.obj_type_id not in nodes_dict:
-            logging.warning(f"No object in graph ({graph})")
+            get_logger(__name__).warning(f"No object in graph ({graph})")
             data[self.obj_type_id].x = torch.empty(0, dtype=torch.float32)
 
         # Group edges by src, position, dst

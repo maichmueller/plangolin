@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import operator
 from collections import defaultdict
 from enum import Enum
@@ -13,6 +12,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
+from rgnet.logging_setup import get_logger
 from xmimir import XAtom, XDomain, XLiteral, XPredicate, atom_str_template
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
@@ -212,7 +212,7 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
             data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
         if self.obj_type_id not in nodes_dict:
-            logging.warning(f"No object in graph ({graph})")
+            get_logger(__name__).warning(f"No object in graph ({graph})")
             data[self.obj_type_id].x = torch.empty(0, dtype=torch.float32)
 
         # Group edges by src, position, dst

@@ -22,7 +22,7 @@ from torchrl.envs.utils import set_exploration_type
 
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.logging_setup import tqdm
+from rgnet.logging_setup import get_logger, tqdm
 from rgnet.models import PyGHeteroModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
@@ -201,7 +201,7 @@ class ModelData:
 
     def embedding_for_space(self, space: xmi.XStateSpace):
         if space not in self._embedding_for_space:
-            logging.info(
+            get_logger(__name__).info(
                 f"Computing embedding for whole state space {space} with {len(space)} states."
                 f" This might take a while."
             )
@@ -430,7 +430,7 @@ class RLPolicySearchEvaluator:
 
         probs_dir = self.out_data.out_dir / probs_store_callback_default_name
         if not probs_dir.is_dir():
-            logging.info(
+            get_logger(__name__).info(
                 f"Could not find actor_probs for experiment at {self.out_data.out_dir}"
             )
             return None
@@ -780,7 +780,7 @@ def eval_model(
     for checkpoint_path in analyzer.checkpoints:
         analyzer.current_checkpoint = checkpoint_path
         epoch, step = default_checkpoint_format(checkpoint_path.name)
-        logging.info(f"Using checkpoint with {epoch=}, {step=}")
+        get_logger(__name__).info(f"Using checkpoint with {epoch=}, {step=}")
 
         test_instances = input_data.test_problems
 
@@ -794,7 +794,7 @@ def eval_model(
             for problem, rollout in zip(test_instances, test_results)
         ]
         solved = sum(p.solved for p in analyzed_data)
-        logging.info(f"Solved {solved} out of {len(analyzed_data)}")
+        get_logger(__name__).info(f"Solved {solved} out of {len(analyzed_data)}")
 
         results_name = f"results_epoch={epoch}-step={step}"
         results_file = output_data.out_dir / (results_name + ".csv")
@@ -808,7 +808,7 @@ def eval_model(
             )
             writer.writeheader()
             writer.writerows(plan_results_as_dict)
-        logging.info("Saved results to " + str(results_file))
+        get_logger(__name__).info("Saved results to " + str(results_file))
 
         if isinstance(logger, WandbLogger) and logger.experiment is not None:
             table_data = [

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import itertools
-import logging
 from typing import Any, Callable, Dict, Iterable, Optional, Union
 
 import torch
@@ -12,6 +11,7 @@ from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
 
 from rgnet.encoding.hetero_encoder import PredicateEdgeType
+from rgnet.logging_setup import get_logger
 from rgnet.models.hetero_message_passing import ConditionalFanOutMP, FanInMP, FanOutMP
 from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.pyg_module import PyGHeteroModule
@@ -86,7 +86,7 @@ class HeteroGNN(PyGHeteroModule):
             min(self.random_initialization_dims, embedding_size), 0
         )
         if self.random_initialization_dims == 0:
-            logging.warning(
+            get_logger(__name__).warning(
                 "Random initialization dimensions are set to 0, random initialization will not be applied."
             )
             self.random_initialization = False

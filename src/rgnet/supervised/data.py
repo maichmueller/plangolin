@@ -60,7 +60,7 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         )
         encoder = self.state_encoder
         if space is None:  # None if more states than max_expanded
-            logging.warning(f"Could not create state space for {problem}")
+            get_logger(__name__).warning(f"Could not create state space for {problem}")
             return []
         for state in space:
             data: Data = encoder.to_pyg_data(encoder.encode(state))
@@ -81,7 +81,9 @@ class MultiInstanceSupervisedSet(InMemoryDataset):
         for i, problem in enumerate(self.problems):
             data_list.extend(self.parse_problem(problem))
             if self.log:
-                logging.info(f"Processed {i+1} / {len(self.problems)} problems")
+                get_logger(__name__).info(
+                    f"Processed {i+1} / {len(self.problems)} problems"
+                )
 
         # Compute the avg value of data.y over all problems (excluding negative values).
         # torch.mean() wants to output floats, but we have to store ints.

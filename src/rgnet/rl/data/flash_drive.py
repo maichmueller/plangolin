@@ -8,7 +8,7 @@ import torch
 from torch_geometric.data import Data, HeteroData
 
 import xmimir as xmi
-from rgnet.logging_setup import tqdm
+from rgnet.logging_setup import get_logger, tqdm
 from xmimir import gather_objects
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
@@ -32,7 +32,7 @@ class FlashDrive(BaseDrive):
         self.iw_options = iw_options or dict()
         if iw_search is not None:
             if isinstance(self.iw_search.expansion_strategy, RandomizedExpansion):
-                logging.warning(
+                get_logger(__name__).warning(
                     "Randomized expansion strategy in the IW search leads to a fixed expansion order in a stored FlashDrive."
                 )
         super().__init__(*args, transform=self.target_idx_to_data_transform, **kwargs)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
 import xmimir as xmi
+from rgnet.logging_setup import get_logger
 from rgnet.utils.plan import Plan, parse_fastdownward_plan
 from xmimir import XDomain, XProblem, XStateSpace
 
@@ -34,7 +35,7 @@ class OutputData:
         out_dir = Path(out_dir)
         if not out_dir.is_absolute():
             if root_dir is None:
-                logging.info(
+                get_logger(__name__).info(
                     f"The root directory is not specified and a relative path is given for '{out_dir=}'. "
                     f"Defaulting to relative the current working directory: '{os.getcwd() / out_dir}'."
                 )
@@ -59,7 +60,7 @@ class OutputData:
             except FileExistsError:
                 if self.out_dir.is_dir() and self.all_dirs_empty(self.out_dir):
                     # If the directory exists but is empty, we can use it.
-                    logging.warning(
+                    get_logger(__name__).warning(
                         f"Output directory {self.out_dir} already exists but is empty. Using it."
                     )
                     break
@@ -72,7 +73,7 @@ class OutputData:
                 )
                 suffix += 1
         self.on_program_exit()
-        logging.info("Using " + str(self.out_dir) + " for output data.")
+        get_logger(__name__).info("Using " + str(self.out_dir) + " for output data.")
         if suffix > 0:
             experiment_name = f"{experiment_name}_{suffix}"
         self.experiment_name = experiment_name
@@ -198,7 +199,7 @@ class InputData:
                 )
         self.dataset_dir = dataset_dir / domain_name
         if not self.dataset_dir.parent.exists():
-            logging.info(
+            get_logger(__name__).info(
                 "Creating missing dataset dir at " + str(self.dataset_dir.absolute())
             )
             self.dataset_dir.mkdir(parents=True)
@@ -281,7 +282,7 @@ class InputData:
                 f"Found domain.pddl in {directory.resolve()} this will likely result in a parse exception. Only problems should be placed in this directory."
             )
         if len(all_instances) == 0:
-            logging.warning(
+            get_logger(__name__).warning(
                 "Could not find any *.pddl files in directory "
                 + str(directory.absolute())
             )
@@ -294,13 +295,13 @@ class InputData:
                     file_name += ".pddl"
                 instance_path = directory / file_name
                 if not instance_path.exists():
-                    logging.warning(
+                    get_logger(__name__).warning(
                         f"Could not find {(directory / file_name).absolute()}"
                     )
                 else:
                     filtered_instances.append(instance_path)
             if len(filtered_instances) == 0:
-                logging.warning(
+                get_logger(__name__).warning(
                     "Filter matched no instances."
                     f"Tried to filter for: {filter_list} but found {[i.name for i in all_instances]}"
                 )
@@ -319,9 +320,11 @@ class InputData:
                 )
                 warn_message = f"Could not parse problem {instance}.{repr(e)}"
                 if instance.stem.lower() == "domain":
-                    logging.warning(f"{domain_warn_message}\n{warn_message}")
+                    get_logger(__name__).warning(
+                        f"{domain_warn_message}\n{warn_message}"
+                    )
                 else:
-                    logging.warning(warn_message)
+                    get_logger(__name__).warning(warn_message)
         sort_indices = [
             i for i, _ in sorted(enumerate(all_instances), key=lambda x: x[1].name)
         ]
@@ -398,7 +401,7 @@ class InputData:
             pddl_file = plan_file.stem.removesuffix(".pddl")
             problem = problem_by_stem.get(pddl_file)
             if problem is None:
-                logging.debug(
+                get_logger(__name__).debug(
                     f"Could not match plan file to problem. Plan name {pddl_file}.\n"
                     f"\tCandidates: {problem_by_stem.keys()}"
                 )

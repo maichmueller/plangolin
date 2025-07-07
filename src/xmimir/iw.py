@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterable, Iterator, List, NamedTuple, Sequence
 import torch
 from multimethod import multimethod
 
-from rgnet.logging_setup import tqdm
+from rgnet.logging_setup import get_logger, tqdm
 from rgnet.utils.misc import env_aware_cpu_count, return_true
 
 # from .extensions import *
@@ -474,7 +474,7 @@ def _check_timeout(
     if nr_transitions >= max_transitions or elapsed >= max_time:
         hours = elapsed.total_seconds() / 3600
         minutes = int((hours % 1) * 60)
-        logging.info(
+        get_logger(__name__).info(
             f"Stopping Criterion reached for instance {problem_name}. "
             f"Transition buffer size: {nr_transitions} / {max_transitions}, "
             f"time elapsed: {hours}h {minutes}m "

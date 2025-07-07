@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import functools
 import hashlib
-import logging
 import os
 import pathlib
 import random
@@ -21,6 +20,7 @@ from tensordict import NonTensorData, NonTensorStack
 from torch_geometric.data import Batch
 
 import xmimir as xmi
+from rgnet.logging_setup import get_logger
 
 
 def get_colors(graph: nx.Graph):
@@ -102,7 +102,9 @@ def import_problems(
             assert problem is not None
             problems.append(problem)
         except (ValueError, AssertionError) as e:
-            logging.warning(f"Skipped {file} while parsing problems: " + str(e))
+            get_logger(__name__).warning(
+                f"Skipped {file} while parsing problems: " + str(e)
+            )
 
     return domain, problems
 

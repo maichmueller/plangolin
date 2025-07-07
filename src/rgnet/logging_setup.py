@@ -25,7 +25,7 @@ class SPDLOGFormatter(logging.Formatter):
     """
 
     spdlog_format_string = (
-        "[%(asctime)s] [%(name)s] [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s"
+        "[%(asctime)s] [%(name)s:%(lineno)d] [%(levelname)s] %(message)s"
     )
 
     def __init__(self):
@@ -114,7 +114,7 @@ def setup_logger(name="root"):
 
 
 @cache
-def get_logger(name="root"):
+def get_logger(name):
     logger = logging.getLogger(name)
     setup_logger(name)
     return logger

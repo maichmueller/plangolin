@@ -2,6 +2,7 @@ import logging
 import re
 from pathlib import Path
 
+from rgnet.logging_setup import get_logger
 from rgnet.rl.data_layout import OutputData
 
 
@@ -13,7 +14,7 @@ def resolve_checkpoints(
     root_dir = out_data.out_dir / "rgnet"
     dirs = [d for d in root_dir.iterdir() if d.is_dir()]
     if len(dirs) != 1:
-        logging.warning("Found more than one checkpoint directory.")
+        get_logger(__name__).warning("Found more than one checkpoint directory.")
     checkpoint_dir = dirs[0] / "checkpoints"
     checkpoint_paths = list(checkpoint_dir.glob("*.ckpt"))
     if len(checkpoint_paths) == 0:
@@ -27,7 +28,7 @@ def resolve_checkpoints(
                 epoch, step = match
                 sorted_checkpoints.append((epoch, step, checkpoint_path))
             except ValueError:
-                logging.warning(
+                get_logger(__name__).warning(
                     f"Skipping checkpoint which was neither called last: {checkpoint_path.name} nor matched default_checkpoint_format"
                 )
                 continue

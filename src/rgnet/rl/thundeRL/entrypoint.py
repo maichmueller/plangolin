@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import torch._dynamo
 
+from rgnet.logging_setup import get_logger
+
 torch._dynamo.config.suppress_errors = True  # keep runtime errors from killing compile
 
 # import torch.multiprocessing as mp
@@ -26,11 +28,11 @@ def increase_resource_limit():
     if soft != hard:
         new_soft = hard
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
-        logging.info(
+        get_logger(__name__).info(
             f"Changing resource limits to: [{soft = } --> {new_soft = }, {hard = }]"
         )
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    logging.info(f"Resource limits: [{soft = }, {hard = }]")
+    get_logger(__name__).info(f"Resource limits: [{soft = }, {hard = }]")
 
 
 def cli_main():
@@ -57,7 +59,7 @@ def cli_main():
     # use the default file descriptor–based sharing to avoid mmap exhaustion
     torch.multiprocessing.set_sharing_strategy("file_descriptor")
     # torch.multiprocessing.set_sharing_strategy("file_system")
-    logging.info(f"Running CLI: {CLI_CLASS.__name__}")
+    get_logger(__name__).info(f"Running CLI: {CLI_CLASS.__name__}")
     cli = CLI_CLASS(args=remaining_args)  # Run the correct CLI
 
 
