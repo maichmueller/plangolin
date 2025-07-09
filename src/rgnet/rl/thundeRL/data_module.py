@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import datetime
 import logging
+import operator
 import time
 from concurrent.futures import ProcessPoolExecutor as Pool
+from functools import partial
 from pathlib import Path
 from typing import (
     Any,
@@ -31,6 +33,7 @@ from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import StatefulCollater
+from rgnet.utils.batching import SeparatingSequentialBatchSampler
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -40,20 +43,31 @@ def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
 
 
-class CachedDataset(Dataset):
-    """A wrapper around a dataset that caches items on first access."""
-
-    def __init__(self, base_ds):
-        self.base = base_ds
-        self.cache = {}
+class IndexedDataset(Dataset):
+    def __init__(self, dataset: Dataset, dataset_idx: int):
+        # `batches` is your list of pre‐collated mini‐batches
+        self.dataset = dataset
+        self.dataset_idx = dataset_idx
 
     def __len__(self):
-        return len(self.base)
+        return len(self.dataset)
 
     def __getitem__(self, idx):
-        if idx not in self.cache:
-            self.cache[idx] = self.base[idx]
-        return self.cache[idx]
+        # return a 2-tuple: (which validation set, the batch itself)
+        return self.dataset_idx, self.dataset[idx]
+
+
+class CachedBatches(Dataset):
+    def __init__(self, batches: list, batch_size: int):
+        # `batches` is the list of already-collated mini‐batches
+        self.batches = batches
+        self.batch_size = batch_size
+
+    def __len__(self) -> int:
+        return len(self.batches) * self.batch_size
+
+    def __getitem__(self, idx: int):
+        return self.batches[idx // self.batch_size]
 
 
 class ThundeRLDataModule(LightningDataModule):
@@ -84,7 +98,6 @@ class ThundeRLDataModule(LightningDataModule):
     ) -> None:
         super().__init__()
 
-        self._data_prepared = False
         self.data = input_data
         self.reward_function = reward_function
         self.batch_size = batch_size
@@ -135,6 +148,8 @@ class ThundeRLDataModule(LightningDataModule):
         self.skip = skip
         # defaulted, to be overridden by trainer on setup
         self.device = torch.device("cpu")
+        self._cached_val_batches: List[CachedBatches] = None
+        self._data_prepared = False
 
     def _make_collate(self):
         kwargs = self.collate_kwargs.copy()
@@ -359,16 +374,16 @@ class ThundeRLDataModule(LightningDataModule):
 
             0     5     10    15    20   X
 
-        Color‐scale (log counts):
+        Legend:
           '-' : 0
           '.' : 10–100
           ':' : 100–1'000
           '*' : 1'000–10'000
           '#' : > 10'000
 
-        The problem is that there are e.g. no samples with `#Objects` < 4  and `#DistanceToGoal` > 10. This leads to
-        the problem that an oversampling to balance the distances to goal will lead to unbalancing in object counts,
-        because you cannot find a countersample (15, 2) for a sample (15, 6). This data would need to be synthesized.
+        The problem is that there are e.g. no samples with `#Objects` < 4  and `#DistanceToGoal` > 10. This implies that
+        oversampling to balance the distances to goal will lead to unbalancing in object counts, because you cannot find
+        a counter-sample (15, 2) for a sample (15, 6). This data would need to be synthesized.
         In consequence, the sampler will not be able to balance the dataset over both attributes, you can only balance
         multiple attributes if the dataset contains all combinations of the attributes, otherwise the data is slightly
         skewed in both attributes.
@@ -454,6 +469,14 @@ class ThundeRLDataModule(LightningDataModule):
             **self._sanitize_dataloader_kwargs(defaults | kwargs),
         )
 
+    @staticmethod
+    def routing_collate(x, *, collate_fn: Callable):
+        dataset_idx, elements = zip(*x)
+        assert (
+            len(set(dataset_idx)) == 1
+        ), "All elements in a batch must come from the same dataset."
+        return dataset_idx[0], collate_fn(elements)
+
     def val_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
         # Order of dataloader has to be equal to order of validation problems in `InputData`.
         defaults = (
@@ -461,16 +484,85 @@ class ThundeRLDataModule(LightningDataModule):
                 shuffle=False,
                 collate_fn=self._make_collate(),
                 pin_memory=True,
+                drop_last=False,
             )
             | self.validation_dataloader_kwargs
         )
-        return [
-            DataLoader(
-                dataset,
-                **self._sanitize_dataloader_kwargs(defaults | kwargs),
-            )
-            for dataset in self.validation_sets
-        ]
+        kwargs = self._sanitize_dataloader_kwargs(defaults | kwargs)
+        # if caching is enabled, build or reuse pre-collated batches
+        if self.cache_validation_batches:
+            # build cache on first call
+            batch_size = kwargs["batch_size"]
+            if (
+                self._cached_val_batches is None
+                or self._cached_val_batches[0].batch_size != batch_size
+            ):
+                # make a flattened list of batches
+                # each element is placed batch_size many times in there to fake having a batch size of `batch_size`
+                # instead of `1`.
+                kwargs["persistent_workers"] = (
+                    False  # no need for persistent workers anymore with batch caching
+                )
+                logging.getLogger(__name__).info(
+                    f"Building cached validation batches with batch size {batch_size}."
+                )
+                # make a single concat dataset of all validation sets to use a single dataloader over all.
+                # we have to augment the dataset with the dataset index to split them again afterward.
+                validation_sets = self.validation_sets
+                concat_validation_sets = ConcatDataset(
+                    [
+                        IndexedDataset(dataset, idx)
+                        for idx, dataset in enumerate(validation_sets)
+                    ]
+                )  # force loading of datasets
+
+                collate_fn = kwargs["collate_fn"]
+                caching_kwargs = kwargs.copy()
+                caching_kwargs.pop("collate_fn", None)
+                caching_kwargs.pop("sampler", None)
+                caching_kwargs.pop("batch_sampler", None)
+                caching_kwargs.pop("drop_last", None)
+                caching_kwargs.pop("batch_size", None)
+
+                loaded_batches = [[] for _ in validation_sets]
+
+                # remove collate_fn from kwargs, we cannot collate over multiple datasets correctly
+                batch_sampler = SeparatingSequentialBatchSampler(
+                    validation_sets, batch_size=batch_size, drop_last=False
+                )
+
+                for dataset_idx, batch in tqdm(
+                    DataLoader(
+                        concat_validation_sets,
+                        batch_sampler=batch_sampler,
+                        collate_fn=partial(
+                            ThundeRLDataModule.routing_collate, collate_fn=collate_fn
+                        ),
+                        **caching_kwargs,
+                    ),
+                    total=len(batch_sampler),
+                    desc="Loading validation datapoints",
+                    logger=logging.getLogger(__name__),
+                ):
+                    # batch is a list of IndexedDataset elements, each is a 2-tuple (dataset_idx, elements)
+                    loaded_batches[dataset_idx].append(batch)
+                self._cached_val_batches = [
+                    CachedBatches(batches, batch_size) for batches in loaded_batches
+                ]
+            dataloaders = [
+                DataLoader(
+                    cached_batches,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    num_workers=0,
+                    # only take the first element, the rest are duplicates of it
+                    collate_fn=operator.itemgetter(0),
+                )
+                for cached_batches in self._cached_val_batches
+            ]
+            return dataloaders
+        # default behavior: fresh DataLoader each epoch
+        return [DataLoader(dataset, **kwargs) for dataset in self.validation_sets]
 
     def test_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
         # Order of dataloader should be equal to order of test problems in `InputData`.
