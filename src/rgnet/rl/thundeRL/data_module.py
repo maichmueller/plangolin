@@ -305,17 +305,17 @@ class ThundeRLDataModule(LightningDataModule):
         test_problem_paths: List[Path] = self.data.test_problem_paths or []
         problem_paths = train_prob_paths + validation_prob_paths + test_problem_paths
         get_logger(__name__).info(f"Using #{len(problem_paths)} problems in total.")
-        get_logger(__name__).info(
-            f"Problems used for TRAINING:\n"
-            + "\n".join(p.stem for p in train_prob_paths)
-        )
+        training_string = "-NONE-"
         validation_string = "-NONE-"
+        test_string = "-NONE-"
+        if train_prob_paths:
+            training_string = "\n".join(p.stem for p in train_prob_paths)
         if validation_prob_paths:
             validation_string = "\n".join(p.stem for p in validation_prob_paths)
-        test_string = "-NONE-"
         if test_problem_paths:
             test_string = "\n".join(p.stem for p in test_problem_paths)
 
+        get_logger(__name__).info(f"Problems used for TRAINING:\n{training_string}")
         get_logger(__name__).info(f"Problems used for VALIDATION:\n{validation_string}")
         get_logger(__name__).info(f"Problems used for TESTING:\n{test_string}")
 
@@ -329,17 +329,15 @@ class ThundeRLDataModule(LightningDataModule):
             + [self.validation_drive_kwargs] * len(validation_prob_paths)
             + [self.test_drive_kwargs] * len(test_problem_paths),
         )
-
-        train_desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
-        get_logger(__name__).info(f"Loaded TRAINING datasets:\n{train_desc}")
+        if train_prob_paths:
+            desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
+            get_logger(__name__).info(f"Loaded TRAINING datasets:\n{desc}")
         if validation_prob_paths:
-            val_desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
-            get_logger(__name__).info(f"Loaded VALIDATION datasets:\n{val_desc}")
+            desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
+            get_logger(__name__).info(f"Loaded VALIDATION datasets:\n{desc}")
         if test_problem_paths:
-            test_desc = "\n".join(
-                str(datasets[p]) for p in self.data.test_problem_paths
-            )
-            get_logger(__name__).info(f"Loaded TEST datasets:\n{test_desc}")
+            desc = "\n".join(str(datasets[p]) for p in self.data.test_problem_paths)
+            get_logger(__name__).info(f"Loaded TEST datasets:\n{desc}")
         self.dataset = ConcatDataset(
             [datasets[train_problem] for train_problem in train_prob_paths]
         )
