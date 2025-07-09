@@ -1,5 +1,5 @@
 from functools import singledispatchmethod
-from typing import List
+from typing import List, Sequence
 
 import torch
 from torch_geometric.data import Batch
@@ -8,8 +8,31 @@ from torch_geometric.nn import Aggregation
 import xmimir as xmi
 from rgnet.encoding import GraphEncoderBase, HeteroGraphEncoder
 from rgnet.models import HeteroGNN, PyGHeteroModule, PyGModule
+from rgnet.models.mixins import DeviceAwareMixin
 from rgnet.utils.misc import NonTensorWrapper, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
+
+
+class EncodingModule(DeviceAwareMixin, torch.nn.Module):
+    def __init__(
+        self,
+        encoder: GraphEncoderBase,
+    ):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(
+        self,
+        items_seq: (
+            Sequence[xmi.State] | Sequence[Sequence[xmi.XLiteral]] | NonTensorWrapper
+        ),
+    ) -> Batch:
+        return Batch.from_data_list(
+            [
+                self.encoder.to_pyg_data(self.encoder.encode(items))
+                for items in items_seq
+            ]
+        ).to(self.device)
 
 
 class EmbeddingModule(torch.nn.Module):

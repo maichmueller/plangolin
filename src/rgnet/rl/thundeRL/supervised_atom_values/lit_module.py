@@ -1,12 +1,11 @@
 import datetime
 import itertools
-import logging
 import queue
 import threading
 import time
 from contextlib import ExitStack
 from functools import cached_property
-from typing import Any, List, NamedTuple, Optional
+from typing import Any, List, NamedTuple, Optional, Sequence
 
 import lightning
 import torch
@@ -31,6 +30,7 @@ from rgnet.utils.inference_worker import (
     TagException,
 )
 from rgnet.utils.reshape import unsqueeze_right_like
+from xmimir import XAtom
 
 
 class OutputInfo(NamedTuple):
@@ -55,6 +55,7 @@ class EmbeddingAndValuator(torch.nn.Module):
     def forward(
         self,
         batch: Batch,
+        atoms: Optional[Sequence[XAtom]] = None,
         provide_output_metadata: bool | None = None,
         info_dict: Optional[dict[str, Any]] = None,
     ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
@@ -70,8 +71,9 @@ class EmbeddingAndValuator(torch.nn.Module):
         embeddings, batch_info = self.gnn(batch)
         return self.atom_valuator(
             embeddings,
-            batch_info,
-            batch.object_names,
+            batch_info=batch_info,
+            object_names=batch.object_names,
+            atoms=atoms,
             provide_output_metadata=provide_output_metadata,
             info_dict=info_dict,
         )

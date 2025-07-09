@@ -6,7 +6,7 @@ import torch_geometric.nn
 from torch import Tensor
 from torch_geometric.nn.resolver import activation_resolver
 
-from rgnet.utils.batching import PermutedDataBatch, batched_permutations
+from rgnet.utils.batching import batched_permutations
 from rgnet.utils.misc import KeyAwareDefaultDict, num_nodes_per_entry, tolist
 from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import XAtom, atom_str_template
@@ -354,7 +354,9 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
                 assert (
                     len(atom_objects[idx]) == arity
                 ), f"Atom {atom} has wrong arity {len(atom.objects)} != {arity}."
-                permut_indices = [state_object_names.index(obj) for obj in atom.objects]
+                permut_indices = [
+                    state_object_names.index(obj.get_name()) for obj in atom.objects
+                ]
                 # [1, nr_objects * feature_size]
                 stacked_object_emb = state_object_embs[permut_indices].view(1, -1)
                 flattened_permuted_emb.append(stacked_object_emb)

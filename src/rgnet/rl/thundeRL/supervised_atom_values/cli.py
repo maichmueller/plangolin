@@ -57,6 +57,22 @@ class CollateKwargs:
     unreachable_atom_value: float = float("inf")
 
 
+@dataclasses.dataclass
+class TestSetup:
+    """
+    Define additional parameter used for testing the agent.
+    Args:
+        max_steps: The maximum number of steps the agent is allowed to take to solve any problem.
+            (default: 100)
+        exploration_type: How the actions should be sampled. RANDOM means the probability
+            distribution over successor states is sampled and MODE will take the arg-max.
+            (default: ExplorationType.MODE)
+    """
+
+    max_steps: int = 100
+    avoid_cycles: bool = False  # whether to avoid cycles during testing
+
+
 class AtomValuesCLI(ThundeRLCLI):
     def __init__(
         self,
@@ -93,6 +109,8 @@ class AtomValuesCLI(ThundeRLCLI):
             OptimizerSetup, "optimizer_setup", as_positional=True
         )
         parser.add_class_arguments(CollateKwargs, "collate_kwargs", as_positional=True)
+
+        parser.add_class_arguments(TestSetup, "test_setup", as_positional=True)
         #################################### Validation callback links ##############################
 
         parser.link_arguments(

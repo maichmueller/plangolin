@@ -1,4 +1,3 @@
-import logging
 import re
 from pathlib import Path
 
@@ -33,6 +32,13 @@ def resolve_checkpoints(
                 )
                 continue
     sorted_checkpoints.sort()  # will sort by epoch then by step
+    printout = "\n".join(
+        f"{epoch = }, {step = }, {path = }"
+        for epoch, step, path in map(lambda x: tuple(map(str, x)), sorted_checkpoints)
+    )
+    get_logger(__name__).info(
+        f"Found checkpoints:\n{printout}",
+    )
     return [tpl[2] for tpl in sorted_checkpoints], last_checkpoint
 
 

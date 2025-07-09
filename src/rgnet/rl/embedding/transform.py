@@ -48,13 +48,16 @@ class EmbeddingTransform(Transform):
         self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
     ) -> TensorDictBase:
         """
-        We want to produce embeddings fore initial states too. It is not clear to me
-        why the parent method does nothing.
-        NOTE during a partial reset (inside maybe_reset) this function is called before
-        base_env completed _reset_proc_data and hence tensordict_reset will contain
-        only states that were reset, of which most will be thrown out again.
-        Ideally we could check if "_reset" is present in tensordict and only create embeddings
-        for the states that are actually reset.
+        Call the transform after an env's `reset` call as well, since we need embeddings for initial states too.
+
+        It is not clear to me why the parent method does nothing.
+
+        NOTE:
+            During a partial reset (in call to `maybe_reset`) this function is called before
+            `base_env` completed `_reset_proc_data` and hence `tensordict_reset` will contain
+            only states that were reset, of which most will be thrown out again.
+            Ideally we could check if "_reset" is present in tensordict and only create embeddings
+            for the states that are actually reset.
         """
         return self._call(tensordict_reset)
 
