@@ -21,7 +21,7 @@ class PyGModule(DeviceAwareMixin, Module, ABC):
     ) -> Tensor: ...
 
     @singledispatchmethod
-    def __call__(self, *args):
+    def __call__(self, *args, **kwargs):
         if args:
             msg = f"Invalid input type {args[0].__class__} for '__call__'"
         else:
@@ -29,13 +29,13 @@ class PyGModule(DeviceAwareMixin, Module, ABC):
         raise NotImplementedError(msg)
 
     @__call__.register(dict)
-    def _(self, x, edge_index, batch=None):
-        return super().__call__(x, edge_index, batch)
+    def _(self, x, edge_index, batch=None, *args, **kwargs):
+        return super().__call__(x, edge_index, batch, *args, **kwargs)
 
     @__call__.register(Data)
     @__call__.register(Batch)
-    def _(self, data, *args):
-        return super().__call__(*self.unpack(data))
+    def _(self, data, *args, **kwargs):
+        return super().__call__(*self.unpack(data), *args, **kwargs)
 
     @classmethod
     def unpack(cls, data: Union[Data, Batch]):
@@ -61,13 +61,13 @@ class PyGHeteroModule(DeviceAwareMixin, Module, ABC):
         raise NotImplementedError(msg)
 
     @__call__.register(dict)
-    def _(self, x_dict, edge_index_dict, batch_dict=None):
-        return super().__call__(x_dict, edge_index_dict, batch_dict)
+    def _(self, x, edge_index, batch=None, *args, **kwargs):
+        return super().__call__(x, edge_index, batch, *args, **kwargs)
 
     @__call__.register(HeteroData)
     @__call__.register(Batch)
-    def _(self, data, *args):
-        return super().__call__(*self.unpack(data))
+    def _(self, data, *args, **kwargs):
+        return super().__call__(*self.unpack(data), *args, **kwargs)
 
     @classmethod
     def unpack(cls, data: Union[HeteroData, Batch]):

@@ -281,7 +281,7 @@ class PolicyGradientCLI(ThundeRLCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            "estimator_config.gamma",
+            "reward.gamma",
             "model.validation_hooks.init_args.gamma",
             apply_on="instantiate",
         )

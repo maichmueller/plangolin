@@ -1,5 +1,4 @@
 import abc
-import logging
 import warnings
 from collections import defaultdict
 from itertools import chain
@@ -23,7 +22,7 @@ from rgnet.rl.envs.planning_env import PlanningEnvironment
 from rgnet.utils.misc import KeyAwareDefaultDict, as_forwarding_args
 
 
-class ValidationCallback(torch.nn.Module, Callback):
+class ValidationCallback(torch.nn.Module, Callback, abc.ABC):
     def __init__(
         self,
         log_name: str,

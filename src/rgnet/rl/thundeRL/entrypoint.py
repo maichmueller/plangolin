@@ -13,11 +13,12 @@ import argparse
 import logging
 import sys
 
-from rgnet.rl.thundeRL import AtomValuesCLI, PolicyGradientCLI
+from rgnet.rl.thundeRL import AtomValuesCLI, PolicyGradientCLI, ValueLearningCLI
 
 CLI_REGISTRY = {
     "policy_gradient": PolicyGradientCLI,
     "atom_values": AtomValuesCLI,
+    "supervised_value": ValueLearningCLI,
 }
 
 

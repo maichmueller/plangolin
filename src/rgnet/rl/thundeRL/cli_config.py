@@ -51,13 +51,14 @@ def validation_dataloader_names(input_data: InputData) -> Optional[Dict[int, str
     return {i: p.name for i, p in enumerate(input_data.validation_problems)}
 
 
+@dataclasses.dataclass
 class ValueEstimatorConfig:
     def __init__(
         self,
-        gamma: float,
+        gamma: float | None,
         estimator_type: (
             ValueEstimators | Literal["AllActionsValueEstimator"]
-        ) = ValueEstimators.TD0,
+        ) | None = ValueEstimators.TD0,
     ):
         self.gamma = gamma
         self.estimator_type = estimator_type
@@ -162,8 +163,8 @@ class ThundeRLCLI(LightningCLI):
             compute_fn=lambda reward: reward,
         )
         parser.link_arguments(
-            "estimator_config.gamma",
             "reward.init_args.gamma",
+            "estimator_config.gamma",
             apply_on="parse",
         )
 

@@ -1,5 +1,5 @@
 import itertools
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import torch
 from torch import Tensor
@@ -12,16 +12,21 @@ from xmimir.wrappers import XCategory, atom_str_template
 
 def to_states_batch(
     data_list: list[Data | HeteroData],
+    target_attr: str | None = None,
     exclude_keys: Iterable[str] | None = None,
     **kwargs,
-) -> tuple[Batch, dict[str, Any]]:
+) -> (
+    tuple[Batch, dict[str, Any]]
+    | tuple[Batch, Tensor | Sequence | Mapping, dict[str, Any]]
+):
     """
     Collate function for batching current states-(data) in PyTorch Geometric.
 
     Args:
         data_list (list): List of data objects to be batched.
+        target_attr (str | None): The attribute to use as targets, if any.
         exclude_keys (tuple): Keys to exclude from the batch.
-        **kwargs: Additional keyword arguments.
+        **kwargs: Additional keyword arguments for Batch.from_data_list.
 
     Returns:
         batch: A Batch object containing the current states(-data) as a pyg.Batch object.
@@ -29,7 +34,14 @@ def to_states_batch(
     batch = Batch.from_data_list(
         data_list, exclude_keys=exclude_keys or ["targets"], **kwargs
     )
-    return batch, {"batch_size": batch.batch_size}
+    info = {
+        "batch_size": batch.batch_size,
+    }
+    if target_attr is None:
+        return batch, info
+    else:
+        targets = getattr(batch, target_attr)
+        return batch, targets, info
 
 
 def to_transitions_batch(
