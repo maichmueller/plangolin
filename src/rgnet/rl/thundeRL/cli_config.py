@@ -119,6 +119,8 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.add_class_arguments(WandbExtraParameter, "wandb_extra")
 
+        parser.add_argument("experiment", type=str, help="Name of the experiment")
+
         ################################################################################
         #############################                      #############################
         #############################    Link arguments    #############################
@@ -192,9 +194,14 @@ class ThundeRLCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
-            source="data_layout.output_data.experiment_name",
+            source="experiment",
+            target="data_layout.output_data.experiment_name",
+            apply_on="parse",
+        )
+        parser.link_arguments(
+            source="experiment",
             target="trainer.logger.init_args.name",
-            apply_on="instantiate",
+            apply_on="parse",
         )
         parser.link_arguments(
             source="data_layout.output_data.out_dir",
