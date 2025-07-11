@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data, HeteroData, InMemoryDataset
 
 from rgnet.encoding import GraphEncoderBase
+from rgnet.logging_setup import get_logger
 from xmimir import XProblem, XStateSpace
 
 
 class MultiInstanceSupervisedSet(InMemoryDataset):
-
     @staticmethod
     def load_from(path: str):
         return MultiInstanceSupervisedSet(problems=None, state_encoder=None, root=path)

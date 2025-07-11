@@ -4,7 +4,7 @@ from typing import List, Sequence
 from xmimir import StateLabel, XTransition
 
 
-class RewardFunction:
+class RewardFunction(abc.ABC):
     """
     Base class for reward functions.
 

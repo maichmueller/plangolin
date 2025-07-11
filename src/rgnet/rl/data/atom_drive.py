@@ -233,9 +233,7 @@ class AtomDrive(BaseDrive):
         return sorted(batched_data.values(), key=lambda d: d.idx)
 
     def atom_tensor_to_dict(self, atom_tensor: torch.Tensor) -> list[dict[str, float]]:
-        return atom_value_tensor_to_dict(
-            atom_tensor, self.atom_to_index_map, self.index_to_atom_map
-        )
+        return atom_value_tensor_to_dict(atom_tensor, self.index_to_atom_map)
 
     def atom_value_dict_to_tensor(
         self,

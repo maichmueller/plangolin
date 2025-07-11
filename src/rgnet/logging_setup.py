@@ -107,9 +107,15 @@ class TqdmLogger(StringIO):
 def setup_logger(name="root"):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(SPDLOGFormatter())
-    logger.addHandler(console_handler)
+    # Don't let this logger bubble messages up to parents
+    logger.propagate = False
+
+    # Only add a StreamHandler once
+    if not logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(SPDLOGFormatter())
+        logger.addHandler(console_handler)
+
     return logger
 
 

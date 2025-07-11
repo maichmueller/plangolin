@@ -1,5 +1,7 @@
 seed_everything: true
 
+experiment: "pytest"
+
 data:
   batch_size: 26
   parallel: False
@@ -14,6 +16,8 @@ encoder:
 
 reward:
   class_path: FlatReward
+  init_args:
+    gamma: 0.9
 
 optimizer_setup:
   optimizer:

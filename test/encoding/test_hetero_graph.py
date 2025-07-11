@@ -1,5 +1,4 @@
 import itertools
-import logging
 from collections import defaultdict
 from test.fixtures import (  # noqa: F401
     hetero_encoded_state,
@@ -16,6 +15,7 @@ from torch_geometric.data import HeteroData
 import xmimir as xmi
 from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
 from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
+from rgnet.logging_setup import get_logger
 from rgnet.utils import import_all_from
 
 

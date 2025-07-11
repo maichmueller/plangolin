@@ -1,4 +1,3 @@
-import logging
 import os
 from pathlib import Path
 from typing import List, Type
@@ -13,6 +12,7 @@ import xmimir as xmi
 from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
 from rgnet.encoding.base_encoder import EncoderFactory, GraphEncoderBase
 from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
+from rgnet.logging_setup import get_logger
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import FlashDrive
 from rgnet.rl.data.atom_drive import AtomDrive
