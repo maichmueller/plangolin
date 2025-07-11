@@ -3,7 +3,6 @@ from __future__ import annotations
 import atexit
 import datetime
 import itertools
-import logging
 import os
 import signal
 import warnings
@@ -209,9 +208,22 @@ class InputData:
                 "Domain input directory does not exist or is not a directory.\n"
                 + str(self.pddl_domains_dir.absolute())
             )
+        self.domain: Optional[XDomain] = None
+        self.problems: Optional[List[XProblem]] = None
+        self._instances: List[Path] = []
+        self.validation_problems = None
+        self._validation_instances = None
+        self.test_problems = None
+        self._test_instances = None
         self._resolve_domain_and_instances(instances)
         self._resolve_validation_instances(validation_instances)
         self._resolve_test_instances(test_instances)
+        if self.domain is None:
+            raise ValueError(
+                "No domain was found in any of the specified directories. "
+                "Please make sure that the domain.pddl file is present in the directory "
+                "(order of precedence: train - validation - test)."
+            )
         self.plan_by_problem = self._look_for_plans()
 
         # We load state space lazily as it might be quite expensive
@@ -275,14 +287,21 @@ class InputData:
         :param filter_list: The list of instances to filter for, can be the full file name or only the stem. If None then all files will be used.
         :return: The collected pddl files as paths and the respective parsed problems.
         """
-        assert directory.is_dir(), f"Given directory {directory} is not a directory."
+        logger = get_logger(__name__)
+        if not directory.is_dir():
+            logger.warning(
+                f"Given directory {directory} is not a directory/exists, cannot extract problems from it. "
+                f"(This might lead to errors downstream.)"
+            )
+            return [], []
+
         all_instances = list(directory.glob("*.pddl"))
         if any(instance_path.name == "domain.pddl" for instance_path in all_instances):
             warnings.warn(
                 f"Found domain.pddl in {directory.resolve()} this will likely result in a parse exception. Only problems should be placed in this directory."
             )
         if len(all_instances) == 0:
-            get_logger(__name__).warning(
+            logger.warning(
                 "Could not find any *.pddl files in directory "
                 + str(directory.absolute())
             )
@@ -295,13 +314,13 @@ class InputData:
                     file_name += ".pddl"
                 instance_path = directory / file_name
                 if not instance_path.exists():
-                    get_logger(__name__).warning(
+                    logger.warning(
                         f"Could not find {(directory / file_name).absolute()}"
                     )
                 else:
                     filtered_instances.append(instance_path)
             if len(filtered_instances) == 0:
-                get_logger(__name__).warning(
+                logger.warning(
                     "Filter matched no instances."
                     f"Tried to filter for: {filter_list} but found {[i.name for i in all_instances]}"
                 )
@@ -309,27 +328,29 @@ class InputData:
             all_instances = filtered_instances
 
         problems = []
-        for instance in all_instances:
+        unparseable_instances = [False] * len(all_instances)
+        for i, instance in enumerate(all_instances):
             try:
                 problems.append(xmi.parse(str(self.domain_path), str(instance))[1])
             except RuntimeError as e:
-                domain_warn_message = (
-                    "Problem file is likely a domain."
-                    "Please make sure that domain files are outside of the problem subdirectories."
-                    "The expected layout can be found in the documentation of InputData."
-                )
                 warn_message = f"Could not parse problem {instance}.{repr(e)}"
                 if instance.stem.lower() == "domain":
-                    get_logger(__name__).warning(
-                        f"{domain_warn_message}\n{warn_message}"
+                    domain_warn_message = (
+                        "Problem file is likely a domain."
+                        "Please make sure that domain files are outside of the problem subdirectories."
+                        "The expected layout can be found in the documentation of InputData."
                     )
+                    logger.warning(f"{domain_warn_message}\n{warn_message}")
                 else:
-                    get_logger(__name__).warning(warn_message)
+                    logger.warning(warn_message)
+                unparseable_instances[i] = True
         sort_indices = [
             i for i, _ in sorted(enumerate(all_instances), key=lambda x: x[1].name)
         ]
         return [all_instances[i] for i in sort_indices], [
-            problems[i] for i in sort_indices
+            problems[i]
+            for i, unparseable in zip(sort_indices, unparseable_instances)
+            if not unparseable
         ]
 
     def _resolve_domain_and_instances(self, instances: List[str] | Literal["all"]):
@@ -337,41 +358,40 @@ class InputData:
         found_instances, problems = self._resolve_instances(
             train_dir, _all_or_filter(instances)
         )
-        self.domain: xmi.XDomain = problems[0].domain
-        self._instances = found_instances
-        self.problems = problems
+        if problems:
+            self.domain: xmi.XDomain = problems[0].domain
+            self._instances = found_instances
+            self.problems = problems
 
     def _resolve_validation_instances(
         self,
         validation_instances: Optional[List[str]] | Literal["all"],
     ):
-        if validation_instances is None:
-            self.validation_problems = None
-            self._validation_instances = None
-            return
-        else:
+        if validation_instances is not None:
             input_dir = self.pddl_domains_dir / self.val_subdir
             instances, problems = self._resolve_instances(
                 input_dir, _all_or_filter(validation_instances)
             )
-            self.validation_problems = problems
-            self._validation_instances = instances
+            if problems:
+                if self.domain is None:
+                    self.domain = problems[0].domain
+                self.validation_problems = problems
+                self._validation_instances = instances
 
     def _resolve_test_instances(
         self,
         test_instances: Optional[List[str]] | Literal["all"],
     ):
-        if test_instances is None:
-            self.test_problems = None
-            self._test_instances = None
-            return
-        else:
+        if test_instances is not None:
             input_dir = self.pddl_domains_dir / self.test_subdir
             instances, problems = self._resolve_instances(
                 input_dir, _all_or_filter(test_instances)
             )
-            self.test_problems = problems
-            self._test_instances = instances
+            if problems:
+                if self.domain is None:
+                    self.domain = problems[0].domain
+                self.test_problems = problems
+                self._test_instances = instances
 
     def _look_for_plans(self) -> Dict[XProblem, Plan]:
         plan_dir = self.pddl_domains_dir / self.plan_subdir
