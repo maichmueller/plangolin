@@ -25,6 +25,7 @@ from rgnet.rl.envs import (
 )
 from rgnet.utils.misc import KeyAwareDefaultDict, env_aware_cpu_count, return_true
 from xmimir import (
+    ActionHistoryDataPack,
     XAtom,
     XCategory,
     XState,
@@ -524,6 +525,8 @@ class PartialAtomDrive(AtomDrive):
                             pool.submit(
                                 _compute_state_dist_mp,
                                 int(self.rng.integers(low=0, high=high_seed_end)),
+                                True,  # serialize starting state
+                                None,  # no action history in this case
                             )
                         )
                     completed_states = 0
@@ -536,16 +539,13 @@ class PartialAtomDrive(AtomDrive):
                                 continue
                             try:
                                 (
-                                    init_state_schemas,
-                                    init_state_object_bindings,
+                                    action_history_datapack,
                                     atom_dists,
                                 ) = fut.result()
                             except CancelledError:
                                 continue
                             # reconstruct state from serialized action trace
-                            state = rebuild_state(
-                                succ_gen, init_state_schemas, init_state_object_bindings
-                            )
+                            state = action_history_datapack.reconstruct(succ_gen)
                             if state is None:
                                 state = succ_gen.initial_state
                             if state not in closed_states:
@@ -558,15 +558,16 @@ class PartialAtomDrive(AtomDrive):
                                     stop_flag.value = True
                                     break
                             # sample the steps of steps we walk from the start to build the new starting state
-                            steps = int(self.rng.random() * len(init_state_schemas))
+                            steps = int(
+                                self.rng.random() * len(action_history_datapack)
+                            )
                             # submit another task to compute the state distance
                             futures.add(
                                 pool.submit(
                                     _compute_state_dist_mp,
                                     int(self.rng.integers(low=0, high=high_seed_end)),
                                     True,  # serialize starting state
-                                    init_state_schemas[:steps],
-                                    init_state_object_bindings[:steps],
+                                    action_history_datapack[:steps],
                                 )
                             )
 
@@ -579,8 +580,7 @@ class PartialAtomDrive(AtomDrive):
                     _, atom_dists = compute_state_dist(
                         state=state,
                         succ_gen=succ_gen,
-                        action_schemas=None,
-                        object_bindings=None,
+                        action_history_datapack=None,  # no action history in this case
                         iw_search=self.iw_search,
                         serialize_starting_state=False,
                         rng=self.rng,
@@ -629,16 +629,18 @@ def walk(
 def _compute_state_dist_mp(
     seed: int | None = None,
     serialize_starting_state: bool = True,
-    action_schemas: Sequence[int] | None = None,
-    object_bindings: Sequence[Sequence[str]] | None = None,
+    action_history_datapack: ActionHistoryDataPack | None = None,
 ):
     global _iw_search, _problem, _stop_flag
     succ_gen = XSuccessorGenerator(_problem)
     return compute_state_dist(
-        state=rebuild_state(succ_gen, action_schemas, object_bindings),
+        state=(
+            action_history_datapack.reconstruct(succ_gen)
+            if action_history_datapack
+            else succ_gen.initial_state
+        ),
         succ_gen=succ_gen,
-        action_schemas=action_schemas,
-        object_bindings=object_bindings,
+        action_history_datapack=action_history_datapack,
         iw_search=_iw_search,
         serialize_starting_state=serialize_starting_state,
         rng=np.random.default_rng(seed),
@@ -649,21 +651,21 @@ def _compute_state_dist_mp(
 def compute_state_dist(
     state: XState,
     succ_gen: XSuccessorGenerator,
-    action_schemas: Sequence[int] | None = None,
-    object_bindings: Sequence[Sequence[str]] | None = None,
+    action_history_datapack: ActionHistoryDataPack | None = None,
     iw_search: IWSearch | None = None,
     serialize_starting_state: bool = True,
     rng: np.random.Generator | None = None,
     stop_flag: Any | None = None,
     bounds: tuple[int, int] = (0, 20),
 ) -> (
-    tuple[Sequence[int], Sequence[str], dict[str, float]]
+    tuple[ActionHistoryDataPack, dict[str, float]]
     | tuple[XState, dict[str, float]]
     | tuple[None, None]
 ):
     succ_gen = succ_gen
     deadend = True
     start_state = state
+    action_trace = []
     while deadend:
         start_state, action_trace = walk(
             succ_gen,
@@ -697,55 +699,12 @@ def compute_state_dist(
                 atom_dists[str(atom)] = reward
     if serialize_starting_state:
         # serialized actions will allow to reconstruct the starting state from which IW was started
-        serialized_actions = list(
-            chain(
-                zip(action_schemas or [], object_bindings or []),
-                (_serialized_action(action) for action in action_trace),
-            )
-        )
-        schemas, bindings = zip(*serialized_actions) if serialized_actions else ([], [])
+        if action_history_datapack is None:
+            action_history_datapack = ActionHistoryDataPack(action_trace)
+        else:
+            action_history_datapack.extend(ActionHistoryDataPack(action_trace))
         # atom dists will store the reward (negative distance) to each atom in the form of
         #   (predicate_name, (object1_name, object2_name, ...)) --> reward
-        return schemas, bindings, dict(atom_dists)
+        return action_history_datapack, dict(atom_dists)
     else:
         return start_state, dict(atom_dists)
-
-
-def _serialized_atom(atom: XAtom) -> tuple[str, tuple[str, ...]]:
-    return str(atom.predicate), tuple(o.get_name() for o in atom.objects)
-
-
-def _serialized_action(action: xmi.XAction) -> tuple[int, tuple[str, ...]]:
-    return action.action_schema.index, tuple(o.get_name() for o in action.objects)
-
-
-def rebuild_state(
-    succ_gen: XSuccessorGenerator,
-    action_schemas: Sequence[int],
-    object_bindings: Sequence[Sequence[str]],
-) -> XState | None:
-    if (
-        action_schemas is not None
-        and action_schemas
-        and object_bindings is not None
-        and object_bindings
-    ):
-        actual_schemas = [
-            succ_gen.problem.domain.actions[sid] for sid in action_schemas
-        ]
-        objects = succ_gen.problem.objects
-        object_names = list(map(lambda o: o.get_name(), objects))
-        bound_objects = [
-            [objects[object_names.index(o)] for o in binding]
-            for binding in object_bindings
-        ]
-        action_gen = succ_gen.action_generator
-        regrounded_actions = [
-            action_gen.ground_action(schema, objs)
-            for schema, objs in zip(actual_schemas, bound_objects)
-        ]
-        rebuilt_state = succ_gen.initial_state
-        for action in regrounded_actions:
-            rebuilt_state = succ_gen.successor(rebuilt_state, action)
-        return rebuilt_state
-    return None

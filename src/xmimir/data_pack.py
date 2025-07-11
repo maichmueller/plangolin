@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Iterable, TypeVar
+from typing import Generic, Iterable, TypeVar, Union
 
 from .wrappers import *
 
@@ -33,6 +33,12 @@ class ActionDataPack(MinDataPack[XAction]):
     def __init__(self, action: XAction):
         self.schema = action.action_schema.name
         self.objects = tuple(map(lambda o: o.get_name(), action.objects))
+
+    def __str__(self):
+        """
+        String representation of the action data pack.
+        """
+        return f"ActionDataPack({self.schema}, {self.objects})"
 
     def reconstruct(self, action_generator: XActionGenerator) -> XAction:
         return action_generator.ground_action(self.schema, self.objects)
@@ -80,10 +86,42 @@ class ActionHistoryDataPack(MinDataPack[XState]):
     Minimal interface for an action history data pack that can be used to reconstruct the original action history.
     """
 
-    actions: tuple[ActionDataPack, ...]
+    actions: list[ActionDataPack]
 
     def __init__(self, action_history: Iterable[XAction]):
-        self.actions = tuple(ActionDataPack(action) for action in action_history)
+        self.actions = [ActionDataPack(action) for action in action_history]
+
+    def __len__(self) -> int:
+        """
+        Get the number of actions in the action history.
+        """
+        return len(self.actions)
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> Union["ActionHistoryDataPack", ActionDataPack]:
+        """
+        Get the action data pack at the specified index.
+        """
+        if isinstance(index, slice):
+            copied = ActionHistoryDataPack(tuple())
+            copied.actions = self.actions[index]
+            return copied
+        return self.actions[index]
+
+    def __bool__(self):
+        """
+        Check if the action history is not empty.
+        """
+        return bool(self.actions)
+
+    def __str__(self):
+        """
+        String representation of the action history.
+        """
+        return (
+            f"ActionHistoryDataPack({len(self.actions)}: {list(map(str,self.actions))})"
+        )
 
     def reconstruct(self, successor_generator: XSuccessorGenerator) -> XState:
         return self.reconstruct_sequence(successor_generator)[-1]
@@ -102,3 +140,9 @@ class ActionHistoryDataPack(MinDataPack[XState]):
             state = successor_generator.successor(state, action)
             states.append(state)
         return states
+
+    def extend(self, other: "ActionHistoryDataPack") -> None:
+        """
+        Extend the current action history with another action history.
+        """
+        self.actions.extend(other.actions)
