@@ -278,10 +278,12 @@ class XLiteral(MimirWrapper[GroundLiteral]):
 
 class XDomain(MimirWrapper[Domain]):
     _predicate_dict: dict[str, XPredicate]
+    _action_dict: dict[str, XActionSchema]
 
     def __init__(self, domain: Domain):
         super().__init__(domain)
         self._predicate_dict = {p.name: p for p in self.predicates()}
+        self._action_dict = {a.name: a for a in self.actions}
 
     @property
     def name(self) -> str:
@@ -291,7 +293,7 @@ class XDomain(MimirWrapper[Domain]):
     def filepath(self) -> str:
         return self.base.get_filepath()
 
-    def predicate_dict(self) -> MappingProxyType:
+    def predicate_dict(self) -> MappingProxyType[str, XPredicate]:
         return MappingProxyType(self._predicate_dict)
 
     @cache
@@ -311,6 +313,10 @@ class XDomain(MimirWrapper[Domain]):
     @cached_property
     def actions(self) -> tuple[XActionSchema, ...]:
         return tuple(map(XActionSchema, self.base.get_actions()))
+
+    @property
+    def action_dict(self) -> MappingProxyType[str, XActionSchema]:
+        return MappingProxyType(self._action_dict)
 
     @cached_property
     def functions(self) -> FunctionSkeletonList:
@@ -339,6 +345,7 @@ class XDomain(MimirWrapper[Domain]):
 
 class XProblem(MimirWrapper[Problem]):
     repositories: PDDLRepositories
+    _object_dict: dict[str, Object]
 
     """
     The extended problem class.
@@ -349,6 +356,7 @@ class XProblem(MimirWrapper[Problem]):
     def __init__(self, problem: Problem, repositories: PDDLRepositories):
         super().__init__(problem)
         self.repositories = repositories
+        self._object_dict = {obj.get_name(): obj for obj in self.objects}
 
     @staticmethod
     def from_space(space: StateSpace):
@@ -372,6 +380,10 @@ class XProblem(MimirWrapper[Problem]):
     @property
     def objects(self) -> ObjectList:
         return self.base.get_objects()
+
+    @property
+    def object_dict(self) -> MappingProxyType[str, Object]:
+        return MappingProxyType(self._object_dict)
 
     @cache
     def goal(self, *category: XCategory) -> tuple[XLiteral, ...]:
@@ -934,16 +946,13 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
 
     @multimethod
     def __init__(self, grounder: Grounder):
-        super().__init__(
-            LiftedApplicableActionGenerator(grounder.get_action_grounder())
-        )
-        self.problem = XProblem(
-            grounder.get_problem(), grounder.get_pddl_repositories()
+        XActionGenerator.__init__(
+            self, LiftedApplicableActionGenerator(grounder.get_action_grounder())
         )
 
     @multimethod
     def __init__(self, problem: XProblem):
-        self.__init__(Grounder(problem.base, problem.repositories))
+        XActionGenerator.__init__(self, Grounder(problem.base, problem.repositories))
 
     @property
     def action_grounder(self):
@@ -952,13 +961,12 @@ class XActionGenerator(MimirWrapper[IApplicableActionGenerator]):
     def get_action(self, index: int):
         return XAction(self.action_grounder.get_ground_action(index), self)
 
-    def ground_action(
-        self, schema: XActionSchema, objects: Sequence[Object]
-    ) -> XAction:
+    def ground_action(self, schema: str, objects: Iterable[str]) -> XAction:
+        schema = self.problem.domain.action_dict[schema]
+        object_dict = self.problem.object_dict
+        objects = [object_dict[obj] for obj in objects]
         return XAction(
-            self.action_grounder.ground_action(
-                self.problem.domain.actions[schema.index].base, ObjectList(objects)
-            ),
+            self.action_grounder.ground_action(schema.base, ObjectList(objects)),
             self,
         )
 
