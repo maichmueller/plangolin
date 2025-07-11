@@ -120,7 +120,9 @@ class ThundeRLCLI(LightningCLI):
         )
         parser.add_class_arguments(WandbExtraParameter, "wandb_extra")
 
-        parser.add_argument("experiment", type=str, help="Name of the experiment")
+        parser.add_argument(
+            "--experiment", type=str, required=True, help="Name of the experiment"
+        )
 
         ################################################################################
         #############################                      #############################

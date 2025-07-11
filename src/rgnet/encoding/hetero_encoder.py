@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import operator
 from collections import defaultdict
 from functools import cache
@@ -11,6 +10,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
+from rgnet.logging_setup import get_logger
 from xmimir import XAtom, XDomain, XLiteral, XPredicate, atom_str_template
 
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
