@@ -1,6 +1,7 @@
 import logging
 import os
 import shelve
+import shutil
 from abc import abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +98,9 @@ class BaseDrive(InMemoryDataset):
         # initialize klepto store for modular persistence
         self.metabase_path = root_dir / "database.db"
         os.makedirs(root_dir, exist_ok=True)
+        # copy over the used domain and problem files to the root directory
+        shutil.copy(self.domain_path, root_dir / "domain.pddl")
+        shutil.copy(self.problem_path, root_dir / "problem.pddl")
         self.metabase: shelve.Shelf | None = None
         # verify that the metadata matches the current configuration; otherwise we cannot trust previously processed
         # data will align with our expectations.

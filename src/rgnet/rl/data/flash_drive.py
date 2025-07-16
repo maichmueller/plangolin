@@ -1,18 +1,102 @@
 import itertools
-import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Union
+from typing import Any, Callable, List, Mapping, Optional, Sequence, Union
 
-import torch
 from torch_geometric.data import Data, HeteroData
 
 import xmimir as xmi
 from rgnet.logging_setup import get_logger, tqdm
-from xmimir import gather_objects
+from rgnet.rl.envs import ExpandedStateSpaceEnv
+from xmimir import ActionHistoryDataPack, XState, XTransition, gather_objects
 from xmimir.iw import IWSearch, IWStateSpace, RandomizedExpansion
 
 from .drive import BaseDrive, BaseDriveMetadata
+
+
+class attr_getters:
+    """
+    Namespaced attribute getters
+    """
+
+    @staticmethod
+    def idx(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> int:
+        return state.index
+
+    @staticmethod
+    def object_count(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> int:
+        return len(gather_objects(state))
+
+    @staticmethod
+    def targets(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> list[int]:
+        return [t.target.index for t in transitions]
+
+    @staticmethod
+    def distance_to_goal(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> float:
+        space = env.active_instances[0]
+        dist = space.goal_distance(state)
+        if dist == float("inf"):
+            dist = -1
+        return dist
+
+    @staticmethod
+    def action_history_datapack(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> ActionHistoryDataPack:
+        # shortest_dists = env.active_instances[
+        #     0
+        # ].compute_pairwise_shortest_backward_state_distances()
+        return ActionHistoryDataPack(
+            (
+                t.action
+                for t in env.active_instances[0].a_star_search(
+                    target=state,
+                    # dists=shortest_dists[state.index],
+                    forward=False,
+                )
+            ),
+        )
+
+    @staticmethod
+    def problem_path(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> str:
+        return str(Path(drive.root) / "problem.pddl")
+
+    @staticmethod
+    def domain_path(
+        drive: "FlashDrive",
+        env: ExpandedStateSpaceEnv,
+        state: XState,
+        transitions: Sequence[XTransition],
+    ) -> str:
+        return str(Path(drive.root) / "domain.pddl")
 
 
 @dataclass(frozen=True)
@@ -26,10 +110,55 @@ class FlashDrive(BaseDrive):
         *args,
         iw_search: IWSearch | None = None,
         iw_options: Optional[Mapping[str, Any]] = None,
+        attribute_getters: (
+            dict[
+                str,
+                str
+                | Callable[
+                    [
+                        "FlashDrive",
+                        ExpandedStateSpaceEnv,
+                        XState,
+                        Sequence[XTransition],
+                    ],
+                    Any,
+                ],
+            ]
+            | None
+        ) = None,
         **kwargs,
     ) -> None:
         self.iw_search: IWSearch = iw_search
         self.iw_options = iw_options or dict()
+        provided = attribute_getters or {}
+        for key, value in provided.items():
+            if isinstance(value, str):
+                try:
+                    provided[key] = getattr(attr_getters, value)
+                except AttributeError:
+                    try:
+                        from jsonargparse.typing import import_object
+
+                        value = import_object(value)
+                        provided[key] = value
+                    except Exception:
+                        get_logger(__name__).error(
+                            "Invalid attribute getter: %s for key '%s'", value, key
+                        )
+                        raise
+
+            if not callable(value):
+                raise TypeError(
+                    f"Provided attribute getter for '{key}' must be a string or callable, got {type(value)}"
+                )
+            provided[key] = value
+        default_getters = {
+            "idx": attr_getters.idx,
+            "object_count": attr_getters.object_count,
+            "targets": attr_getters.targets,
+            "distance_to_goal": attr_getters.distance_to_goal,
+        }
+        self.attr_getters = {**default_getters, **provided}
         if iw_search is not None:
             if isinstance(self.iw_search.expansion_strategy, RandomizedExpansion):
                 get_logger(__name__).warning(
@@ -50,6 +179,9 @@ class FlashDrive(BaseDrive):
         return dict(
             **super().metadata,
             iw_search=self.iw_search,
+            attribute_getters=[
+                (k, v.__qualname__) for k, v in self.attr_getters.items()
+            ],
         )
 
     def get_space(self):
@@ -80,29 +212,17 @@ class FlashDrive(BaseDrive):
                 iterator,
                 total=nr_states,
                 desc=f"{self.__class__.__name__}: PyG-encoding space",
+                logger=get_logger(__name__),
             )
         for state, transitions in iterator:
             data = encoder.to_pyg_data(encoder.encode(state))
-            reward, done = env.get_reward_and_done(
-                transitions, instances=[space] * len(transitions)
+            data.reward, data.done = env.get_reward_and_done(
+                transitions,
+                instances=[space] * len(transitions),
             )
-            data.reward = reward
-            # Save the index of the state
-            # NOTE: No element should contain the attribute `index`, as it is used by PyG internally.
-            # https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
-
-            # this index needs to be guaranteed to be the same each time a StateSpace is created from the same problem.
-            # We need to verify if this is the case for the current implementation of pymimir.
-            data.idx = state.index
-            data.done = done
-            data.object_count = len(gather_objects(state))
-            # Same index concerns for transition.target.index
-            data.targets = list(t.target.index for t in transitions)
-            distance_to_goal = space.goal_distance(state)
-            if distance_to_goal == float("inf"):
-                # deadend states receive label -1
-                distance_to_goal = -1
-            data.distance_to_goal = torch.tensor(distance_to_goal, dtype=torch.long)
+            for attr_name, getter in self.attr_getters.items():
+                attr_data = getter(self, env, state, transitions)
+                setattr(data, attr_name, attr_data)
             batched_data[state.index] = data
         logger.info(
             f"Finished {self.__class__.__name__} "
