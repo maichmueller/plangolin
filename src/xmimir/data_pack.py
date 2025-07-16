@@ -124,22 +124,30 @@ class ActionHistoryDataPack(MinDataPack[XState]):
         )
 
     def reconstruct(self, successor_generator: XSuccessorGenerator) -> XState:
-        return self.reconstruct_sequence(successor_generator)[-1]
+        state = successor_generator.initial_state
+        action_gen = successor_generator.action_generator
+        for action_pack in self.actions:
+            action = action_pack.reconstruct(action_gen)
+            state = successor_generator.successor(state, action)
+        return state
 
     def reconstruct_sequence(
         self, successor_generator: XSuccessorGenerator
-    ) -> list[XState]:
+    ) -> list[XTransition]:
         """
         Reconstruct the sequence of states from the action history.
         """
         state = successor_generator.initial_state
         action_gen = successor_generator.action_generator
-        states = [state]
+        transitions = []
         for action_pack in self.actions:
             action = action_pack.reconstruct(action_gen)
-            state = successor_generator.successor(state, action)
-            states.append(state)
-        return states
+            transition = XTransition.make_hollow(
+                state, action, successor_generator.successor(state, action)
+            )
+            transitions.append(transition)
+            state = transition.target
+        return transitions
 
     def extend(self, other: "ActionHistoryDataPack") -> None:
         """

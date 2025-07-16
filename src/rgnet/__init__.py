@@ -1,3 +1,5 @@
+import xmimir
+
 from .logging_setup import setup_logger
 
 setup_logger(__name__)
@@ -23,6 +25,8 @@ torch.serialization.add_safe_globals(
         pyg.data.Data,
         pyg.data.HeteroData,
         pyg.data.Batch,
+        xmimir.ActionHistoryDataPack,
+        xmimir.ActionDataPack,
     ]
 )
 

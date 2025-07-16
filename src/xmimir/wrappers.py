@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import tempfile
 from enum import Enum, auto
-from functools import cache, cached_property
+from functools import cache, cached_property, lru_cache
 from itertools import chain
 from pathlib import Path
 from types import MappingProxyType
@@ -12,6 +12,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Mapping,
     Optional,
     Sequence,
     TypeVar,
@@ -1143,6 +1144,10 @@ class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
     def str(self):
         return str(self.base)
 
+    def __getattr__(self, item):
+        """Fallback to the underlying state space if not present in XStateSpace."""
+        return getattr(self.base, item)
+
     def __getitem__(self, index: int) -> list[XState] | XState:
         """
         Get the state to the given index.
@@ -1286,6 +1291,120 @@ class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
             state,
             action_gen,
         )
+
+    def a_star_search(
+        self,
+        target: XState,
+        start: XState | None = None,
+        heuristic: Mapping[int, float] | None = None,
+        forward: bool = True,
+    ) -> list[XTransition]:
+        """
+        A* from the initial state to `target`, using
+            h(s) = max(0, dists_from_start[target.index] - dists_from_start[s.index])
+        which by the directed‐graph triangle inequality never overestimates cost(s→target).
+
+        Parameters
+        ----------
+        target: XState,
+            The target state to reach.
+        start: XState | None,
+            The state to start the search from. If None, the initial state of the problem is used.
+        heuristic: Mapping[int, float] | None,
+            A mapping from state indices to their heuristic costs.
+            If None, distances are computed using the base's compute_shortest_forward_distances_from_states method.
+        forward: bool,
+            If True, the search is performed in the forward direction (from start to target).
+            If False, the search is performed in the backward direction (from target to start).
+        Returns
+        -------
+        list[XTransition],
+            A list of transitions leading from the start state to the target state.
+        """
+        import heapq
+
+        start = start or self.initial_state
+        if not heuristic:
+            source = start if forward else target
+            heuristic = self.shortest_forward_distances_from_state(source)
+
+        if forward:
+
+            def neighbors(
+                s: XState,
+            ) -> Generator[tuple[XTransition, XState, float], None, None]:
+                yield from (
+                    (t, t.target, t.action.cost) for t in self.forward_transitions(s)
+                )
+
+        else:
+
+            def neighbors(
+                s: XState,
+            ) -> Generator[tuple[XTransition, XState, float], None, None]:
+                yield from (
+                    (t, t.source, t.action.cost) for t in self.backward_transitions(s)
+                )
+
+        # f = g + h, keyed by (f, state.index, XState)
+        frontier: list[tuple[float, int, XState]] = []
+        g_cost: dict[int, float] = {start.index: 0.0}
+        backpointer: dict[int, tuple[XState, XTransition]] = {}
+
+        # seed the queue
+        heapq.heappush(frontier, (heuristic[start.index], start.index, start))
+
+        visited: set[int] = set()
+        while frontier:
+            f, _, current = heapq.heappop(frontier)
+
+            # goal test
+            if current.index == target.index:
+                # rebuild action‐sequence
+                transitions: list[XTransition] = []
+                s = current
+                while s.index in backpointer:
+                    prev, trans = backpointer[s.index]
+                    transitions.append(trans)
+                    s = prev
+                return list(reversed(transitions))
+
+            if current.index in visited:
+                continue
+            visited.add(current.index)
+
+            # expand
+            for trans, nbr, cost in neighbors(current):
+                tentative_g = g_cost[current.index] + cost
+
+                if nbr.index not in g_cost or tentative_g < g_cost[nbr.index]:
+                    g_cost[nbr.index] = tentative_g
+                    h = heuristic[nbr.index]
+                    heapq.heappush(frontier, (tentative_g + h, nbr.index, nbr))
+                    backpointer[nbr.index] = (current, trans)
+
+        raise ValueError(
+            f"No path found from start state {start} to state {target.index}"
+        )
+
+    @lru_cache(maxsize=100)
+    def shortest_forward_distances_from_state(self, state: int | XState) -> list[float]:
+        """
+        Compute the shortest forward distances from the given state or state index to all other states in the space.
+
+        Parameters
+        ----------
+        state: XState | int,
+            The state or state index to compute distances from.
+
+        Returns
+        -------
+        Mapping[int, float],
+            A mapping from state indices to their shortest forward distances.
+        """
+        if isinstance(state, XState):
+            state = state.index
+        return self.base.compute_shortest_forward_distances_from_states([state])
 
 
 Edge = Union[EmptyEdge, GroundActionEdge, GroundActionsEdge]
