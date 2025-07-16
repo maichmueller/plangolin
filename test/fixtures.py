@@ -278,7 +278,11 @@ def transformed_env(request, environment=None, embedding=None):
 
 
 def make_fresh_flashdrive(
-    tmp_path, domain="blocks", problem="medium.pddl", force_reload=True
+    tmp_path,
+    domain="blocks",
+    problem="medium.pddl",
+    force_reload=True,
+    attribute_getters=None,
 ):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
     data_dir = source_dir / "pddl_instances" / domain
@@ -291,6 +295,7 @@ def make_fresh_flashdrive(
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
         encoder_factory=EncoderFactory(HeteroGraphEncoder),
+        attribute_getters=attribute_getters,
     )
     return drive
 
