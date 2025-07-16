@@ -27,5 +27,5 @@ class SuccessorEnvironment(PlanningEnvironment[xmi.XSuccessorGenerator]):
         self, active_instance: xmi.XSuccessorGenerator, state: xmi.XState
     ) -> bool:
         if state.problem != active_instance.problem:
-            raise warnings.warn("State does not belong to the active instance.")
+            warnings.warn("State does not belong to the active instance.")
         return state.is_goal(active_instance.problem.goal())

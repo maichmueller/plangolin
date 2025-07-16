@@ -51,7 +51,8 @@ def parse_fastdownward_plan(path: Path, problem: xmi.XProblem) -> Plan:
             raise ValueError(
                 "Could not find applicable action for "
                 f"{action_name}. Applicable actions are"
-                f"{[format_action(a) for a in succ_gen.action_generator.generate_actions(state)]}."
+                f"{[format_action(a) for a in succ_gen.action_generator.generate_actions(state)]} "
+                f"in plan {path}."
             )
         action_list.append(action)
         next_state = succ_gen.successor(state, action)

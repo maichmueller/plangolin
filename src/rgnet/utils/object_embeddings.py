@@ -239,14 +239,10 @@ class ObjectPoolingModule(torch.nn.Module):
         return pooling.replace("sum", "add")
 
     def forward(self, object_embedding: ObjectEmbedding | TensorDict | torch.Tensor):
+        if isinstance(object_embedding, torch.Tensor):
+            return self.pooling(object_embedding)
         if isinstance(object_embedding, TensorDict):
             object_embedding = ObjectEmbedding.from_tensordict(object_embedding)
-        if isinstance(object_embedding, torch.Tensor):
-            dense_embedding = object_embedding
-            return self.pooling(dense_embedding)
-        else:
-            dense_embedding = object_embedding.dense_embedding
-
+        dense_embedding = object_embedding.dense_embedding
         assert dense_embedding.dim() >= 2
-
         return self.pooling(dense_embedding)

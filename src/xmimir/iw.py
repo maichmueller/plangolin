@@ -1,5 +1,4 @@
 import itertools
-import logging
 import time
 from abc import abstractmethod
 from collections import defaultdict, deque
@@ -8,13 +7,22 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, List, NamedTuple, Sequence
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    NamedTuple,
+    Sequence,
+)
 
 import torch
 from multimethod import multimethod
 
 from rgnet.logging_setup import get_logger, tqdm
-from rgnet.utils.misc import env_aware_cpu_count, return_true
+from rgnet.utils.misc import KeyAwareDefaultDict, env_aware_cpu_count, return_true
 
 # from .extensions import *
 from .wrappers import *
@@ -167,9 +175,11 @@ class ReverseOrderExpansion(ExpansionStrategy):
 
 
 class RandomizedExpansion(ExpansionStrategy):
-    def __init__(self, seed: int):
+    def __init__(self, seed: int | None = None):
         super().__init__()
         self.seed = seed
+        if seed is None:
+            seed = torch.seed()
         self.rng = torch.random.manual_seed(seed)
 
     def __eq__(self, other):
@@ -183,6 +193,29 @@ class RandomizedExpansion(ExpansionStrategy):
 
     def __str__(self):
         return f"{self.__class__.__name__}(seed={self.seed})"
+
+    def __getstate__(self):
+        state = super().__getstate__()
+        state.pop("rng", None)  # remove the unhashable rng
+        if self.seed is not None:
+            state["rng_seed"] = self.rng.initial_seed()
+            # convert the ByteTensor into a plain Python list of ints (otherwise bizarre pickling errors occur with `spawn`)
+            state["rng_state_list"] = self.rng.get_state().tolist()
+        state["seed"] = self.seed
+        return state
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        self.seed = state["seed"]
+        gen = torch.Generator()
+        if self.seed is not None:
+            # set the seed for the generator
+            gen.manual_seed(state["rng_seed"])
+            # rebuild a ByteTensor from the Python list
+            gen.set_state(torch.ByteTensor(state["rng_state_list"]))
+        else:
+            gen = gen.manual_seed(gen.seed())
+        self.rng = gen
 
 
 class GoalProgressionExpansion(ExpansionStrategy):
@@ -256,6 +289,29 @@ class GoalProgressionExpansion(ExpansionStrategy):
         self._goal = None
         self._nr_goals = None
         self._satisfied_goals = None
+
+
+class PreferentialExpansion(InOrderExpansion):
+    """
+    An expansion strategy that expands nodes in-order, but selects only specific nodes at a specific depths.
+    """
+
+    def __init__(self, depth: int, node_selector: Callable[[ExpansionNode], bool]):
+        """
+        :param depth: The depth at which to select nodes.
+        :param node_selector: A callable that takes an ExpansionNode and returns True if the node should be selected.
+        """
+        super().__init__()
+        self.depth = depth
+        self.node_selector = node_selector
+
+    def consume(self, options: List[ExpansionNode]):
+        self.options = [
+            node
+            for node in options
+            if node.depth == self.depth and self.node_selector(node)
+        ]
+        return self
 
 
 class CollectorHook:
@@ -835,6 +891,45 @@ class IWStateSpace(XStateSpace):
             is_expanded
         ), f"Not all states were expanded. Indices left unexpanded: {[i for i, v in enumerate(is_expanded) if not v]}"
 
+    def a_star_search(
+        self,
+        target: XState,
+        start: XState | None = None,
+        heuristic: Mapping[int, float] | None = None,
+        forward: bool = True,
+    ) -> list[XTransition]:
+        """
+        Performs a forward A* search from the initial state to the target state.
+        :param target: The target state to reach.
+        :param start: The starting state, defaults to the initial state of the space.
+        :param heuristic: Precomputed distances from the start state to each state.
+        :param forward: If True, performs a forward search; otherwise, a backward search.
+        :return: A list of transitions leading to the target state.
+        """
+        if start is None:
+            start = self.initial_state
+        if heuristic is None:
+            if start.semantic_eq(self.initial_state):
+                # If the start state is the initial state, we can use the precomputed distances.
+                heuristic = KeyAwareDefaultDict(
+                    lambda index: self.state_info[self[index]].distance_from_initial
+                )
+            else:
+                # otherwise, we have no available distances, so we error out.
+                raise ValueError(
+                    "No distances from the start state are available. "
+                    "Please provide dists_from_start or ensure the start state is the initial state."
+                )
+        return super().a_star_search(
+            target=target, start=start, heuristic=heuristic, forward=forward
+        )
+
+    def shortest_forward_distances_from_state(self, state: int | XState) -> list[float]:
+        get_logger(__name__).warning(
+            "The method `shortest_forward_distances_from_state` uses primitive action distances."
+        )
+        return super().shortest_forward_distances_from_state(state)
+
     def __getstate__(self):
         infos = [None] * len(self.state_info)
         for s, info in self.state_info.items():
@@ -943,7 +1038,7 @@ if __name__ == "__main__":
     problem = "medium"
     domain_filepath = source_dir / "pddl_instances" / domain / "domain.pddl"
     problem_filepath = source_dir / "pddl_instances" / domain / f"{problem}.pddl"
-    start = datetime.fromtimestamp(time.time())
+    start_time = datetime.fromtimestamp(time.time())
     state_space = XStateSpace(domain_filepath, problem_filepath)
     iw_space = IWStateSpace(
         # IWSearch(2),
@@ -953,7 +1048,7 @@ if __name__ == "__main__":
         n_cpus=1,
         chunk_size=300,
     )
-    elapsed = datetime.fromtimestamp(time.time()) - start
+    elapsed = datetime.fromtimestamp(time.time()) - start_time
     hours = elapsed.total_seconds() / 3600
     minutes, seconds = divmod(elapsed.total_seconds(), 60)
     print(f"Elapsed time: {hours:.0f}h {minutes:.0f}m {seconds:.0f}s")
