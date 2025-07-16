@@ -135,45 +135,54 @@ class MultiSourceValDataLoader:
         return getattr(self.loaders[0], name)
 
 
-if __name__ == "__main__":
-    from torchvision.datasets import CIFAR10, MNIST, FakeData
-    from torchvision.transforms import transforms
+class CachingDataLoader(DataLoader):
+    """
+    A DataLoader that, on the first full iteration, collects (and stores)
+    every batch yielded by the parent DataLoader; on subsequent iterations,
+    yields directly from that cached list of batches.
 
-    # common transform
-    transform = transforms.Compose(
-        [
-            transforms.Resize((32, 32)),
-            transforms.ToTensor(),
-        ]
-    )
+    Note:
+    - shuffle should be False if you want identical batches each epoch.
+    - num_workers will only apply on the first epoch.
+    """
 
-    # 1) MNIST
-    mnist_val = MNIST(
-        root="data/mnist", train=False, download=True, transform=transform
-    )
-    dl_mnist = DataLoader(mnist_val, batch_size=64, num_workers=4, pin_memory=True)
-
-    # 2) CIFAR10
-    cifar_val = CIFAR10(
-        root="data/cifar10", train=False, download=True, transform=transform
-    )
-    dl_cifar = DataLoader(cifar_val, batch_size=64, num_workers=4, pin_memory=True)
-
-    # 4) FakeData (random noise, just for demo)
-    fake_val = FakeData(
-        size=500, image_size=(3, 32, 32), num_classes=10, transform=transform
-    )
-    dl_fake = DataLoader(fake_val, batch_size=50, num_workers=2, pin_memory=True)
-
-    # Wrap them all
-    multi_val_loader = MultiSourceValDataLoader(
-        loaders=[dl_mnist, dl_cifar, dl_fake],
-    )
-
-    # Example loop
-    for batch, batch_idx, loader_idx in multi_val_loader:
-        imgs, labels = batch  # assuming every loader returns (data, target)
-        print(
-            f"From loader #{loader_idx}, batch {batch_idx}: imgs={imgs.shape}, labels={labels.shape}"
+    def __init__(self, *args, cache_batches: bool = False, **kwargs):
+        """
+        All args/kwargs are passed through to the usual DataLoader constructor.
+        :param cache_batches: whether to cache batches on first iteration.
+        """
+        kwargs["persistent_workers"] = (
+            False  # disable persistent workers to avoid overaccumulating memory, only output should remain persistent
         )
-        # ... do your validation forward, metric logging, etc. ...
+        super().__init__(*args, **kwargs)
+        self.cache_batches = cache_batches
+        # will become List[batch] after first full pass
+        self._batch_cache: list | None = None
+
+    def __iter__(self):
+        # If caching is disabled, just delegate entirely
+        if not self.cache_batches:
+            yield from super().__iter__()
+            return
+
+        # If we haven’t built the cache yet, do so now
+        if self._batch_cache is None:
+            self._batch_cache = []
+            for batch in super().__iter__():
+                # store and yield
+                self._batch_cache.append(batch)
+                yield batch
+        else:
+            # replay the cached batches
+            yield from self._batch_cache
+
+    def __len__(self):
+        # After caching, len() should reflect number of cached batches
+        if self.cache_batches and self._batch_cache is not None:
+            return len(self._batch_cache)
+        # Otherwise, fall back to parent (i.e. number of batches estimation)
+        return super().__len__()
+
+    def clear_cache(self):
+        """Discard any stored batches so that the next iteration re-builds the cache."""
+        self._batch_cache = None

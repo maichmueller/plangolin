@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import datetime
 import logging
-import operator
 import time
 from concurrent.futures import ProcessPoolExecutor as Pool
-from functools import partial
 from pathlib import Path
 from typing import (
     Any,
@@ -27,13 +25,12 @@ from torch_geometric.loader import ImbalancedSampler
 
 import rgnet.rl.thundeRL.collate as collate  # noqa: F401
 from rgnet.encoding import GraphEncoderBase
-from rgnet.logging_setup import get_logger, tqdm
+from rgnet.logging_setup import get_logger
 from rgnet.rl.data import BaseDrive, FlashDrive
 from rgnet.rl.data_layout import InputData
 from rgnet.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
 from rgnet.rl.reward import RewardFunction
 from rgnet.rl.thundeRL.collate import StatefulCollater
-from rgnet.utils.batching import SeparatingSequentialBatchSampler
 from rgnet.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -86,10 +83,12 @@ class ThundeRLDataModule(LightningDataModule):
         validation_drive_kwargs: Optional[Dict[str, Any]] = None,
         test_drive_type: type[BaseDrive] = None,
         test_drive_kwargs: Optional[Dict[str, Any]] = None,
+        dataloader_type: Type[DataLoader] = DataLoader,
+        validation_dataloader_type: Type[DataLoader] | None = None,
+        test_dataloader_type: Type[DataLoader] | None = None,
         train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         validation_dataloader_kwargs: Optional[Dict[str, Any]] = None,
         test_dataloader_kwargs: Optional[Dict[str, Any]] = None,
-        cache_validation_batches: bool = False,
         parallel: bool = True,
         balance_by_attrs: str | Iterable[str] | None = None,
         max_cpu_count: Optional[int] = None,
@@ -108,6 +107,9 @@ class ThundeRLDataModule(LightningDataModule):
         self.drive_kwargs = drive_kwargs or dict()
         self.validation_drive_kwargs = validation_drive_kwargs or self.drive_kwargs
         self.test_drive_kwargs = test_drive_kwargs or dict()
+        self.dataloader_type = dataloader_type
+        self.validation_dataloader_type = validation_dataloader_type or dataloader_type
+        self.test_dataloader_type = test_dataloader_type or dataloader_type
         self.train_dataloader_kwargs = (
             dict(num_workers=6)
             | (train_dataloader_kwargs or dict())
@@ -133,7 +135,6 @@ class ThundeRLDataModule(LightningDataModule):
             balance_by_attrs = list(balance_by_attrs)
         self.balance_by_attrs = balance_by_attrs
         self.max_cpu_count = max_cpu_count
-        self.cache_validation_batches = cache_validation_batches
         self.exit_after_processing = exit_after_processing
         self.dataset: ConcatDataset | None = None  # late init in prepare_data()
         self.validation_sets: Sequence[Dataset] = []
@@ -360,7 +361,7 @@ class ThundeRLDataModule(LightningDataModule):
         Note that this sampler is not magic and cannot balance a dataset that does not represent the joint distribution
         of multiple attributes in its totality.
         For example, if you have a dataset with two attributes, `#Objects` and `#DistanceToGoal`, a 2D Histogram with
-         Colorbar (log scale counts) of X := #DistanceToGoal, Y := #Objects may look like this:
+        counts of X := #DistanceToGoal, Y := #Objects may look like this:
 
           Y
         7 | ..:**##########***::...
@@ -462,18 +463,10 @@ class ThundeRLDataModule(LightningDataModule):
             )
             | self.train_dataloader_kwargs
         )
-        return DataLoader(
+        return self.dataloader_type(
             self.dataset,
             **self._sanitize_dataloader_kwargs(defaults | kwargs),
         )
-
-    @staticmethod
-    def routing_collate(x, *, collate_fn: Callable):
-        dataset_idx, elements = zip(*x)
-        assert (
-            len(set(dataset_idx)) == 1
-        ), "All elements in a batch must come from the same dataset."
-        return dataset_idx[0], collate_fn(elements)
 
     def val_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
         # Order of dataloader has to be equal to order of validation problems in `InputData`.
@@ -487,80 +480,10 @@ class ThundeRLDataModule(LightningDataModule):
             | self.validation_dataloader_kwargs
         )
         kwargs = self._sanitize_dataloader_kwargs(defaults | kwargs)
-        # if caching is enabled, build or reuse pre-collated batches
-        if self.cache_validation_batches:
-            # build cache on first call
-            batch_size = kwargs["batch_size"]
-            if (
-                self._cached_val_batches is None
-                or self._cached_val_batches[0].batch_size != batch_size
-            ):
-                # make a flattened list of batches
-                # each element is placed batch_size many times in there to fake having a batch size of `batch_size`
-                # instead of `1`.
-                kwargs["persistent_workers"] = (
-                    False  # no need for persistent workers anymore with batch caching
-                )
-                logging.getLogger(__name__).info(
-                    f"Building cached validation batches with batch size {batch_size}."
-                )
-                # make a single concat dataset of all validation sets to use a single dataloader over all.
-                # we have to augment the dataset with the dataset index to split them again afterward.
-                validation_sets = self.validation_sets
-                concat_validation_sets = ConcatDataset(
-                    [
-                        IndexedDataset(dataset, idx)
-                        for idx, dataset in enumerate(validation_sets)
-                    ]
-                )  # force loading of datasets
-
-                collate_fn = kwargs["collate_fn"]
-                caching_kwargs = kwargs.copy()
-                caching_kwargs.pop("collate_fn", None)
-                caching_kwargs.pop("sampler", None)
-                caching_kwargs.pop("batch_sampler", None)
-                caching_kwargs.pop("drop_last", None)
-                caching_kwargs.pop("batch_size", None)
-
-                loaded_batches = [[] for _ in validation_sets]
-
-                # remove collate_fn from kwargs, we cannot collate over multiple datasets correctly
-                batch_sampler = SeparatingSequentialBatchSampler(
-                    validation_sets, batch_size=batch_size, drop_last=False
-                )
-
-                for dataset_idx, batch in tqdm(
-                    DataLoader(
-                        concat_validation_sets,
-                        batch_sampler=batch_sampler,
-                        collate_fn=partial(
-                            ThundeRLDataModule.routing_collate, collate_fn=collate_fn
-                        ),
-                        **caching_kwargs,
-                    ),
-                    total=len(batch_sampler),
-                    desc="Loading validation datapoints",
-                    logger=logging.getLogger(__name__),
-                ):
-                    # batch is a list of IndexedDataset elements, each is a 2-tuple (dataset_idx, elements)
-                    loaded_batches[dataset_idx].append(batch)
-                self._cached_val_batches = [
-                    CachedBatches(batches, batch_size) for batches in loaded_batches
-                ]
-            dataloaders = [
-                DataLoader(
-                    cached_batches,
-                    batch_size=batch_size,
-                    shuffle=False,
-                    num_workers=0,
-                    # only take the first element, the rest are duplicates of it
-                    collate_fn=operator.itemgetter(0),
-                )
-                for cached_batches in self._cached_val_batches
-            ]
-            return dataloaders
-        # default behavior: fresh DataLoader each epoch
-        return [DataLoader(dataset, **kwargs) for dataset in self.validation_sets]
+        return [
+            self.validation_dataloader_type(dataset, **kwargs)
+            for dataset in self.validation_sets
+        ]
 
     def test_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
         # Order of dataloader should be equal to order of test problems in `InputData`.
@@ -573,7 +496,7 @@ class ThundeRLDataModule(LightningDataModule):
             | self.test_dataloader_kwargs
         )
         return [
-            DataLoader(
+            self.test_dataloader_type(
                 dataset,
                 **self._sanitize_dataloader_kwargs(defaults | kwargs),
             )
