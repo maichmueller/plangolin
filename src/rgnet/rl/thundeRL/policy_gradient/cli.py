@@ -148,6 +148,24 @@ class TestSetup:
     iw_search: Optional[IWSearch] = None
 
 
+@dataclasses.dataclass
+class Collater:
+    """
+    Additional keyword arguments for the collate function.
+    Args:
+        exclude_keys: Keys to exclude from the collate function.
+            (default: None)
+        iw_search: The IW search instance to use for the worker.
+            (default: None)
+    """
+
+    func: Callable
+    iw_search: Optional[IWSearch] = None
+    encoder_factory: Optional[EncoderFactory] = None
+    reward_function: Optional[Callable] = None
+    exclude_keys: Optional[List[str]] = None
+
+
 class PolicyGradientCLI(ThundeRLCLI):
     def __init__(
         self,
@@ -196,6 +214,10 @@ class PolicyGradientCLI(ThundeRLCLI):
             TestSetup,
             "test_setup",
         )
+        parser.add_class_arguments(
+            Collater,
+            "collate",
+        )
         #############################    Link arguments    #############################
 
         # Model links
@@ -238,6 +260,32 @@ class PolicyGradientCLI(ThundeRLCLI):
             apply_on="instantiate",
             compute_fn=lambda estimator_type: estimator_type
             == "AllActionsValueEstimator",
+        )
+        parser.link_arguments(
+            "encoder_factory",
+            "collate.encoder_factory",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "reward",
+            "collate.reward_function",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "collate",
+            "data.collate_kwargs",
+            apply_on="instantiate",
+            compute_fn=lambda collate: {
+                k: v
+                for k, v in dataclasses.asdict(collate).items()
+                if v is not None and k != "func"
+            },
+        )
+        parser.link_arguments(
+            "collate",
+            "data.collate_fn",
+            apply_on="instantiate",
+            compute_fn=lambda collate: collate.func,
         )
 
         #################################### Validation callback links ##############################

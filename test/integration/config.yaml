@@ -5,7 +5,6 @@ experiment: "pytest"
 data:
   batch_size: 26
   parallel: False
-  collate_fn: rgnet.rl.thundeRL.to_transitions_batch
   train_dataloader_kwargs:
       num_workers: 0
       pin_memory: false
@@ -13,6 +12,9 @@ data:
 
 encoder:
   class_path: HeteroGraphEncoder
+
+collate:
+  func: rgnet.rl.thundeRL.to_transitions_batch
 
 reward:
   class_path: FlatReward
