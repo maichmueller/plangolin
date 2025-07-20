@@ -1,6 +1,6 @@
 import warnings
 from itertools import chain
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
+from typing import Callable, Dict, List, Literal, Optional
 
 import torch
 from lightning.pytorch.cli import OptimizerCallable
@@ -169,32 +169,13 @@ class Collater:
 class PolicyGradientCLI(ThundeRLCLI):
     def __init__(
         self,
-        save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
-        save_config_kwargs: Optional[Dict[str, Any]] = None,
-        trainer_class: Union[Type[Trainer], Callable[..., Trainer]] = Trainer,
-        trainer_defaults: Optional[Dict[str, Any]] = None,
-        seed_everything_default: Union[bool, int] = True,
-        parser_kwargs: Optional[
-            Union[Dict[str, Any], Dict[str, Dict[str, Any]]]
-        ] = None,
-        subclass_mode_model: bool = False,
-        subclass_mode_data: bool = False,
-        args: ArgsType = None,
-        run: bool = True,
+        *args,
+        **kwargs,
     ) -> None:
         super().__init__(
             PolicyGradientLitModule,
-            ThundeRLDataModule,
-            save_config_callback,
-            save_config_kwargs,
-            trainer_class,
-            trainer_defaults,
-            seed_everything_default,
-            parser_kwargs,
-            subclass_mode_model,
-            subclass_mode_data,
-            args,
-            run,
+            *args,
+            **kwargs,
         )
 
     def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:

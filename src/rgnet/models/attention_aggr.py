@@ -3,7 +3,7 @@ from typing import Optional
 
 import torch
 from torch import Tensor
-from torch_geometric.nn import Aggregation
+from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.utils import softmax
 
 

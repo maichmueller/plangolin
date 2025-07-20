@@ -395,10 +395,11 @@ class PolicyEntropy(ValidationCallback):
         """
         if probs_tensor.numel() == 1:
             return torch.zeros((1,), dtype=torch.float, device=probs_tensor.device)
-        entropy = torch.distributions.Categorical(probs=probs_tensor).entropy()
-        return entropy / torch.tensor(
-            (probs_tensor.numel(),), device=probs_tensor.device
-        )
+        distribution = torch.distributions.Categorical(probs=probs_tensor)
+        entropy = distribution.entropy()
+        n = probs_tensor.numel()
+        max_entropy = torch.log(torch.tensor(n, device=probs_tensor.device))
+        return entropy / max_entropy
 
     def forward(self, tensordict: TensorDict, batch_idx=None, dataloader_idx=0):
         if self.skip_dataloader(dataloader_idx):

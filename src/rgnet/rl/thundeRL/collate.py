@@ -1,3 +1,4 @@
+import inspect
 import itertools
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, Optional, Sequence
@@ -167,6 +168,10 @@ def to_iw_transitions_batch(
     """
     Collate function for batching IW successors in PyTorch Geometric.
 
+    Requires that each data object in `data_list` has an `action_history`, a "domain_path", and a "problem_path"
+    attribute. These are used to reconstruct the state and to fetch the appropriate successor env, as well as
+    instantiate the encoder.
+
     Args:
         data_list (list):
             List of data objects to be batched.
@@ -227,7 +232,17 @@ def to_iw_transitions_batch(
 class StatefulCollater:
     def __init__(self, fn: Callable, **kwargs):
         self.fn = fn
-        self.kwargs = kwargs
+        signature = inspect.signature(fn)
+        actual_kwargs = dict()
+        for kwarg in kwargs or dict():
+            if kwarg != "self" and kwarg in signature.parameters.keys():
+                param = signature.parameters[kwarg]
+                if (
+                    param.default is not inspect.Parameter.empty
+                    and kwargs[kwarg] != param.default
+                ):
+                    actual_kwargs[kwarg] = kwargs[kwarg]
+        self.kwargs = actual_kwargs
 
     def __call__(self, data_list: list[Data | HeteroData], **kwargs):
         return self.fn(data_list, **self.kwargs, **kwargs)

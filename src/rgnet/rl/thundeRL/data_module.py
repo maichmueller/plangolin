@@ -40,33 +40,6 @@ def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
 
 
-class IndexedDataset(Dataset):
-    def __init__(self, dataset: Dataset, dataset_idx: int):
-        # `batches` is your list of pre‐collated mini‐batches
-        self.dataset = dataset
-        self.dataset_idx = dataset_idx
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        # return a 2-tuple: (which validation set, the batch itself)
-        return self.dataset_idx, self.dataset[idx]
-
-
-class CachedBatches(Dataset):
-    def __init__(self, batches: list, batch_size: int):
-        # `batches` is the list of already-collated mini‐batches
-        self.batches = batches
-        self.batch_size = batch_size
-
-    def __len__(self) -> int:
-        return len(self.batches) * self.batch_size
-
-    def __getitem__(self, idx: int):
-        return self.batches[idx // self.batch_size]
-
-
 class ThundeRLDataModule(LightningDataModule):
     def __init__(
         self,
@@ -149,7 +122,6 @@ class ThundeRLDataModule(LightningDataModule):
         self.skip = skip
         # defaulted, to be overridden by trainer on setup
         self.device = torch.device("cpu")
-        self._cached_val_batches: List[CachedBatches] = None
         self._data_prepared = False
 
     def _make_collate(self):

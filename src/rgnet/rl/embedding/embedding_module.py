@@ -47,17 +47,13 @@ class EmbeddingModule(torch.nn.Module):
         self.embedding_size = embedding_size
         self.device = device
         self.gnn = gnn
-        self.encoder = encoder
+        self.encoding_module = EncodingModule(encoder)
 
     @singledispatchmethod
     def forward(self, states: List[xmi.State] | NonTensorWrapper) -> ObjectEmbedding:
         states = tolist(states)
-
-        as_batch = Batch.from_data_list(
-            [self.encoder.to_pyg_data(self.encoder.encode(state)) for state in states]
-        )
-        as_batch = as_batch.to(self.device)
-        return ObjectEmbedding.from_sparse(*self.gnn(as_batch))
+        batch = self.encoding_module(states)
+        return ObjectEmbedding.from_sparse(*self.gnn(batch))
 
     @forward.register
     def _(self, states: Batch) -> ObjectEmbedding:
