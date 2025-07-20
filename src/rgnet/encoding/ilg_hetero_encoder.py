@@ -34,7 +34,7 @@ class AtomStatus(Enum):
     UNSATISFIED_NEGATED_GOAL = 5
 
 
-class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
+class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     """
     An encoder to represent states as heterogeneous graphs with objects and atoms as vertices
     and edges (i, j) whenever an atom p(..., i, j, ...) holds in the state.
@@ -78,8 +78,8 @@ class HeteroILGGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             if not pred.endswith(self.node_factory.goal_suffix)
         }
 
-    def __eq__(self, other: HeteroILGGraphEncoder) -> bool:
-        if not isinstance(other, HeteroILGGraphEncoder):
+    def __eq__(self, other: ILGHeteroGraphEncoder) -> bool:
+        if not isinstance(other, ILGHeteroGraphEncoder):
             return NotImplemented
         return (
             self.obj_type_id == other.obj_type_id

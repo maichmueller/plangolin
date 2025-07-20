@@ -14,14 +14,14 @@ from torch_geometric.data import HeteroData
 
 import xmimir as xmi
 from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
-from rgnet.encoding.ilg_hetero_encoder import HeteroILGGraphEncoder
+from rgnet.encoding.ilg_hetero_encoder import ILGHeteroGraphEncoder
 from rgnet.logging_setup import get_logger
 from rgnet.utils import import_all_from
 
 
 @pytest.mark.parametrize(
     "encoder_type",
-    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    [HeteroGraphEncoder, ILGHeteroGraphEncoder],
     ids=["hetero", "hetero_ilg"],
 )
 @pytest.mark.parametrize("domain", ["blocks", "blocks_eq", "spanner"])
@@ -127,7 +127,7 @@ def test_hetero_sat_goal_encoding(domain):
     ["encoder_type", "node_attrs", "node_defaults"],
     list(
         zip(
-            [HeteroGraphEncoder, HeteroILGGraphEncoder],
+            [HeteroGraphEncoder, ILGHeteroGraphEncoder],
             [["type"], ["type", "status"]],
             [[None], [None, None]],
         )
@@ -155,7 +155,7 @@ def test_decode(
 
 @pytest.mark.parametrize(
     "encoder_type",
-    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    [HeteroGraphEncoder, ILGHeteroGraphEncoder],
     ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
 )
 def test_consistent_order_of_objects(encoder_type, small_blocks):
@@ -170,7 +170,7 @@ def test_consistent_order_of_objects(encoder_type, small_blocks):
     initial_pyg = encoder.to_pyg_data(encoder.encode(initial))
 
     def obj_to_on_g_edge_index(graph):
-        if isinstance(encoder, HeteroILGGraphEncoder):
+        if isinstance(encoder, ILGHeteroGraphEncoder):
             # we dont separate on and on_g in ILG encodings, so just use "on"
             # (which we know is in the graph due to the goal having an "on" atom)
             return graph.get_edge_store(encoder.obj_type_id, "0", "on").edge_index
@@ -196,7 +196,7 @@ def test_consistent_order_of_objects(encoder_type, small_blocks):
 
 @pytest.mark.parametrize(
     "encoder_type",
-    [HeteroGraphEncoder, HeteroILGGraphEncoder],
+    [HeteroGraphEncoder, ILGHeteroGraphEncoder],
     ids=["HeteroGraphEncoder", "HeteroILGGraphEncoder"],
 )
 def test_consistent_object_node_to_names(encoder_type, small_blocks, medium_blocks):
@@ -233,7 +233,7 @@ def test_consistent_object_node_to_names(encoder_type, small_blocks, medium_bloc
 
 
 def validate_hetero_data(
-    data: HeteroData, encoder: HeteroILGGraphEncoder | HeteroGraphEncoder
+    data: HeteroData, encoder: ILGHeteroGraphEncoder | HeteroGraphEncoder
 ):
     # for ["obj", *, pred], and ["obj", *, pred] there are exactly arity(pred) many edges
     assert encoder.obj_type_id in data.node_types
