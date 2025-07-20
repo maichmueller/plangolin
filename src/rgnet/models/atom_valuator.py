@@ -60,7 +60,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         self.max_arity = max(self.arity_dict.values())
         if predicate_module_factory is None:
             predicate_module_factory = ArityMLPFactory(
-                feature_size, added_arity=1, num_layers=3, activation=activation
+                feature_size, added_arity=1, layers=3, activation=activation
             )
         self.valuator_by_predicate = PatchedModuleDict(
             {

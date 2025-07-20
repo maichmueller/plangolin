@@ -141,7 +141,7 @@ class HeteroGNN(PyGHeteroModule):
                 added_arity=0,  # no additional arity
                 residual=True,
                 padding=None,  # no padding
-                num_layers=1,  # one layer per predicate
+                layers=1,  # one layer per predicate
                 activation=activation,
             )
         predicate_module_dict = {
@@ -321,7 +321,7 @@ class ILGHeteroGNN(HeteroGNN):
                 added_arity=0,  # no additional arity
                 residual=True,
                 padding=None,  # no padding
-                num_layers=1,  # one layer per predicate
+                layers=["="],  # one layer per predicate
                 activation=activation,
             )
         predicate_module_dict = {

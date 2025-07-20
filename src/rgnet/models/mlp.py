@@ -1,5 +1,6 @@
 import inspect
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Iterable, Union
 
 import torch
 from torch_geometric.nn.resolver import activation_resolver
@@ -66,7 +67,7 @@ class ArityMLPFactory:
         added_arity: int = 0,
         residual: bool = True,
         padding: str | None = None,
-        num_layers: int = 3,
+        layers: int | Iterable[int] | Iterable[str] = 3,
         activation: str = "mish",
         norm_class: type[torch.nn.Module] | Callable | None = None,
         norm_kwargs: dict | list[dict] | None = None,
@@ -89,9 +90,8 @@ class ArityMLPFactory:
         self.added_arity = added_arity
         self.residual = residual
         self.padding = padding
-        self.num_layers = num_layers
+        self.layers = [layers] if isinstance(layers, int) else list(layers)
         self.activation = activation
-        self.num_layers = num_layers
         self.norm_class = norm_class
         self.norm_kwargs = norm_kwargs or dict()
         self.kwargs = kwargs | {
@@ -137,10 +137,100 @@ class ArityMLPFactory:
 
     def _make_mlp(self, class_: type[MLP], arity: int) -> torch.nn.Module:
         arity_feature_size = self.arity_feature_size(arity)
+        layers = []
+        for layer in self.layers:
+            layers.append(
+                self._make_layer_size(
+                    layer_mode=layer,
+                    arity_feature_size=arity_feature_size,
+                    prev_size=arity_feature_size if not layers else layers[-1],
+                )
+            )
         return class_(
             in_features=arity_feature_size + self.in_extra_features,
-            num_cells=[arity_feature_size] * self.num_layers,
+            num_cells=layers,
             out_features=arity_feature_size + self.out_extra_features,
             activation_class=type(activation_resolver(self.activation)),
             **self.kwargs,
         )
+
+    @staticmethod
+    def _make_layer_size(
+        layer_mode: Union[str, int],
+        arity_feature_size: int,
+        prev_size: int | None = None,
+    ) -> int:
+        """
+        Compute a layer size.
+
+        layer_mode:
+          - int:
+              - -1 → arity_feature_size
+              - >0 → that exact size
+          - str:
+            - "=" or "=="               → prev_size
+            - "+N", "-N", "xN"/"*N", "/N" → arithmetic on prev_size
+            - "//N" (integer div) and "**N" (power) also supported
+        """
+        # integer literal
+        if isinstance(layer_mode, int):
+            if layer_mode == -1:
+                return arity_feature_size
+            if layer_mode <= 0:
+                raise ValueError(f"Layer size must be >0 (or -1), got {layer_mode}")
+            return layer_mode
+
+        # must be a string now
+        assert isinstance(
+            layer_mode, str
+        ), f"Invalid layer_mode type: {type(layer_mode)}"
+
+        s = layer_mode.strip()
+
+        # same‐as‐prev
+        if s in ("=", "=="):
+            if prev_size is None:
+                raise ValueError(f"prev_size required for mode {s!r}")
+            return prev_size
+
+        # arithmetic ops
+        # first handle two‐char ops: "**" and "//"
+        if s.startswith("**"):
+            if prev_size is None:
+                raise ValueError(f"prev_size required for mode {s!r}")
+            power = float(s[2:])
+            return int(prev_size**power)
+        if s.startswith("//"):
+            if prev_size is None:
+                raise ValueError(f"prev_size required for mode {s!r}")
+            divisor = float(s[2:])
+            if divisor == 0:
+                raise ValueError("Division by zero")
+            return prev_size // int(divisor)
+
+        # then single‐char ops
+        m = re.fullmatch(r"(?P<op>[+\-x*/])(?P<num>\d+(\.\d+)?)", s)
+        if m:
+            if prev_size is None:
+                raise ValueError(f"prev_size required for mode {s!r}")
+            op = m.group("op")
+            num = float(m.group("num"))
+            if op in ("x", "*"):
+                out = int(prev_size * num)
+            elif op == "/":
+                if num == 0:
+                    raise ValueError("Division by zero")
+                out = int(prev_size / num)
+            elif op == "+":
+                out = int(prev_size + num)
+            elif op == "-":
+                out = int(prev_size - num)
+            else:
+                # should never happen
+                raise AssertionError
+            if out <= 0:
+                raise ValueError(f"Computed layer size {out} ≤ 0 for mode {s!r}")
+            return out
+
+        # nothing matched
+        raise ValueError(f"Invalid layer_mode: {layer_mode!r}")
