@@ -1,10 +1,12 @@
 import copy
 import csv
 import dataclasses
+import datetime
 import functools
 import itertools
 import logging
 import sys
+import time
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -22,7 +24,7 @@ from torchrl.envs.utils import set_exploration_type
 
 import xmimir as xmi
 from rgnet.encoding import HeteroGraphEncoder
-from rgnet.logging_setup import get_logger, tqdm
+from rgnet.logging_setup import get_logger
 from rgnet.models import PyGHeteroModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data_layout import InputData, OutputData
@@ -60,6 +62,8 @@ class ProbabilisticPlanResult(Plan):
     subgoals: int
     cycles: List[List[xmi.XTransition]]
     # 0 if optimal, positive if higher cost than optimal
+    optimal_transitions: Optional[Sequence[xmi.XTransition]] = None
+    optimal_cost: Optional[float] = None
     diff_return_to_optimal: Optional[float] = None
     diff_cost_to_optimal: Optional[float] = None
 
@@ -68,17 +72,95 @@ class ProbabilisticPlanResult(Plan):
         def transform(k, v):
             if isinstance(v, xmi.XProblem):
                 return v.name
-            elif k in ["transitions", "cycles"]:
-                assert isinstance(v, List) and (
-                    len(v) == 0 or (isinstance(v[0], xmi.XTransition))
+            elif k == "transitions":
+                assert isinstance(v, Sequence) and (
+                    len(v) == 0 or isinstance(v[0], xmi.XTransition)
                 )
                 return [t.to_string(detailed=True) for t in v]
+            elif k == "cycles":
+                assert isinstance(v, Sequence) and (
+                    len(v) == 0
+                    or (
+                        isinstance(v[0], Sequence)
+                        and isinstance(v[0][0], xmi.XTransition)
+                    )
+                )
+                return [[t.to_string(detailed=True) for t in cycle] for cycle in v]
             return v
 
         return {
             f.name: transform(f.name, getattr(self, f.name))
             for f in dataclasses.fields(self)
         }
+
+    def str(self, detailed=False):
+        optimal_plan_str = "/"
+        if detailed:
+            plan_str = (
+                "[\n\t\t"
+                + "\n\t\t".join([t.action.str(for_plan=True) for t in self.transitions])
+                + "\n\t]"
+            )
+            cycle_str = (
+                "[\n\t\t"
+                + "\n\t\t".join(
+                    [
+                        "[\n\t\t\t"
+                        + "\n\t\t\t".join([t.action.str(for_plan=True) for t in cycle])
+                        + "\n\t\t]"
+                        for cycle in self.cycles
+                    ]
+                )
+                + "\n\t]"
+            )
+            if self.optimal_transitions is not None:
+                optimal_plan_str = (
+                    "[\n\t\t"
+                    + "\n\t\t".join(
+                        [t.action.str(for_plan=True) for t in self.optimal_transitions]
+                    )
+                    + "\n\t]"
+                )
+        else:
+            plan_str = str(len(self.transitions))
+            cycle_str = (
+                "[" + ", ".join([f"{len(cycle)}" for cycle in self.cycles]) + "]"
+            )
+            if self.optimal_transitions is not None:
+                optimal_plan_str = str(len(self.optimal_transitions))
+        if self.solved:
+            return (
+                "\n\t".join(
+                    (
+                        "ProbabilisticPlanResult(",
+                        f"solved = {self.solved},",
+                        f"plan = {plan_str},",
+                        f"RL return = {self.rl_return},",
+                        f"Planning cost = {self.cost},",
+                        f"subgoals = {self.subgoals},",
+                        f"cycles = {cycle_str},",
+                        f"average_probability = {self.average_probability},",
+                        f"min_probability = {self.min_probability},",
+                        f"ref. plan = {optimal_plan_str},",
+                        f"return - return(ref.) = {self.diff_return_to_optimal},",
+                        f"cost - cost(ref.) = {self.diff_cost_to_optimal}",
+                    )
+                )
+                + f"\n)"
+            )
+        else:
+            return (
+                "\n\t".join(
+                    (
+                        "ProbabilisticPlanResult(",
+                        f"solved = {self.solved},",
+                        f"cycles = {cycle_str},",
+                        f"average_probability = {self.average_probability},",
+                        f"min_probability = {self.min_probability}",
+                    )
+                )
+                + f"\n)"
+            )
 
 
 class ModelData:
@@ -102,7 +184,9 @@ class ModelData:
         policy_gradient_module.load_state_dict(checkpoint["state_dict"], strict=False)
         embedding = EmbeddingModule(
             policy_gradient_module.gnn.embedding_size,
-            encoder=HeteroGraphEncoder(self._parent.in_data.domain),
+            encoder=HeteroGraphEncoder(
+                self._parent.in_data.domain
+            ),  # TODO: fix inserting kwargs here!!
             gnn=policy_gradient_module.gnn,
             device=self._parent.device,
         )
@@ -210,7 +294,7 @@ class ModelData:
             ).dense_embedding
         return self._embedding_for_space[space]
 
-    def transformed_embedding_env(self, base_env):
+    def transformed_env(self, base_env):
         return NonTensorTransformedEnv(
             env=base_env,
             transform=EmbeddingTransform(
@@ -360,7 +444,7 @@ class RLPolicySearchEvaluator:
         exploration_type: InteractionType | None = None,
         max_steps: int | None = None,
     ):
-        env = self.model.transformed_embedding_env(base_env)
+        env = self.model.transformed_env(base_env)
         cycle_transform = CycleAvoidingTransform(self.env_keys.transitions)
         if self.test_setup.avoid_cycles:
             env = NonTensorTransformedEnv(
@@ -500,7 +584,8 @@ class RLPolicySearchEvaluator:
             rl_return_optimal, cost_optimal = self._compute_return(
                 optimal_plan.transitions
             )
-            assert cost_optimal == plan_result.cost
+            plan_result.optimal_transitions = optimal_plan.transitions
+            plan_result.optimal_cost = round(cost_optimal, 4)
             plan_result.diff_cost_to_optimal = plan_result.cost - cost_optimal
             plan_result.diff_return_to_optimal = rl_return - rl_return_optimal
             for i, (plan_step, optimal_plan_step) in enumerate(
@@ -737,7 +822,7 @@ class EvalPolicyGradientCLI(PolicyGradientCLI):
 def eval_model(
     cli: PolicyGradientCLI,
     policy_gradient_lit_module: PolicyGradientLitModule,
-    logger: Logger,
+    cli_logger: Logger,
     input_data: InputData,
     output_data: OutputData,
     test_setup: TestSetup,
@@ -756,7 +841,7 @@ def eval_model(
 
     :param cli: The CLI instance used to run the agent.
     :param policy_gradient_lit_module: An agent instance. The weights for the agent will be loaded from a checkpoint.
-    :param logger: If a WandbLogger is passed, the results are uploaded as table.
+    :param cli_logger: If a WandbLogger is passed, the results are uploaded as table.
     :param input_data: InputData which should specify at least one test_problem.
     :param output_data: OutputData pointing to the checkpoint containing the learned weights for the agent.
     :param test_setup: Extra parameter for testing the agent.
@@ -777,29 +862,38 @@ def eval_model(
         gamma=gamma,
         device=torch.device(cli.config_init["device"]),
     )
+
     for checkpoint_path in analyzer.checkpoints:
         analyzer.current_checkpoint = checkpoint_path
         epoch, step = default_checkpoint_format(checkpoint_path.name)
-        get_logger(__name__).info(f"Using checkpoint with {epoch=}, {step=}")
+        logger = get_logger(__name__)
+        logger.info(f"Using checkpoint with {epoch=}, {step=}")
 
         test_instances = input_data.test_problems
+        test_results: List[ProbabilisticPlanResult] = []
+        for test_problem in test_instances:
+            logger.info(
+                f"Running rollout (max steps {test_setup.max_steps}) for problem {test_problem.name, test_problem.filepath}."
+            )
+            start = time.time()
+            rollout = analyzer.rollout_on_problem(test_problem)
+            logger.info(
+                f"Rollout completed in {datetime.timedelta(seconds=int(time.time() - start))}"
+            )
+            analyzed_data: ProbabilisticPlanResult = analyzer.map_to_probabilistic_plan(
+                test_problem,
+                rollout,
+            )
+            logger.info(f"Analyzed Results:\n{analyzed_data.str(detailed=False)}:")
+            test_results.append(analyzed_data)
 
-        test_results = [
-            analyzer.rollout_on_problem(test_problem)
-            for test_problem in tqdm(test_instances)
-        ]
-
-        analyzed_data: List[ProbabilisticPlanResult] = [
-            analyzer.map_to_probabilistic_plan(problem, rollout)
-            for problem, rollout in zip(test_instances, test_results)
-        ]
-        solved = sum(p.solved for p in analyzed_data)
-        get_logger(__name__).info(f"Solved {solved} out of {len(analyzed_data)}")
+        solved = sum(p.solved for p in test_results)
+        logger.info(f"Solved {solved} out of {len(test_results)}")
 
         results_name = f"results_epoch={epoch}-step={step}"
         results_file = output_data.out_dir / (results_name + ".csv")
         plan_results_as_dict = [
-            plan_result.serialize_as_dict() for plan_result in analyzed_data
+            plan_result.serialize_as_dict() for plan_result in test_results
         ]
         with open(results_file, "w") as f:
             writer = csv.DictWriter(
@@ -808,21 +902,21 @@ def eval_model(
             )
             writer.writeheader()
             writer.writerows(plan_results_as_dict)
-        get_logger(__name__).info("Saved results to " + str(results_file))
+        logger.info("Saved results to " + str(results_file))
 
         if isinstance(logger, WandbLogger) and logger.experiment is not None:
             table_data = [
                 list(plan_dict.values())  # dicts retain insertion order after 3.7
                 for plan_dict in plan_results_as_dict
             ]
-            logger.log_table(
+            cli_logger.log_table(
                 key=results_name,
                 columns=list(plan_results_as_dict[0].keys()),
                 data=table_data,
                 step=step,
             )
-            logger.log_metrics({"solved": solved}, step=step)
-            logger.finalize(status="success")
+            cli_logger.log_metrics({"solved": solved}, step=step)
+            cli_logger.finalize(status="success")
 
 
 def eval_lightning_agent_cli():
@@ -840,7 +934,7 @@ def eval_lightning_agent_cli():
     eval_model(
         cli=cli,
         policy_gradient_lit_module=policy_gradient_lit_module,
-        logger=cli.trainer.logger,
+        cli_logger=cli.trainer.logger,
         input_data=in_data,
         output_data=out_data,
         test_setup=test_setup,
