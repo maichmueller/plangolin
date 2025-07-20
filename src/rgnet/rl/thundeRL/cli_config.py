@@ -192,23 +192,18 @@ class ThundeRLCLI(LightningCLI):
 
         # Trainer / logger links
         parser.link_arguments(
-            source="data_layout.output_data.out_dir",
-            target="trainer.logger.init_args.save_dir",
-            apply_on="instantiate",
-        )
-        parser.link_arguments(
             source="experiment",
             target="data_layout.output_data.experiment_name",
             apply_on="parse",
         )
         parser.link_arguments(
-            source="experiment",
-            target="trainer.logger.init_args.name",
-            apply_on="parse",
+            source="data_layout.output_data.out_dir",
+            target="trainer.logger.init_args.save_dir",
+            apply_on="instantiate",
         )
         parser.link_arguments(
-            source="data_layout.output_data.out_dir",
-            target="trainer.default_root_dir",
+            source="data_layout.output_data.experiment_name",
+            target="trainer.logger.init_args.name",
             apply_on="instantiate",
         )
 
@@ -256,6 +251,12 @@ class ThundeRLCLI(LightningCLI):
 
     def before_fit(self):
         if self.trainer.logger is not None:
+            # stores the config on the wandb run page here!
+            # update the experiment name in the parsed config with the actually used config's final name.
+            config, config_init = self.config, self.config_init
+            config_out_data = config["fit"]["data_layout"]["output_data"]
+            config_init_out_data = config_init["fit"]["data_layout"]["output_data"]
+            config_out_data["experiment_name"] = config_init_out_data.experiment_name
             self.trainer.logger.log_hyperparams(
                 self.convert_to_nested_dict(self.config["fit"])
             )
