@@ -64,13 +64,13 @@ class OutputData:
                     )
                     break
                 # Try to create a unique directory by appending a suffix.
+                suffix += 1
                 self.out_dir = self._make_outdir_name(
                     out_dir,
                     domain_name,
                     f"{experiment_name}_{suffix}",
                     output_dir_order,
                 )
-                suffix += 1
         self.on_program_exit()
         get_logger(__name__).info("Using " + str(self.out_dir) + " for output data.")
         if suffix > 0:
