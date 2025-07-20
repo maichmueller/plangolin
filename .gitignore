@@ -204,3 +204,4 @@ data/pddl_domains/*
 slurm
 out
 **/*.pt
+src/notebooks
