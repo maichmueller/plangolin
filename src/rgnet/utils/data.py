@@ -2,7 +2,7 @@ import queue
 import threading
 from abc import ABC
 from queue import Queue
-from typing import Any, Iterable, Union
+from typing import Any, Iterable, Sequence, Union
 
 import torch
 from lightning_fabric.utilities.apply_func import (
@@ -186,3 +186,54 @@ class CachingDataLoader(DataLoader):
     def clear_cache(self):
         """Discard any stored batches so that the next iteration re-builds the cache."""
         self._batch_cache = None
+
+
+def split(seq: Sequence[Any], spec: Sequence[int]) -> list[list[Any]]:
+    """
+    Split `seq` either
+      - by counts if sum(spec) == len(seq), or
+      - by split-indices otherwise.
+
+    If treating `spec` as counts:
+      sum(counts) must equal len(seq), and all counts >= 0.
+
+    If treating `spec` as indices:
+      indices must be sorted ascending, each 0 <= idx <= len(seq).
+
+    Examples:
+        split([1,2,3,4,5,6], [2,3,1])
+         -> [[1,2], [3,4,5], [6]]
+
+        split([1,2,3,4,5], [1,3])
+         -> [[1], [2,3], [4,5]]
+    """
+    n = len(seq)
+    total = sum(spec)
+
+    # If spec sums to full length, treat as counts
+    if total == n:
+        # counts mode
+        start = 0
+        chunks: list[list] = []
+        for c in spec:
+            if c < 0:
+                raise ValueError(f"counts must be non-negative, got {c}")
+            end = start + c
+            chunks.append(list(seq[start:end]))
+            start = end
+        return chunks
+
+    # Otherwise treat as indices
+    # (must be sorted and in [0, n])
+    if any(i < 0 or i > n for i in spec):
+        raise ValueError(f"indices must be in [0, {n}], got {spec}")
+    if any(spec[i] > spec[i + 1] for i in range(len(spec) - 1)):
+        raise ValueError(f"indices must be sorted ascending, got {spec}")
+
+    chunks = []
+    prev = 0
+    for idx in spec:
+        chunks.append(list(seq[prev:idx]))
+        prev = idx
+    chunks.append(list(seq[prev:]))
+    return chunks
