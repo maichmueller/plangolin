@@ -26,6 +26,7 @@ class OutputData:
         out_dir: Path | str = Path("out"),
         experiment_name: str | None = None,
         ensure_new_out_dir: bool = False,
+        reuse: bool = False,
         root_dir: Path | None = None,
         domain_name: str | None = None,
         output_dir_order: Literal["domain"] | Literal["experiment"] = "domain",
@@ -44,37 +45,43 @@ class OutputData:
         if experiment_name is None:
             experiment_name = datetime.datetime.now().strftime("%d-%m_%H-%M-%S")
 
-        self.out_dir = self._make_outdir_name(
-            out_dir, domain_name, experiment_name, output_dir_order
-        )
-
+        self.out_dir: Optional[Path] = None
+        self._lock_file: Optional[Path] = None
         # Create the output directly, there could be multiple experiments with
         # the same experiment name running in parallel.
         suffix = 0
         while True:
             try:
-                # If ensure_new_out_dir it is not okay that the directory exists.
-                self.out_dir.mkdir(exist_ok=not ensure_new_out_dir, parents=True)
+                dir_name = (
+                    f"{experiment_name}_{suffix}" if suffix > 0 else experiment_name
+                )
+                candidate = self._make_outdir_name(
+                    out_dir, domain_name, dir_name, output_dir_order
+                )
+                candidate.mkdir(parents=True, exist_ok=not ensure_new_out_dir)
+                if not candidate.is_dir():
+                    raise FileExistsError()
+                if ensure_new_out_dir:
+                    if not self.all_dirs_empty(candidate):
+                        raise FileExistsError()
+                    # Try to create a reservation file atomically by throwing a towel on it
+                    lockfile = candidate / ".towel"
+                    fd = os.open(
+                        str(lockfile),
+                        os.O_CREAT  # Create the file if it doesn’t exist
+                        | os.O_EXCL  # Fail if the file already exists
+                        | os.O_WRONLY,  # Open it for write‐only access (essentially locks)
+                    )
+                    os.close(fd)
+                    self._lock_file = lockfile
+                self.out_dir = candidate
+                if suffix > 0:
+                    experiment_name = dir_name
                 break
             except FileExistsError:
-                if self.out_dir.is_dir() and self.all_dirs_empty(self.out_dir):
-                    # If the directory exists but is empty, we can use it.
-                    get_logger(__name__).warning(
-                        f"Output directory {self.out_dir} already exists but is empty. Using it."
-                    )
-                    break
-                # Try to create a unique directory by appending a suffix.
                 suffix += 1
-                self.out_dir = self._make_outdir_name(
-                    out_dir,
-                    domain_name,
-                    f"{experiment_name}_{suffix}",
-                    output_dir_order,
-                )
         self.on_program_exit()
         get_logger(__name__).info("Using " + str(self.out_dir) + " for output data.")
-        if suffix > 0:
-            experiment_name = f"{experiment_name}_{suffix}"
         self.experiment_name = experiment_name
 
     # Register a signal handler to delete the output directory on SIGINT (Ctrl+C)
@@ -84,9 +91,19 @@ class OutputData:
         This is useful to clean up the output directory if the program is interrupted.
         """
 
-        def handler(*args, **kwargs):
+        def handler(signum=None, frame=None):
+            # Remove reservation token if present
+            try:
+                if self._lock_file is not None and self._lock_file.exists():
+                    self._lock_file.unlink()
+            except Exception:
+                pass
+            # Remove directory if empty
             if self.out_dir.is_dir() and self.all_dirs_empty(self.out_dir):
                 self.out_dir.rmdir()
+            if signum is not None:
+                signal.signal(signum, signal.SIG_DFL)  # Reset the signal handler
+                os.kill(os.getpid(), signum)  # Re-raise the signal
 
         atexit.register(lambda: handler())
         signal.signal(signal.SIGINT, handler)
