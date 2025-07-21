@@ -301,6 +301,11 @@ class ThundeRLCLI(LightningCLI):
                 **self._get(self.config_init, "trainer", default={}),
                 **kwargs,
             }
-            return self._instantiate_trainer(trainer_config, extra_callbacks)
+            trainer = self._instantiate_trainer(trainer_config, extra_callbacks)
+        else:
+            trainer = super().instantiate_trainer(**kwargs)
 
-        return super().instantiate_trainer(**kwargs)
+        for cb in trainer.callbacks:
+            if isinstance(cb, SaveConfigCallback):
+                cb.cli_config = self.config_init
+        return trainer
