@@ -66,15 +66,11 @@ class attr_getters:
         state: XState,
         transitions: Sequence[XTransition],
     ) -> ActionHistoryDataPack:
-        # shortest_dists = env.active_instances[
-        #     0
-        # ].compute_pairwise_shortest_backward_state_distances()
         return ActionHistoryDataPack(
             (
                 t.action
                 for t in env.active_instances[0].a_star_search(
                     target=state,
-                    # dists=shortest_dists[state.index],
                     forward=False,
                 )
             ),

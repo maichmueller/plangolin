@@ -31,7 +31,7 @@ def resolve_checkpoints(
                     f"Skipping checkpoint which was neither called last: {checkpoint_path.name} nor matched default_checkpoint_format"
                 )
                 continue
-    sorted_checkpoints.sort()  # will sort by epoch then by step
+    sorted_checkpoints.sort(reverse=True)  # will sort by epoch then by step
     printout = "\n".join(
         f"{epoch = }, {step = }, {path = }"
         for epoch, step, path in map(lambda x: tuple(map(str, x)), sorted_checkpoints)

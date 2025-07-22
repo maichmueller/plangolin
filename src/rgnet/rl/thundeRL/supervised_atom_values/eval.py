@@ -16,7 +16,7 @@ import torchrl
 from lightning.pytorch.cli import LightningArgumentParser
 from lightning.pytorch.loggers import Logger, WandbLogger
 from tensordict import NestedKey, NonTensorStack, TensorDict, TensorDictBase
-from tensordict.nn import InteractionType, TensorDictModule, TensorDictModuleBase
+from tensordict.nn import InteractionType, TensorDictModule
 from tensordict.tensorclass import NonTensorData
 from torch_geometric.data import Batch
 from torchrl.data import Composite, NonTensor
@@ -25,7 +25,8 @@ from torchrl.envs.utils import set_exploration_type
 import xmimir as xmi
 from rgnet.encoding import GraphEncoderBase
 from rgnet.logging_setup import get_logger
-from rgnet.rl.agents import ActorCritic
+from rgnet.models.atom_valuator import EmbeddingAndValuator
+from rgnet.rl.agents import ActorCritic, AtomValueActor
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.embedding import NonTensorTransformedEnv
 from rgnet.rl.embedding.embedding_module import EncodingModule
@@ -40,8 +41,6 @@ from rgnet.rl.thundeRL.utils import (
 )
 from rgnet.utils.misc import as_non_tensor_stack, tolist
 from rgnet.utils.plan import Plan
-
-from .lit_module import EmbeddingAndValuator
 
 
 @dataclasses.dataclass
@@ -179,7 +178,7 @@ class ModelMaker(ABC):
         self.device = device
 
     @abstractmethod
-    def agent(self) -> TensorDictModule:
+    def actor(self) -> TensorDictModule:
         pass
 
     @abstractmethod
@@ -189,154 +188,6 @@ class ModelMaker(ABC):
         This is used to run rollouts on the environment.
         """
         pass
-
-
-class SortThenCombine(TensorDictModuleBase):
-    """
-    Simply sorts the atoms by alphanumeric value and then follows the transitions of the first atom after sorting.
-
-    This is used to combine the optimal goal decisions per atom to an overall goal-decision.
-    """
-
-    def __init__(
-        self,
-        in_keys: NestedKey | Sequence[NestedKey],
-        out_keys: NestedKey | Sequence[NestedKey],
-    ):
-        self.in_keys = (in_keys,) if isinstance(in_keys, str) else in_keys
-        self.out_keys = (out_keys,) if isinstance(out_keys, str) else out_keys
-        super().__init__()
-
-    def forward(self, tensordict: TensorDictBase) -> TensorDictBase:
-        relevant = tensordict[self.in_keys[0]]
-        chosen_atom = relevant.sorted_keys[0]
-        return tensordict.set(self.out_keys[0], relevant[chosen_atom])
-
-
-class RLAtomValuatorActor(TensorDictModule):
-    out_key = PlanningEnvironment.default_keys.action
-    atom_key = "best_transitions_per_goal"
-
-    def __init__(
-        self,
-        module: EmbeddingAndValuator,
-        in_keys: NestedKey,
-        action_key: NestedKey = out_key,
-        goal_combiner: torch.nn.Module = SortThenCombine(
-            in_keys=atom_key, out_keys="selected"
-        ),
-    ):
-        super().__init__(
-            module=module,
-            in_keys=in_keys,
-            out_keys=action_key,
-        )
-        # module to combine the optimal goal decisions per atom to an overall goal-decision
-        # (e.g. choose the most frequent best transition, or select one atom first, then another, etc...)
-        self.goal_combiner = goal_combiner
-
-    def forward(
-        self,
-        tensordict: TensorDictBase,
-        *args,
-        tensordict_out: TensorDictBase | None = None,
-        **kwargs: Any,
-    ) -> TensorDictBase:
-        # we assume the tensordict has the encoded state
-        states, successor_batch, transitions_stack, goals_stack = (
-            tensordict.get(k) for k in self.in_keys
-        )
-        # unpacking `NonTensorStack`s is not fun
-        transitions_list: list[list[xmi.XTransition]] = [
-            ts.data for ts in transitions_stack.tensordicts
-        ]
-        goal_list: list[list[xmi.XLiteral]] = [
-            gs.data for gs in goals_stack.tensordicts
-        ]
-        # neither is NonTensorData
-        states = states.data
-        _, successor_batch = successor_batch.data
-        num_successors = list(map(len, transitions_list))
-        selected_td = None
-        for goals, transitions, num_succ in zip(
-            goal_list, transitions_list, num_successors
-        ):
-            atoms: list[xmi.XAtom] = [goal.atom for goal in goals]
-            current_out, output_info = self.module(
-                states, atoms=atoms, provide_output_metadata=True
-            )
-            successor_out, succ_output_info = self.module(
-                successor_batch, atoms=atoms, provide_output_metadata=True
-            )
-            predicates = set(atom.predicate.name for atom in atoms)
-            for predicate in predicates:
-                current_vals = current_out[predicate].flatten()
-                successor_vals = successor_out[predicate].flatten()
-                num_atoms = len(current_vals)
-                diff = successor_vals - current_vals.repeat(num_succ)
-                # Reshape successor values into [num_succ, num_atoms] and select argmax per atom
-                successor_vals = successor_vals.view(num_succ, num_atoms)
-                successor_vals_masked = torch.where(
-                    successor_vals < 0.1, successor_vals, -torch.inf
-                )
-                best_transition_per_atom = successor_vals_masked.argmax(dim=0)
-                # Gather the corresponding max values
-                atom_index = torch.arange(num_atoms, device=self.device)
-                best_value_per_atom = successor_vals_masked[
-                    best_transition_per_atom, atom_index
-                ]
-                # Compute per-atom improvements and gather
-                diffs = diff.view(num_succ, num_atoms)
-                best_value_improvement_per_atom = diffs[
-                    best_transition_per_atom, atom_index
-                ]
-                selected_td = TensorDict(batch_size=tensordict.batch_size)
-                alternatives_td = TensorDict(batch_size=tensordict.batch_size)
-                for i in range(num_atoms):
-                    atom = output_info[predicate][i].atom
-                    selected_td[atom] = TensorDict(
-                        dict(
-                            transition_index=best_transition_per_atom[i].view(
-                                tensordict.batch_size
-                            ),
-                            transition=NonTensorData(
-                                transitions[best_transition_per_atom[i].item()],
-                                batch_size=tensordict.batch_size,
-                            ),
-                            value=best_value_per_atom[i].view(tensordict.batch_size),
-                            current_value=current_vals[i].view(tensordict.batch_size),
-                            value_improvement=best_value_improvement_per_atom[i].view(
-                                tensordict.batch_size
-                            ),
-                            # )
-                            # )
-                            # alternatives_td[atom] = TensorDict(
-                            #     dict(
-                            all_transitions=transitions,
-                            all_values=current_vals[i].view(tensordict.batch_size),
-                            all_successor_values=NonTensorData(
-                                tolist(successor_vals[:, i]),
-                                batch_size=tensordict.batch_size,
-                            ),
-                        )
-                    )
-        if selected_td is None:
-            get_logger(__name__).warning(
-                "No transitions were selected. Check that the env transforms operate as expected. Given TensorDict:\n%s",
-                tensordict,
-            )
-            raise RuntimeError("No transitions were selected.")
-        tensordict.set(
-            self.atom_key,
-            selected_td,
-        )
-        selected_td = self.goal_combiner(tensordict)
-        # set the action key to the selected transition
-        tensordict.set(
-            self.out_keys[0],
-            as_non_tensor_stack([selected_td["selected", "transition"]]),
-        )
-        return tensordict
 
 
 class AtomValueModelMaker(ModelMaker):
@@ -368,8 +219,8 @@ class AtomValueModelMaker(ModelMaker):
             device=device,
         )
 
-    def agent(self) -> TensorDictModule:
-        agent = RLAtomValuatorActor(
+    def actor(self) -> TensorDictModule:
+        agent = AtomValueActor(
             self.module,
             in_keys=[
                 EncodingTransform.enc_state_key,
@@ -497,7 +348,7 @@ class ValueSearchEval:
         max_steps: int | None = None,
     ):
         env = model.transformed_env(base_env)
-        agent = model.agent().to(self.device)
+        agent = model.actor().to(self.device)
 
         cycle_transform = CycleAvoidingTransform(self.env_keys.transitions)
         if self.test_setup.avoid_cycles:
@@ -769,7 +620,7 @@ class EvalAtomValuesCLI(AtomValuesCLI):
     def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         # fit subcommand adds this value to the config
         parser.add_argument("--ckpts", type=Optional[Path | list[Path]], default=None)
-        parser.add_argument("--device", type=str, default="cpu")
+        parser.add_argument("--detailed", type=bool, default=False)
         parser.link_arguments(
             "data_layout.output_data",
             "trainer.logger.init_args.id",
@@ -781,7 +632,7 @@ class EvalAtomValuesCLI(AtomValuesCLI):
 def eval_model(
     cli: AtomValuesCLI,
     module: EmbeddingAndValuator,
-    logger: Logger,
+    cli_logger: Logger,
     input_data: InputData,
     output_data: OutputData,
     test_setup: TestSetup,
@@ -800,7 +651,7 @@ def eval_model(
 
     :param cli: The CLI instance used to run the agent.
     :param module: An agent instance. The weights for the agent will be loaded from a checkpoint.
-    :param logger: If a WandbLogger is passed, the results are uploaded as table.
+    :param cli_logger: If a WandbLogger is passed, the results are uploaded as table.
     :param input_data: InputData which should specify at least one test_problem.
     :param output_data: OutputData pointing to the checkpoint containing the learned weights for the agent.
     :param test_setup: Extra parameter for testing the agent.
@@ -812,11 +663,17 @@ def eval_model(
         gamma = 1.0
     else:
         gamma = estimator_config.gamma
+    # Determine device from Lightning CLI trainer
+    try:
+        device = cli.trainer.strategy.root_device
+    except AttributeError:
+        # Fallback to CPU if strategy unavailable
+        device = torch.device("cpu")
     value_search = ValueSearchEval(
         test_setup,
-        reward_function=cli.config_init["reward"],
+        reward_function=cli.config_init.reward,
         gamma=gamma,
-        device=torch.device(cli.config_init["device"]),
+        device=device,
     )
     multi_checkpoint_routine = MultiCheckpointEvaluation(
         value_search,
@@ -824,7 +681,7 @@ def eval_model(
         AtomValueModelMaker,
         out_data=output_data,
         model_maker_kwargs={"encoder": cli.config_init.encoder},
-        device=torch.device(cli.config_init["device"]),
+        device=device,
     )
     for checkpoint_path in multi_checkpoint_routine.checkpoints:
         model = multi_checkpoint_routine.load_checkpoint(checkpoint_path)
@@ -882,19 +739,19 @@ def eval_model(
             writer.writerows(plan_results_as_dict)
         logger.info("Saved results to " + str(results_file))
 
-        if isinstance(logger, WandbLogger) and logger.experiment is not None:
+        if isinstance(cli_logger, WandbLogger) and cli_logger.experiment is not None:
             table_data = [
                 list(plan_dict.values())  # dicts retain insertion order after 3.7
                 for plan_dict in plan_results_as_dict
             ]
-            logger.log_table(
+            cli_logger.log_table(
                 key=results_name,
                 columns=list(plan_results_as_dict[0].keys()),
                 data=table_data,
                 step=step,
             )
-            logger.log_metrics({"solved": solved}, step=step)
-            logger.finalize(status="success")
+            cli_logger.log_metrics({"solved": solved}, step=step)
+            cli_logger.finalize(status="success")
 
 
 def eval_lightning_agent_cli():
@@ -912,7 +769,7 @@ def eval_lightning_agent_cli():
     eval_model(
         cli=cli,
         module=module,
-        logger=cli.trainer.logger,
+        cli_logger=cli.trainer.logger,
         input_data=in_data,
         output_data=out_data,
         test_setup=test_setup,

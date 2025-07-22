@@ -49,7 +49,7 @@ class ActorCritic(torch.nn.Module):
     @dataclasses.dataclass(frozen=True)
     class AcceptedKeys:
         # Keys used for the output
-        log_probs: NestedKey = "log_probs"  # the log_prob of the taken action
+        log_probs: NestedKey = "log_probs"  # the log_prob of the action taken
         probs: NestedKey = "probs"  # the probability for each possible action
         state_value: NestedKey = "state_value"  # the output of the value-operator
         current_embedding: NestedKey = "current_embedding"  # the embeddings of states
@@ -98,7 +98,7 @@ class ActorCritic(torch.nn.Module):
             default_interaction_type=InteractionType.RANDOM,
         )
 
-        # Input: object embedding of current state and next state, Output: 2 + hidden size
+        # Input: object embedding of current state and next state, Output: 2 * hidden size
         # -> Two Linear layer with Mish activation
         self.actor_objects_net = simple_mlp(
             in_size=2 * self._embedding_size,
@@ -144,7 +144,6 @@ class ActorCritic(torch.nn.Module):
     def _select_action(
         action_idx: torch.Tensor, transitions: Sequence[List[xmi.XTransition]]
     ) -> List[xmi.XTransition]:
-
         assert len(transitions) == len(action_idx)
         # NOTE with .tolist() we assume that the transitions are on the CPU
         return [t[idx] for t, idx in zip(transitions, action_idx.tolist())]
@@ -276,7 +275,6 @@ class ActorCritic(torch.nn.Module):
         NonTensorStack,
         Optional[NonTensorStack],
     ]:
-
         transitions: List[List[xmi.XTransition]] = tolist(transitions)
         assert all(
             len(ts) > 0 for ts in transitions

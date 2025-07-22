@@ -154,6 +154,7 @@ class ProbabilisticPlanResult(Plan):
                     (
                         "ProbabilisticPlanResult(",
                         f"solved = {self.solved},",
+                        f"plan = {plan_str},",
                         f"cycles = {cycle_str},",
                         f"average_probability = {self.average_probability},",
                         f"min_probability = {self.min_probability}",
@@ -810,7 +811,7 @@ class EvalPolicyGradientCLI(PolicyGradientCLI):
     def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         # fit subcommand adds this value to the config
         parser.add_argument("--ckpt_path", type=Optional[Path], default=None)
-        parser.add_argument("--device", type=str, default="cpu")
+        parser.add_argument("--detailed", type=bool, default=False)
         parser.link_arguments(
             "data_layout.output_data",
             "trainer.logger.init_args.id",
@@ -853,6 +854,12 @@ def eval_model(
         gamma = 1.0
     else:
         gamma = estimator_config.gamma
+    # Determine device from Lightning CLI trainer
+    try:
+        device = cli.trainer.strategy.root_device
+    except AttributeError:
+        # Fallback to CPU if strategy unavailable
+        device = torch.device("cpu")
     analyzer = RLPolicySearchEvaluator(
         policy_gradient_lit_module,
         in_data=input_data,
@@ -860,9 +867,9 @@ def eval_model(
         test_setup=test_setup,
         reward_function=cli.config_init["reward"],
         gamma=gamma,
-        device=torch.device(cli.config_init["device"]),
+        device=device,
     )
-
+    num_workers = cli.config_init.get("threads", 0)
     for checkpoint_path in analyzer.checkpoints:
         analyzer.current_checkpoint = checkpoint_path
         epoch, step = default_checkpoint_format(checkpoint_path.name)
@@ -884,7 +891,9 @@ def eval_model(
                 test_problem,
                 rollout,
             )
-            logger.info(f"Analyzed Results:\n{analyzed_data.str(detailed=False)}:")
+            logger.info(
+                f"Analyzed Results:\n{analyzed_data.str(detailed=cli.config.detailed)}:"
+            )
             test_results.append(analyzed_data)
 
         solved = sum(p.solved for p in test_results)
@@ -921,7 +930,14 @@ def eval_model(
 
 def eval_lightning_agent_cli():
     # overwrite this because it might be set in the config.yaml.
-    sys.argv.extend(["--data_layout.output_data.ensure_new_out_dir", "false"])
+    sys.argv.extend(
+        [
+            "--data_layout.output_data.ensure_new_out_dir",
+            "false",
+            # "--data_layout.output_data.reuse",
+            # "true",
+        ]
+    )
     # needs to be set to avoid loading all the training and validation data
     sys.argv.extend(["--data.skip", "true"])
     # Should be set to avoid overwriting the previous run with the same id (workaround because we can't set the default)

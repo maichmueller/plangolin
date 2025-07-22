@@ -254,13 +254,13 @@ class ThundeRLCLI(LightningCLI):
             # stores the config on the wandb run page here!
             # update the experiment name in the parsed config with the actually used config's final name.
             config, config_init = self.config, self.config_init
-            config_out_data = config["fit"]["data_layout"]["output_data"]
-            config_init_out_data = config_init["fit"]["data_layout"]["output_data"]
-            config_out_data["experiment_name"] = config_init_out_data.experiment_name
+            config_out_data = config.fit.data_layout.output_data
+            config_init_out_data = config_init.fit.data_layout.output_data
+            config_out_data.experiment_name = config_init_out_data.experiment_name
             self.trainer.logger.log_hyperparams(
-                self.convert_to_nested_dict(self.config["fit"])
+                self.convert_to_nested_dict(self.config.fit)
             )
-            wandb_extra: WandbExtraParameter = self.config_init["fit"]["wandb_extra"]
+            wandb_extra: WandbExtraParameter = self.config_init.fit.wandb_extra
             if wandb_extra.watch_model and isinstance(self.trainer.logger, WandbLogger):
                 self.trainer.logger.watch(
                     self.model, log_freq=wandb_extra.log_frequency

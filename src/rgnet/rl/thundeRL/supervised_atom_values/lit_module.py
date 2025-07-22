@@ -5,7 +5,7 @@ import threading
 import time
 from contextlib import ExitStack
 from functools import cached_property
-from typing import Any, List, NamedTuple, Optional, Sequence
+from typing import Any, List, NamedTuple, Optional
 
 import lightning
 import torch
@@ -17,7 +17,7 @@ from torch_geometric.data import Batch
 
 from rgnet.logging_setup import get_logger, tqdm
 from rgnet.models import HeteroGNN
-from rgnet.models.atom_valuator import AtomValuator
+from rgnet.models.atom_valuator import AtomValuator, EmbeddingAndValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.inference_worker import (
@@ -30,7 +30,6 @@ from rgnet.utils.inference_worker import (
     TagException,
 )
 from rgnet.utils.reshape import unsqueeze_right_like
-from xmimir import XAtom
 
 
 class OutputInfo(NamedTuple):
@@ -44,39 +43,6 @@ def batch_fn(
     *args,
 ):
     return model(batch, provide_output_metadata=False)
-
-
-class EmbeddingAndValuator(torch.nn.Module):
-    def __init__(self, gnn: PyGModule, atom_valuator: AtomValuator):
-        super().__init__()
-        self.gnn = gnn
-        self.atom_valuator = atom_valuator
-
-    def forward(
-        self,
-        batch: Batch,
-        atoms: Optional[Sequence[XAtom]] = None,
-        provide_output_metadata: bool | None = None,
-        info_dict: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Tensor] | tuple[dict[str, Tensor], dict[str, list[OutputInfo]]]:
-        """
-        Batch is a PyG Batch object containing the graphs of batch_size many states.
-
-        We compute the embeddings of the objects in the states and split up the tensor into state-respective
-        object-embedding pieces, i.e. each state has its own object-embedding 2D-tensor where dim-0 is the object
-        dimension and dim-1 the feature dimension.
-        We then compute all possible permutations of object-embeddings of size `arity(predicate)` in each state
-        and batch them together again. The predicate-specific MLP then performs a readout of the atom values.
-        """
-        embeddings, batch_info = self.gnn(batch)
-        return self.atom_valuator(
-            embeddings,
-            batch_info=batch_info,
-            object_names=batch.object_names,
-            atoms=atoms,
-            provide_output_metadata=provide_output_metadata,
-            info_dict=info_dict,
-        )
 
 
 # torch.multiprocessing.set_sharing_strategy("file_system")

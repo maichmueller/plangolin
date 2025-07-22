@@ -26,7 +26,6 @@ class OutputData:
         out_dir: Path | str = Path("out"),
         experiment_name: str | None = None,
         ensure_new_out_dir: bool = False,
-        reuse: bool = False,
         root_dir: Path | None = None,
         domain_name: str | None = None,
         output_dir_order: Literal["domain"] | Literal["experiment"] = "domain",

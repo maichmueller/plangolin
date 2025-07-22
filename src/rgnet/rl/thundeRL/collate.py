@@ -234,13 +234,10 @@ class StatefulCollater:
         self.fn = fn
         signature = inspect.signature(fn)
         actual_kwargs = dict()
-        for kwarg in kwargs or dict():
+        for kwarg in kwargs:
             if kwarg != "self" and kwarg in signature.parameters.keys():
                 param = signature.parameters[kwarg]
-                if (
-                    param.default is not inspect.Parameter.empty
-                    and kwargs[kwarg] != param.default
-                ):
+                if kwargs[kwarg] != param.default:
                     actual_kwargs[kwarg] = kwargs[kwarg]
         self.kwargs = actual_kwargs
 
