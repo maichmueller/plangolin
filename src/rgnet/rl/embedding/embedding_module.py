@@ -35,17 +35,15 @@ class EncodingModule(DeviceAwareMixin, torch.nn.Module):
         ).to(self.device)
 
 
-class EmbeddingModule(torch.nn.Module):
+class EmbeddingModule(DeviceAwareMixin, torch.nn.Module):
     def __init__(
         self,
         embedding_size: int,
         encoder: GraphEncoderBase,
         gnn: PyGModule | PyGHeteroModule | None = None,
-        device: torch.device = torch.device("cpu"),
     ):
         super().__init__()
         self.embedding_size = embedding_size
-        self.device = device
         self.gnn = gnn
         self.encoding_module = EncodingModule(encoder)
 

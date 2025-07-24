@@ -3,13 +3,15 @@ from __future__ import annotations
 from typing import List, Optional
 
 import torch
-from tensordict import NestedKey, TensorDictBase
-from torchrl.data import Composite, Unbounded
+from tensordict import NestedKey, NonTensorData, NonTensorStack, TensorDictBase
+from torch_geometric.data import Batch
+from torchrl.data import Composite, NonTensor, Unbounded
 from torchrl.envs import Transform, TransformedEnv
 
-from rgnet.rl.embedding.embedding_module import EmbeddingModule
+from rgnet.rl.embedding.embedding_module import EmbeddingModule, EncodingModule
 from rgnet.rl.envs import PlanningEnvironment
-from rgnet.utils.misc import NonTensorWrapper
+from rgnet.utils.misc import NonTensorWrapper, tolist
+from xmimir import XLiteral, XState, XTransition
 
 
 class EmbeddingTransform(Transform):
@@ -83,3 +85,99 @@ class NonTensorTransformedEnv(TransformedEnv):
         functions for the base env, like rand_action, will not be called.
         """
         return self.base_env.rand_action(tensordict)
+
+
+class EncodingTransform(Transform):
+    """
+    Create a transform that merely encodes the states into PyG Data objects.
+    """
+
+    enc_transition_key: NestedKey = (
+        "encoded_" + PlanningEnvironment.default_keys.transitions
+    )
+    enc_state_key: NestedKey = "encoded_" + PlanningEnvironment.default_keys.state
+    enc_goals_key: NestedKey = "encoded_" + PlanningEnvironment.default_keys.goals
+
+    def __init__(self, env: PlanningEnvironment, encoding_module: EncodingModule):
+        super().__init__(
+            in_keys=[
+                env.keys.state,
+                env.keys.goals,
+                env.keys.transitions,
+            ],
+            out_keys=[
+                self.enc_state_key,
+                self.enc_goals_key,
+                self.enc_transition_key,
+            ],
+        )
+        self.env = env
+        self.encoding_module = encoding_module
+
+    def _apply_transform(
+        self, states_or_transition: NonTensorStack
+    ) -> Batch | NonTensorData:
+        as_list = tolist(states_or_transition)
+        match as_list[0]:
+            case list() if isinstance(as_list[0][0], XLiteral):
+                return self.encoding_module(as_list)
+            case list() if isinstance(as_list[0][0], XTransition):
+                states, next_states = zip(
+                    *(
+                        [t.source, t.target]
+                        for transitions in as_list
+                        for t in transitions
+                    )
+                )
+                batch_states, batch_next_states = (
+                    self.encoding_module(states),
+                    self.encoding_module(next_states),
+                )
+                # wrap them in a NonTensorData so TensorDict.set sees
+                # a TensorDictBase and skips numpy conversion
+                return NonTensorData(
+                    data=(batch_states, batch_next_states),
+                    batch_size=len(as_list),
+                )
+
+            case XState():
+                return self.encoding_module(as_list)
+            case _:
+                raise TypeError(
+                    f"Expected a sequence of XState, XLiteral, or XTransition. Got {type(as_list[0])}"
+                )
+
+    def _reset(
+        self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
+    ) -> TensorDictBase:
+        """
+        Call the transform after an env's `reset` call as well, since we need encodings for initial states too.
+
+        For unknown reasons, the base transform method does nothing on `reset`.
+        """
+        return self._call(tensordict_reset)
+
+    def transform_observation_spec(self, observation_spec: Composite) -> Composite:
+        """
+        Add encoded states spec.
+        This is important for _StepMDP validate.
+        """
+        new_observation_spec = observation_spec.clone()
+        for key in [
+            self.enc_state_key,
+            self.enc_goals_key,
+        ]:
+            if key not in new_observation_spec:
+                new_observation_spec[key] = NonTensor(
+                    example_data=Batch(),
+                    batched=observation_spec.batch_size[0] > 1,
+                )
+
+        new_observation_spec[self.enc_transition_key] = NonTensor(
+            example_data=(
+                Batch(),
+                Batch(),
+            ),
+            batched=observation_spec.batch_size[0] > 1,
+        )
+        return new_observation_spec

@@ -1,22 +1,27 @@
 import dataclasses
 import itertools
+from pathlib import Path
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
 import lightning
 import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 from tensordict import LazyStackedTensorDict, TensorDict
+from tensordict.nn import TensorDictModule
 from torch.nn import ModuleList
 from torch_geometric.data import Batch
+from torchrl.envs import TransformedEnv
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.losses import AllActionsLoss, CriticLoss
+from rgnet.rl.search.agent_maker import AgentMaker
 from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.misc import as_non_tensor_stack
 from rgnet.utils.object_embeddings import ObjectEmbedding
+from xmimir import XProblem
 
 
 class PolicyGradientLitModule(lightning.LightningModule):
@@ -232,3 +237,73 @@ class PolicyGradientLitModule(lightning.LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim
+
+
+class ActorCriticAgentMaker(AgentMaker):
+    def __init__(
+        self,
+        module: ActorCritic,
+        *,
+        device: Optional[torch.device] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            module=module,
+            device=device,
+            **kwargs,
+        )
+        self._last_checkpoint_path: Optional[Path] = None
+        keys = PlanningEnvironment.default_keys
+        self.td_module_kwargs = dict(
+            state_key=keys.state,
+            transition_key=keys.transitions,
+            action_key=keys.action,
+            add_probs=True,
+        )
+
+    def agent(
+        self,
+        checkpoint_path: Path,
+        instance: XProblem,
+        epoch: int = None,
+        **kwargs,
+    ) -> TensorDictModule:
+        if checkpoint_path != self._last_checkpoint_path:
+            self._load_checkpoint(checkpoint_path)
+        return self.module.as_td_module(**self.td_module_kwargs)
+
+    def transformed_env(
+        self, base_env: PlanningEnvironment
+    ) -> PlanningEnvironment | TransformedEnv:
+        """
+        Returns the base environment transformed by the actor-critic module.
+        This is useful for environments that require specific transformations
+        based on the actor-critic's capabilities.
+        """
+        return base_env.to(self.device)
+
+    def _load_checkpoint(self, checkpoint_path):
+        self._last_checkpoint_path = checkpoint_path
+        state_dict = torch.load(checkpoint_path, map_location=self.device)["state_dict"]
+        sliced_state_dict = {
+            k.removeprefix("actor_critic."): v
+            for k, v in state_dict.items()
+            if k.startswith("actor_critic.")
+        } | {
+            f"_embedding_module.{k}": v
+            for k, v in state_dict.items()
+            if k.startswith("gnn.")
+        }
+        missing_keys, unexpected_keys = self.module.load_state_dict(
+            sliced_state_dict, strict=False
+        )
+        if missing_keys:
+            # since the embedding module is None during training in the lit module,
+            # the encoding module of the embedding module is not registered and this is expected.
+            assert all(
+                missing_key.endswith("._device_register")
+                for missing_key in missing_keys
+            ), (
+                f"Missing keys in the state dict: {missing_keys}. "
+                "Acceptable missing keys are those related to the embedding module's device registration."
+            )

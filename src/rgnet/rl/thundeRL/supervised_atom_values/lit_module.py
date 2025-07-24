@@ -5,6 +5,7 @@ import threading
 import time
 from contextlib import ExitStack
 from functools import cached_property
+from pathlib import Path
 from typing import Any, List, NamedTuple, Optional
 
 import lightning
@@ -15,10 +16,17 @@ from torch import Tensor
 from torch.nn import ModuleList
 from torch_geometric.data import Batch
 
+from rgnet.encoding import GraphEncoderBase
 from rgnet.logging_setup import get_logger, tqdm
 from rgnet.models import HeteroGNN
 from rgnet.models.atom_valuator import AtomValuator, EmbeddingAndValuator
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
+from rgnet.rl.agents import AtomValueActor
+from rgnet.rl.embedding import NonTensorTransformedEnv
+from rgnet.rl.embedding.embedding_module import EncodingModule
+from rgnet.rl.embedding.transform import EncodingTransform
+from rgnet.rl.envs import PlanningEnvironment
+from rgnet.rl.search.agent_maker import AgentMaker
 from rgnet.rl.thundeRL.validation import ValidationCallback
 from rgnet.utils.inference_worker import (
     InferenceProcessWorker,
@@ -30,6 +38,7 @@ from rgnet.utils.inference_worker import (
     TagException,
 )
 from rgnet.utils.reshape import unsqueeze_right_like
+from xmimir import XProblem
 
 
 class OutputInfo(NamedTuple):
@@ -541,3 +550,59 @@ class AtomValuesLitModule(lightning.LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return self.optim
+
+
+class AtomValueAgentMaker(AgentMaker):
+    def __init__(
+        self,
+        atom_value_module: EmbeddingAndValuator,
+        encoder: GraphEncoderBase,
+        *,
+        device: torch.device = torch.device("cpu"),
+    ):
+        self.device = device
+        self.encoding_module = EncodingModule(
+            encoder=encoder,
+        ).to(self.device)
+        self._last_checkpoint: Optional[Path] = None
+        self._actor: AtomValueActor | None = None
+        super().__init__(
+            module=atom_value_module,
+            device=device,
+        )
+
+    def agent(
+        self,
+        checkpoint_path: Path,
+        instance: XProblem,  # model is instance-agnostic, ignored
+        epoch: int = None,
+        **kwargs,
+    ) -> AtomValueActor:
+        if checkpoint_path == self._last_checkpoint:
+            return self._actor.to(self.device)
+
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.device, weights_only=True
+        )
+        # we cant do strict=True, since validation_hooks are often present in the state dict
+        self.module.load_state_dict(checkpoint["state_dict"], strict=False)
+        self._actor = AtomValueActor(
+            self.module,
+            in_keys=[
+                EncodingTransform.enc_state_key,
+                EncodingTransform.enc_transition_key,
+                PlanningEnvironment.default_keys.transitions,
+                PlanningEnvironment.default_keys.goals,
+            ],
+        )
+        return self._actor.to(self.device)
+
+    def transformed_env(self, base_env: PlanningEnvironment) -> NonTensorTransformedEnv:
+        return NonTensorTransformedEnv(
+            env=base_env,
+            transform=EncodingTransform(
+                env=base_env, encoding_module=self.encoding_module
+            ),
+            cache_specs=True,
+            device=self.device,
+        )

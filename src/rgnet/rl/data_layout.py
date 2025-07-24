@@ -245,18 +245,23 @@ class InputData:
         # We load state space lazily as it might be quite expensive
         self._spaces: Optional[List[XStateSpace]] = None
         self._validation_spaces: Optional[List[XStateSpace]] = None
-        self._space_by_problem: dict[XProblem, XStateSpace] = dict()
+        self._space_by_problem: dict[XProblem, Optional[XStateSpace]] = dict()
 
     def get_or_load_space(
-        self, problem: XProblem, max_expanded: int | None = None
+        self, problem: XProblem, max_num_states=1_000_000, **space_options
     ) -> XStateSpace:
         if problem not in self._space_by_problem:
-            self._space_by_problem[problem] = XStateSpace(
-                self.domain.filepath,
-                problem.filepath,
-                max_num_states=max_expanded or 1_000_000,
-            )
-        return self._space_by_problem.get(problem, None)
+            try:
+                space = XStateSpace(
+                    self.domain.filepath,
+                    problem.filepath,
+                    max_num_states=max_num_states,
+                    **space_options,
+                )
+                self._space_by_problem[problem] = space
+            except RuntimeError:
+                self._space_by_problem[problem] = None
+        return self._space_by_problem[problem]
 
     @property
     def spaces(self):

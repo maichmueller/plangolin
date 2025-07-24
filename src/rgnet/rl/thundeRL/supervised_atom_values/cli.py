@@ -6,12 +6,12 @@ from lightning.pytorch.cli import OptimizerCallable
 
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
-from rgnet.models.atom_valuator import AtomValuator
 from rgnet.rl.thundeRL.cli_config import *
 from xmimir import XCategory, XPredicate
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
-from .lit_module import AtomValuesLitModule
+from ..utils import wandb_id_resolver
+from .lit_module import AtomValueAgentMaker, AtomValuesLitModule
 
 
 class OptimizerSetup:
@@ -161,4 +161,25 @@ class AtomValuesCLI(ThundeRLCLI):
                 pred.name
                 for pred in domain.predicates(XCategory.fluent, XCategory.derived)
             ],
+        )
+
+
+class AtomValuesEvalCLI(AtomValuesCLI):
+    def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
+        # fit subcommand adds this value to the config
+        parser.add_class_arguments(
+            AtomValueAgentMaker, "agent_maker", as_positional=True
+        )
+        parser.add_argument("--ckpts", type=Optional[Path | list[Path]], default=None)
+        parser.add_argument("--detailed", type=bool, default=False)
+        parser.link_arguments(
+            "data_layout.output_data",
+            "trainer.logger.init_args.id",
+            compute_fn=wandb_id_resolver,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "encoder",
+            "agent_maker.encoder",
+            apply_on="instantiate",
         )

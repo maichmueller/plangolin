@@ -19,6 +19,7 @@ from rgnet.encoding import (  # noqa: F401
 # avoids specifying full class_path for model.gnn in cli
 from rgnet.models import HeteroGNN, VanillaGNN  # noqa: F401
 from rgnet.rl.agents import ActorCritic
+from rgnet.rl.embedding import EmbeddingModule
 from rgnet.rl.losses import (  # noqa: F401
     ActorCriticLoss,
     AllActionsLoss,
@@ -27,7 +28,11 @@ from rgnet.rl.losses import (  # noqa: F401
 )
 from rgnet.rl.losses.all_actions_estimator import KeyBasedProvider
 from rgnet.rl.thundeRL.cli_config import *
-from rgnet.rl.thundeRL.policy_gradient.lit_module import PolicyGradientLitModule
+from rgnet.rl.thundeRL.policy_gradient.lit_module import (
+    ActorCriticAgentMaker,
+    PolicyGradientLitModule,
+)
+from rgnet.rl.thundeRL.utils import wandb_id_resolver
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
@@ -123,8 +128,8 @@ def configure_loss(loss: CriticLoss, estimator_config: ValueEstimatorConfig):
             reward_key=PolicyGradientLitModule.default_keys.all_rewards,
             done_key=PolicyGradientLitModule.default_keys.all_dones,
         )
-    hyperparameter["shifted"] = True
     hyperparameter["gamma"] = estimator_config.gamma
+    hyperparameter["shifted"] = True
 
     loss.make_value_estimator(estimator_config.estimator_type, **hyperparameter)
     return loss
@@ -229,6 +234,17 @@ class PolicyGradientCLI(ThundeRLCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
+            "reward.deadend_reward",
+            "loss.init_args.clamp_min",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "reward.regular_reward",
+            "loss.init_args.clamp_max",
+            apply_on="instantiate",
+            compute_fn=lambda r: 0.0 if r < 0.0 else float("inf"),
+        )
+        parser.link_arguments(
             "estimator_config.estimator_type",
             "model.add_all_rewards_and_done",
             apply_on="instantiate",
@@ -320,5 +336,51 @@ class PolicyGradientCLI(ThundeRLCLI):
             source="agent",
             target="model.validation_hooks.init_args.probs_collector",
             compute_fn=lambda agent: ProbsCollector(key=agent.keys.probs),
+            apply_on="instantiate",
+        )
+
+
+class PolicyGradientEvalCLI(PolicyGradientCLI):
+    def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
+        # fit subcommand adds this value to the config
+        parser.add_class_arguments(
+            ActorCriticAgentMaker, "agent_maker", as_positional=True
+        )
+        parser.add_class_arguments(
+            EmbeddingModule,
+            "embedding_module",
+            as_positional=False,
+        )
+        parser.add_argument("--ckpt_path", type=Optional[Path], default=None)
+        parser.add_argument("--detailed", type=bool, default=False)
+        parser.link_arguments(
+            "data_layout.output_data",
+            "trainer.logger.init_args.id",
+            compute_fn=wandb_id_resolver,
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "model.gnn.init_args.embedding_size",
+            "embedding_module.embedding_size",
+            apply_on="parse",
+        )
+        parser.link_arguments(
+            "model.gnn",
+            "embedding_module.gnn",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "encoder",
+            "embedding_module.encoder",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "embedding_module",
+            "agent.embedding_module",
+            apply_on="instantiate",
+        )
+        parser.link_arguments(
+            "agent",
+            "agent_maker.module",
             apply_on="instantiate",
         )
