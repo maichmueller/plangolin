@@ -60,7 +60,7 @@ def from_parser_args(
         loss.make_value_estimator(
             value_type=ValueEstimators.TD0,
             optimal_targets=value_operator,
-            gamma=parser_args.gamma,
+            gamma=gamma,
             shifted=True,
         )
     elif use_all_actions:
@@ -69,13 +69,13 @@ def from_parser_args(
         env_based_provider = EnvironmentBasedRewardProvider(env.base_env)
         loss.make_value_estimator(
             value_type="AllActionsValueEstimator",
-            gamma=parser_args.gamma,
+            gamma=gamma,
             reward_done_provider=env_based_provider,
         )
     else:
         loss.make_value_estimator(
             ValueEstimators.TD0,
-            gamma=parser_args.gamma,
+            gamma=gamma,
             shifted=True,
         )
 

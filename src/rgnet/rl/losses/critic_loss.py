@@ -35,6 +35,8 @@ class CriticLoss(LossModule):
         reduction: Optional[str] = None,
         loss_critic_type: str = "l2",
         clone_tensordict: bool = True,
+        clamp_min: float = -float("inf"),
+        clamp_max: float = float("inf"),
         keys: _AcceptedKeys = default_keys,
     ):
         super().__init__()
@@ -42,6 +44,8 @@ class CriticLoss(LossModule):
         self.reduction: str = reduction or "mean"
         self.loss_critic_type: str = loss_critic_type
         self.clone_tensordict: bool = clone_tensordict
+        self.clamp_min: float = clamp_min
+        self.clamp_max: float = clamp_max
         self._tensor_keys: CriticLoss._AcceptedKeys = keys
 
     @property
@@ -51,13 +55,18 @@ class CriticLoss(LossModule):
     def _loss_critic(self, tensordict: TensorDictBase) -> torch.Tensor:
         # value_target should have been computed with the advantage in forward
         target_return = tensordict.get(self.tensor_keys.value_target)
+        target_return = target_return.clamp(min=self.clamp_min, max=self.clamp_max)
         # We have to always recompute as the ValueEstimator might use a copy of the actual parameter
         # which means the result might still have gradients (just for non-nonsensical parameter)
         # TODO get the value estimator to pass through gradients for the value_net in order to avoid second call
         tensordict_select = tensordict.select(
             *self.critic_network.in_keys, strict=False
         )
-        state_value = self.critic_network(tensordict_select).get(self.tensor_keys.value)
+        state_value = (
+            self.critic_network(tensordict_select)
+            .get(self.tensor_keys.value)
+            .clamp(min=self.clamp_min, max=self.clamp_max)
+        )
 
         return distance_loss(
             target_return,

@@ -25,6 +25,8 @@ class ActorCriticLoss(CriticLoss):
         loss_critic_type: Literal["l1", "l2"] = "l2",
         log_prob_clip_value: Optional[float] = None,
         clone_tensordict: bool = True,
+        clamp_min: float = -float("inf"),
+        clamp_max: float = float("inf"),
         keys: _AcceptedKeys = default_keys,
     ):
         """
@@ -48,6 +50,8 @@ class ActorCriticLoss(CriticLoss):
             reduction=reduction,
             loss_critic_type=loss_critic_type,
             clone_tensordict=clone_tensordict,
+            clamp_min=clamp_min,
+            clamp_max=clamp_max,
             keys=keys,
         )
         self.log_prob_clip = log_prob_clip_value
