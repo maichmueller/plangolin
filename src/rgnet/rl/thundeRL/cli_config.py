@@ -257,6 +257,7 @@ class ThundeRLCLI(LightningCLI):
             config_out_data = config.fit.data_layout.output_data
             config_init_out_data = config_init.fit.data_layout.output_data
             config_out_data.experiment_name = config_init_out_data.experiment_name
+            config.experiment = config_out_data.experiment_name
             self.trainer.logger.log_hyperparams(
                 self.convert_to_nested_dict(self.config.fit)
             )
