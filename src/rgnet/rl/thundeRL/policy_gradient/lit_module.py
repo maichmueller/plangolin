@@ -13,6 +13,7 @@ from torch_geometric.data import Batch
 from torchrl.envs import TransformedEnv
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
+from rgnet.encoding import GraphEncoderBase
 from rgnet.models.pyg_module import PyGHeteroModule, PyGModule
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.envs import PlanningEnvironment
@@ -64,7 +65,7 @@ class PolicyGradientLitModule(lightning.LightningModule):
 
     def next_stream(self) -> Optional[torch.cuda.Stream]:
         """Returns the next CUDA stream if available, otherwise None."""
-        if self.device.type == "cuda" and torch.cuda.is_available():
+        if self.device.type == "cuda" and torch.cuda.is_available() and False:
             if self._cuda_streams is None:
                 self._cuda_streams = [torch.cuda.Stream(self.device) for _ in range(2)]
                 self._cuda_cycler = itertools.cycle(self._cuda_streams)
@@ -307,3 +308,17 @@ class ActorCriticAgentMaker(AgentMaker):
                 f"Missing keys in the state dict: {missing_keys}. "
                 "Acceptable missing keys are those related to the embedding module's device registration."
             )
+
+    @property
+    def encoder(self) -> GraphEncoderBase | None:
+        encoder = self.module.embedding_module.encoding_module.encoder
+        self.module.embedding_module.encoding_module.encoder = None
+        return encoder
+
+    @encoder.setter
+    def encoder(self, encoder: GraphEncoderBase):
+        """
+        Sets the encoder for the actor-critic module.
+        This is used to encode states into a graph representation.
+        """
+        self.module.embedding_module.encoding_module.encoder = encoder

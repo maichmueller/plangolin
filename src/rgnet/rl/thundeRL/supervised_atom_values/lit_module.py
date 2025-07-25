@@ -606,3 +606,14 @@ class AtomValueAgentMaker(AgentMaker):
             cache_specs=True,
             device=self.device,
         )
+
+    @property
+    def encoder(self) -> GraphEncoderBase | None:
+        return self.encoding_module.encoder
+
+    @encoder.setter
+    def encoder(self, encoder: GraphEncoderBase):
+        """
+        Set the encoder for the agent maker. This is used to encode states into a graph representation.
+        """
+        self.encoding_module.encoder = encoder

@@ -8,6 +8,7 @@ import torch
 from tensordict.nn import TensorDictModule
 from torchrl.envs import EnvBase, TransformedEnv
 
+from rgnet.encoding import GraphEncoderBase
 from rgnet.rl.agents import LookupPolicyActor
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.envs import PlanningEnvironment
@@ -48,6 +49,19 @@ class AgentMaker(ABC):
         Return a transformed environment that provides the necessary setup to work with the agent.
         This is used to run rollouts on the environment.
         """
+        pass
+
+    @property
+    def encoder(self) -> GraphEncoderBase | None:
+        """
+        Get the encoder for the agent maker. This is used to encode states into a graph representation.
+        May be `None` if no encoder is needed. Should also be set to None so that the maker can be sent across process
+        boundaries.
+        """
+        return None
+
+    @encoder.setter
+    def encoder(self, encoder: GraphEncoderBase):
         pass
 
 

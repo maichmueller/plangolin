@@ -1,8 +1,19 @@
 import csv
 import datetime
-import os
+import itertools
 import sys
 import time
+from multiprocessing import Manager
+
+# Global worker identifier for pool workers
+WORKER_ID: int | None = None
+
+
+def _init_worker(worker_id_queue):
+    global WORKER_ID
+    WORKER_ID = worker_id_queue.get()
+
+
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Sequence
@@ -11,6 +22,7 @@ import torch
 from lightning.pytorch.loggers import Logger, WandbLogger
 
 import xmimir
+from rgnet.encoding import EncoderFactory
 from rgnet.logging_setup import get_logger
 from rgnet.rl.data_layout import InputData, OutputData
 from rgnet.rl.reward import RewardFunction
@@ -45,6 +57,7 @@ def eval_model(cli: ThundeRLCLI, num_workers: int = 0):
     test_setup: TestSetup = cli.config_init.test_setup
     reward_function: RewardFunction = cli.config_init.reward
     cli_logger: WandbLogger = cli.trainer.logger
+    encoder_factory: EncoderFactory = cli.config_init.encoder_factory
 
     if not input_data.test_problems:
         raise ValueError("No test instances provided")
@@ -79,7 +92,25 @@ def eval_model(cli: ThundeRLCLI, num_workers: int = 0):
     test_results: dict[tuple[int, int], list[ProbabilisticPlan]] = dict()
     metrics: dict[tuple[int, int], dict[str, float]] = dict()
     if num_workers > 0:
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        manager = Manager()
+        worker_id_queue = manager.Queue()
+        for wid in range(1, max_workers + 1):
+            worker_id_queue.put(wid)
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_init_worker,
+            initargs=(worker_id_queue,),
+        ) as pool:
+            agent_maker.encoder = None
+            optimal_plans = [
+                (
+                    ActionHistoryDataPack(t.action for t in plan.transitions)
+                    if (plan := input_data.plan_by_problem.get(prob)) is not None
+                    else None
+                )
+                for prob in input_data.test_problems
+            ]
+
             for ckpt in checkpoints_paths:
                 futures.append(
                     pool.submit(
@@ -87,10 +118,12 @@ def eval_model(cli: ThundeRLCLI, num_workers: int = 0):
                         ckpt,
                         model_search,
                         agent_maker,
+                        encoder_factory=encoder_factory,
                         domain_path=Path(input_data.domain.filepath),
                         problem_paths=[
                             Path(prob.filepath) for prob in input_data.test_problems
                         ],
+                        optimal_plans=optimal_plans,
                         test_setup=test_setup,
                         detailed=cli.config_init.detailed,
                     )
@@ -202,6 +235,7 @@ def _evaluate_checkpoint(
     agent_maker: AgentMaker,
     test_setup: TestSetup,
     detailed: bool,
+    encoder_factory: EncoderFactory | None = None,
     test_instances: Sequence[XProblem] | None = None,
     domain_path: Path | None = None,
     problem_paths: Sequence[Path] | None = None,
@@ -213,21 +247,31 @@ def _evaluate_checkpoint(
     NOTE: We pass the model's state_dict instead of the module itself to avoid pickling issues.
     """
     epoch, step = default_checkpoint_format(checkpoint_path.name)
-    logger_local = get_logger(f"{__name__}.PID({os.getpid()})")
+    worker_id = WORKER_ID if WORKER_ID is not None else 0
+    logger_local = get_logger(f"{__name__}.Worker({worker_id})")
     logger_local.info(f"Using checkpoint with epoch={epoch}, step={step}")
 
     test_instances = test_instances or []
+    domain = None
     if not test_instances:
         if domain_path is None or problem_paths is None:
             raise ValueError(
                 "No test instances provided and no domain or problem paths specified."
             )
         # Load test problems from the given domain and problem paths
-        test_instances = [
-            xmimir.parse(domain_path, problem_path)[1] for problem_path in problem_paths
-        ]
+        test_instances = []
+        for problem_path in problem_paths:
+            domain, problem = xmimir.parse(domain_path, problem_path)
+            test_instances.append(problem)
+    if encoder_factory is not None:
+        # If an encoder factory is provided, use it to create the encoder. This will only happen if we go multi-process.
+        encoder = encoder_factory(domain)
+        agent_maker.encoder = encoder
+
     local_results: List[ProbabilisticPlan] = []
-    for test_problem, optimal_plan in zip(test_instances, optimal_plans or []):
+    for test_problem, optimal_plan in zip(
+        test_instances, optimal_plans or itertools.repeat(None)
+    ):
         logger_local.info(
             f"Running rollout (max steps {test_setup.max_steps}) for problem {test_problem.name, test_problem.filepath}."
         )
@@ -306,4 +350,5 @@ if __name__ == "__main__":
     cli = import_object(cli_name)(run=False)
     eval_model(
         cli=cli,
+        num_workers=known_args.num_workers,
     )
