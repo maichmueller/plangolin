@@ -167,8 +167,10 @@ class ProbabilisticPlan:
         prob = self.problem
         domain_path, problem_path = prob.domain.filepath, prob.filepath
         transitions = self.transitions
-        transitions = ActionHistoryDataPack(transitions[-1].target)
-        cycles = [ActionHistoryDataPack(cycle[-1].target) for cycle in self.cycles]
+        transitions = ActionHistoryDataPack(t.action for t in transitions)
+        cycles = [
+            ActionHistoryDataPack(t.action for t in cycle) for cycle in self.cycles
+        ]
         state = self.__dict__.copy()
         state["problem"] = (domain_path, problem_path)
         state["transitions"] = transitions
