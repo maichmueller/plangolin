@@ -8,7 +8,12 @@ from torch_geometric.data import Data
 
 from xmimir import XAtom, XDomain, XLiteral
 
-from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
+from .base_encoder import (
+    EncoderFactory,
+    GraphEncoderBase,
+    GraphT,
+    check_encoded_by_this,
+)
 from .featuremap import FeatureMap
 from .node_factory import NodeFactory
 
@@ -47,6 +52,16 @@ class ColorGraphEncoder(GraphEncoderBase[nx.Graph]):
             self.predicate_nodes_enabled == other.predicate_nodes_enabled
             and self.domain == other.domain
             and self.feature_map == other.feature_map
+        )
+
+    def as_factory(self) -> EncoderFactory:
+        return EncoderFactory(
+            self.__class__,
+            kwargs={
+                "node_factory": self.node_factory,
+                "feature_map": self._feature_map,
+                "enable_global_predicate_nodes": self.predicate_nodes_enabled,
+            },
         )
 
     @property

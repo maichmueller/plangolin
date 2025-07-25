@@ -116,6 +116,16 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
             and graph.graph["encoding"] == self
         )
 
+    def as_factory(self) -> EncoderFactory:
+        """
+        Returns an EncoderFactory for this encoder.
+        This is used to create a new instance of the encoder with the same parameters, e.g. when needing to
+        multiprocess with the same encoding.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement `as_factory` method."
+        )
+
 
 def check_encoded_by_this(func):
     @functools.wraps(func)

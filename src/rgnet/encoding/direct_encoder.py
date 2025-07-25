@@ -10,6 +10,7 @@ from torch_geometric.data import Data
 
 from xmimir import Atom, XAtom, XDomain, XLiteral
 
+from . import EncoderFactory
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .featuremap import FeatureMap, FeatureMode
 from .node_factory import Node, NodeFactory
@@ -67,6 +68,15 @@ class DirectGraphEncoder(GraphEncoderBase[nx.DiGraph]):
 
     def __eq__(self, other: DirectGraphEncoder):
         return self.domain == other.domain and self._feature_map == other._feature_map
+
+    def as_factory(self) -> EncoderFactory:
+        return EncoderFactory(
+            self.__class__,
+            kwargs={
+                "node_factory": self.node_factory,
+                "feature_map": self._feature_map,
+            },
+        )
 
     @staticmethod
     def _emplace_feature(

@@ -4,7 +4,7 @@ import itertools
 import warnings
 from enum import Enum
 from functools import cache, singledispatchmethod
-from typing import Any, Dict, Iterator, NamedTuple, Optional
+from typing import Any, Dict, Generator, Iterable, Iterator, NamedTuple, Optional
 
 import numpy as np
 
@@ -30,7 +30,6 @@ class FeatureMode(Enum):
 
 
 class FeatureMap:
-
     @cache
     def __new__(cls, *args, **kwargs):
         obj = super().__new__(cls)
@@ -98,10 +97,16 @@ class FeatureMap:
 
     def _build(self, mode: FeatureMode, encoding_len: Optional[int] = None):
         self._mode = mode
+        feature_iter: Iterable[np.ndarray] | Generator[np.ndarray, None, None]
         match mode:
             case FeatureMode.categorical:
                 none_feature = 0
-                feature_iter = itertools.count(start=1)
+
+                def feature_gen():
+                    for i in itertools.count(start=1):
+                        yield np.array(i)
+
+                feature_iter = feature_gen()
             case FeatureMode.one_hot:
                 encoding_len = sum(
                     3 * max(1, pred.arity * (not self._ignore_arg_position))
@@ -135,7 +140,7 @@ class FeatureMap:
                             FeatureMode.combinatorial, divmod(required_nr_states, 2)[0]
                         )
 
-                def feature_vector_gen():
+                def feature_vector_gen() -> Generator[np.ndarray, None, None]:
                     unit_matrix = np.eye(encoding_len, dtype=np.int8)
                     # make read-only views
                     unit_matrix.flags.writeable = False
@@ -144,7 +149,10 @@ class FeatureMap:
                         for n_combs in range(1, encoding_len + 1)
                     ):
                         # sum up the unit vectors of the given indices to create another feature vector
-                        yield sum(unit_matrix[i] for i in idx_comb)
+                        yield from (
+                            unit_matrix[list(indices)].sum(axis=0)
+                            for indices in idx_comb
+                        )
 
                 none_feature = np.zeros(encoding_len, dtype=np.int8)
                 # make read-only views
@@ -205,3 +213,16 @@ class FeatureMap:
         if pos is None or self._ignore_arg_position:
             return None
         return pos
+
+    def __getstate__(self):
+        # Exclude the cache from the state
+        state = self.__dict__.copy()
+        state["_predicate_map"] = {}
+        for i, p in enumerate(self._predicates):
+            hollow_p = XPredicate.make_hollow(p.name, p.arity, p.component)
+            hollow_p.__hash__ = p.semantic_hash
+            state["_predicate_map"][hollow_p] = i
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)

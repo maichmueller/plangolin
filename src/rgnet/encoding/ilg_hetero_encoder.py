@@ -15,7 +15,12 @@ from torch_geometric.typing import EdgeType, NodeType
 from rgnet.logging_setup import get_logger
 from xmimir import XAtom, XDomain, XLiteral, XPredicate, atom_str_template
 
-from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
+from .base_encoder import (
+    EncoderFactory,
+    GraphEncoderBase,
+    GraphT,
+    check_encoded_by_this,
+)
 from .node_factory import Node, NodeFactory
 
 
@@ -85,6 +90,15 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             self.obj_type_id == other.obj_type_id
             and self.node_factory == other.node_factory
             and self.predicates == other.predicates
+        )
+
+    def as_factory(self) -> EncoderFactory:
+        return EncoderFactory(
+            encoder_class=self.__class__,
+            kwargs={
+                "node_factory": self.node_factory,
+                "obj_type_id": self.obj_type_id,
+            },
         )
 
     @staticmethod

@@ -13,6 +13,7 @@ from torch_geometric.typing import EdgeType, NodeType
 from rgnet.logging_setup import get_logger
 from xmimir import XAtom, XDomain, XLiteral, XPredicate, atom_str_template
 
+from . import EncoderFactory
 from .base_encoder import GraphEncoderBase, GraphT, check_encoded_by_this
 from .node_factory import Node, NodeFactory
 
@@ -63,6 +64,16 @@ class HeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
             and self.node_factory == other.node_factory
             and self.predicates == other.predicates
             and self.add_goal_satisfied_atoms == other.add_goal_satisfied_atoms
+        )
+
+    def as_factory(self) -> EncoderFactory:
+        return EncoderFactory(
+            encoder_class=self.__class__,
+            kwargs={
+                "node_factory": self.node_factory,
+                "obj_type_id": self.obj_type_id,
+                "add_goal_satisfied_atoms": self.add_goal_satisfied_atoms,
+            },
         )
 
     @staticmethod

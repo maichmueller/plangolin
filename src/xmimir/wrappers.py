@@ -196,6 +196,9 @@ class XPredicate(MimirWrapper[Predicate]):
             and self.category == other.category
         )
 
+    def semantic_hash(self):
+        return hash((self.category, self.name, self.arity))
+
 
 class XAtom(MimirWrapper[GroundAtom]):
     predicate: XPredicate
