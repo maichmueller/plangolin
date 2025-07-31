@@ -18,6 +18,12 @@ LOG_COLORS = {
     "CRITICAL": Fore.MAGENTA,
 }
 
+null_logger = logging.getLogger("null_logger")
+# make absolutely sure nothing ever propagates out
+null_logger.propagate = False
+# attach a NullHandler so that it never errors for “no handlers”
+null_logger.addHandler(logging.NullHandler())
+
 
 class SPDLOGFormatter(logging.Formatter):
     """

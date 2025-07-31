@@ -1,9 +1,36 @@
 import csv
 import datetime
 import itertools
+import logging
+import multiprocessing
+import queue
+import re
 import sys
+import threading
 import time
-from multiprocessing import Manager
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, List, Sequence
+
+import torch
+from lightning.pytorch.loggers import Logger, WandbLogger
+
+import xmimir
+from rgnet.encoding import EncoderFactory
+from rgnet.logging_setup import get_logger, null_logger, tqdm
+from rgnet.rl.data_layout import InputData, OutputData
+from rgnet.rl.reward import RewardFunction
+from rgnet.rl.search.agent_maker import AgentMaker
+from rgnet.rl.search.model_search import ModelSearch
+from rgnet.rl.thundeRL import ThundeRLCLI
+from rgnet.rl.thundeRL.policy_gradient.cli import TestSetup
+from rgnet.rl.thundeRL.utils import default_checkpoint_format, resolve_checkpoints
+from rgnet.utils.misc import DummyPbar, env_aware_cpu_count
+from rgnet.utils.plan import Plan, ProbabilisticPlan
+from rgnet.utils.system import exit_if_orphaned, increase_resource_limit
+from xmimir import ActionHistoryDataPack, XProblem
+
+logger = get_logger(__name__)
 
 # Global worker identifier for pool workers
 WORKER_ID: int | None = None
@@ -12,152 +39,22 @@ WORKER_ID: int | None = None
 def _init_worker(worker_id_queue):
     global WORKER_ID
     WORKER_ID = worker_id_queue.get()
+    threading.Thread(target=exit_if_orphaned, daemon=True).start()
 
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
-from typing import List, Sequence
-
-import torch
-from lightning.pytorch.loggers import Logger, WandbLogger
-
-import xmimir
-from rgnet.encoding import EncoderFactory
-from rgnet.logging_setup import get_logger
-from rgnet.rl.data_layout import InputData, OutputData
-from rgnet.rl.reward import RewardFunction
-from rgnet.rl.search.agent_maker import AgentMaker
-from rgnet.rl.search.model_search import ModelSearch
-from rgnet.rl.thundeRL import ThundeRLCLI
-from rgnet.rl.thundeRL.policy_gradient.cli import TestSetup
-from rgnet.rl.thundeRL.utils import default_checkpoint_format, resolve_checkpoints
-from rgnet.utils.misc import env_aware_cpu_count
-from rgnet.utils.plan import Plan, ProbabilisticPlan
-from xmimir import ActionHistoryDataPack, XProblem
-
-
-def eval_model(cli: ThundeRLCLI, num_workers: int = 0):
-    """
-    Run the learned agent of every test problem specified in the input_data.
-    The agent is run once on each problem until either max_steps are reached or a terminal state is encountered.
-    There is currently no GPU support as the memory transfer is often more significant as
-    the relatively small network forward passes.
-    The action can either be sampled from the probability distribution using ExplorationType.RANDOM
-    or the argmax is used (ExplorationType.MODE).
-    There is no cycle detection implemented.
-    Note that the terminated signal is only emitted after a transition from a goal state.
-    The output is saved as csv under the out directory of OutputData as results_{epoch}_{step}.csv
-    referencing the epoch and step form the loaded checkpoint.
-
-    :param cli: The CLI instance used to run the agent.
-    """
-    agent_maker: AgentMaker = cli.config_init.agent_maker
-    input_data: InputData = cli.config_init.data_layout.input_data
-    output_data: OutputData = cli.config_init.data_layout.output_data
-    test_setup: TestSetup = cli.config_init.test_setup
-    reward_function: RewardFunction = cli.config_init.reward
-    cli_logger: WandbLogger = cli.trainer.logger
-    encoder_factory: EncoderFactory = cli.config_init.encoder_factory
-
-    if not input_data.test_problems:
-        raise ValueError("No test instances provided")
-
-    checkpoints_paths, last_checkpoint = resolve_checkpoints(output_data)
-    assert isinstance(checkpoints_paths, List)
-    if len(checkpoints_paths) == 0:
-        get_logger(__name__).warning("Provided an empty list as checkpoint_paths")
-    assert all(
-        isinstance(ckpt, Path) and ckpt.is_file() and ckpt.suffix == ".ckpt"
-        for ckpt in checkpoints_paths
-    )
-
-    # Determine device from Lightning CLI trainer
-    try:
-        device = cli.trainer.strategy.root_device
-    except AttributeError:
-        # Fallback to CPU if strategy unavailable
-        device = torch.device("cpu")
-
-    agent_maker.device = device
-
-    model_search = ModelSearch(
-        test_setup,
-        reward_function=reward_function,
-        device=device,
-    )
-
-    # Prepare data for pickling once
-    max_workers = num_workers if num_workers > 0 else env_aware_cpu_count()
-    futures = []
-    test_results: dict[tuple[int, int], list[ProbabilisticPlan]] = dict()
-    metrics: dict[tuple[int, int], dict[str, float]] = dict()
-    if num_workers > 0:
-        manager = Manager()
-        worker_id_queue = manager.Queue()
-        for wid in range(1, max_workers + 1):
-            worker_id_queue.put(wid)
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=_init_worker,
-            initargs=(worker_id_queue,),
-        ) as pool:
-            agent_maker.encoder = None
-            optimal_plans = [
-                (
-                    ActionHistoryDataPack(t.action for t in plan.transitions)
-                    if (plan := input_data.plan_by_problem.get(prob)) is not None
-                    else None
-                )
-                for prob in input_data.test_problems
-            ]
-
-            for ckpt in checkpoints_paths:
-                futures.append(
-                    pool.submit(
-                        _evaluate_checkpoint,
-                        ckpt,
-                        model_search,
-                        agent_maker,
-                        encoder_factory=encoder_factory,
-                        domain_path=Path(input_data.domain.filepath),
-                        problem_paths=[
-                            Path(prob.filepath) for prob in input_data.test_problems
-                        ],
-                        optimal_plans=optimal_plans,
-                        test_setup=test_setup,
-                        detailed=cli.config_init.detailed,
-                    )
-                )
-
-            # collect as they finish
-            for fut in as_completed(futures):
-                checkpoint_path, ckpt_results, epoch, step = fut.result()
-                test_results[(epoch, step)] = ckpt_results
-                metrics[(epoch, step)] = process_result(
-                    checkpoint_path, ckpt_results, epoch, step, cli_logger, output_data
-                )
-    else:
-        # If no workers are specified, run in the main process
-        for checkpoint_path in checkpoints_paths:
-            _, ckpt_results, epoch, step = _evaluate_checkpoint(
-                checkpoint_path,
-                model_search,
-                agent_maker,
-                test_setup=test_setup,
-                test_instances=input_data.test_problems,
-                detailed=cli.config_init.detailed,
-                optimal_plans=[
-                    input_data.plan_by_problem.get(prob)
-                    for prob in input_data.test_problems
-                ],
-            )
-            test_results[(epoch, step)] = ckpt_results
-            metrics[(epoch, step)] = process_result(
-                checkpoint_path, ckpt_results, epoch, step, cli_logger, output_data
-            )
-
-    if isinstance(cli_logger, WandbLogger) and cli_logger.experiment is not None:
-        cli_logger.finalize(status="success")
+def _listen_updates(q, bar):
+    while True:
+        try:
+            elem = q.get(timeout=0.0)
+            if isinstance(elem, tuple) and len(elem) == 3:
+                epoch, step, prob_name = elem
+                bar.update(1)
+                bar.set_description(f"epoch={epoch} step={step} problem={prob_name}")
+            elif isinstance(elem, StopIteration):
+                bar.close()
+                return
+        except queue.Empty:
+            pass
 
 
 def process_result(
@@ -165,13 +62,15 @@ def process_result(
     ckpt_results: list[ProbabilisticPlan],
     epoch: int,
     step: int,
-    cli_logger: Logger,
     output_data: OutputData,
+    cli_logger: Logger,
+    logger_local: logging.Logger,
 ):
-    logger = get_logger(__name__)
-    logger.info(f"Finished checkpoint {checkpoint_path} (epoch={epoch}, step={step})")
+    logger_local.info(
+        f"Finished checkpoint {checkpoint_path} (epoch={epoch}, step={step})"
+    )
     solved = sum(p.solved for p in ckpt_results)
-    logger.info(f"Solved {solved} out of {len(ckpt_results)}")
+    logger_local.info(f"Solved {solved} out of {len(ckpt_results)}")
     # Persist & (optionally) log each checkpoint's results immediately
     results_name = f"results_epoch={epoch}-step={step}"
     results_file = output_data.out_dir / (results_name + ".csv")
@@ -185,7 +84,7 @@ def process_result(
         )
         writer.writeheader()
         writer.writerows(plan_results_as_dict)
-    logger.info("Saved results to " + str(results_file))
+    logger_local.info("Saved results to " + str(results_file))
 
     solved_ckpt = sum(p.solved for p in ckpt_results)
     if not any(plan_result.optimal_transitions for plan_result in ckpt_results):
@@ -209,7 +108,7 @@ def process_result(
         "average subgoals": sum(plan_result.subgoals for plan_result in ckpt_results)
         / len(ckpt_results),
     }
-    logger.info(
+    logger_local.info(
         f"Metrics for checkpoint {checkpoint_path} (epoch={epoch}, step={step}):\n"
         + "\n".join(f"{k}: {v}" for k, v in metrics.items())
     )
@@ -234,12 +133,14 @@ def _evaluate_checkpoint(
     model_search: ModelSearch,
     agent_maker: AgentMaker,
     test_setup: TestSetup,
-    detailed: bool,
+    detail_level: int = 0,
     encoder_factory: EncoderFactory | None = None,
     test_instances: Sequence[XProblem] | None = None,
     domain_path: Path | None = None,
     problem_paths: Sequence[Path] | None = None,
     optimal_plans: Sequence[Plan | ActionHistoryDataPack] | None = None,
+    update_queue: multiprocessing.queues.Queue | None = None,
+    stop_flag: Any | None = None,
 ) -> tuple[Path, List[ProbabilisticPlan], int, int]:
     """
     Runs the rollout & analysis for every test problem for a single checkpoint.
@@ -248,7 +149,11 @@ def _evaluate_checkpoint(
     """
     epoch, step = default_checkpoint_format(checkpoint_path.name)
     worker_id = WORKER_ID if WORKER_ID is not None else 0
-    logger_local = get_logger(f"{__name__}.Worker({worker_id})")
+    if detail_level == 0:
+        logger_local = null_logger
+    else:
+        logger_local = get_logger(f"{__name__}.Worker({worker_id})")
+
     logger_local.info(f"Using checkpoint with epoch={epoch}, step={step}")
 
     test_instances = test_instances or []
@@ -272,6 +177,9 @@ def _evaluate_checkpoint(
     for test_problem, optimal_plan in zip(
         test_instances, optimal_plans or itertools.repeat(None)
     ):
+        # check for external stop signal
+        if getattr(stop_flag, "value", False):
+            raise Exception("Stop flag set, exiting worker")
         logger_local.info(
             f"Running rollout (max steps {test_setup.max_steps}) for problem {test_problem.name, test_problem.filepath}."
         )
@@ -305,18 +213,221 @@ def _evaluate_checkpoint(
             rollout,
             optimal_plan=optimal_plan,
         )
-        logger_local.info(f"Analyzed Results:\n{analyzed_data.str(detailed=detailed)}:")
+        logger_local.info(
+            f"Analyzed Results:\n{analyzed_data.str(detailed=(detail_level == 2))}:"
+        )
         local_results.append(analyzed_data)
+
+        if update_queue is not None:
+            pass
+            update_queue.put((epoch, step, test_problem.name), timeout=5)
     return checkpoint_path, local_results, epoch, step
+
+
+def eval_model(
+    cli: ThundeRLCLI,
+    num_workers: int = 0,
+    progress_bar: bool = True,
+    detail_level: int = 0,
+    ckpt_filter: Sequence[str] | None = None,
+):
+    """
+    Run the learned agent of every test problem specified in the input_data.
+    The agent is run once on each problem until either max_steps are reached or a terminal state is encountered.
+    There is currently no GPU support as the memory transfer is often more significant as
+    the relatively small network forward passes.
+    The action can either be sampled from the probability distribution using ExplorationType.RANDOM
+    or the argmax is used (ExplorationType.MODE).
+    There is no cycle detection implemented.
+    Note that the terminated signal is only emitted after a transition from a goal state.
+    The output is saved as csv under the out directory of OutputData as results_{epoch}_{step}.csv
+    referencing the epoch and step form the loaded checkpoint.
+
+    :param cli: The CLI instance used to run the agent.
+    :param num_workers: Number of workers to use for parallel evaluation. If 0, runs in the main process.
+    :param progress_bar: Whether to show a progress bar during evaluation.
+    :param detail_level: Detail level for logging: 0 for minimal, 1 for basic, 2 for detailed output.
+    :param ckpt_filter: Optional list of regex filters to apply to the checkpoints.
+    """
+    agent_maker: AgentMaker = cli.config_init.agent_maker
+    input_data: InputData = cli.config_init.data_layout.input_data
+    output_data: OutputData = cli.config_init.data_layout.output_data
+    test_setup: TestSetup = cli.config_init.test_setup
+    reward_function: RewardFunction = cli.config_init.reward
+    cli_logger: WandbLogger = cli.trainer.logger
+    encoder_factory: EncoderFactory = cli.config_init.encoder_factory
+
+    if detail_level == 0:
+        logger_local = null_logger
+    else:
+        logger_local = logger
+    if not input_data.test_problems:
+        raise ValueError("No test instances provided")
+
+    checkpoints_paths, last_checkpoint = resolve_checkpoints(output_data)
+    assert isinstance(checkpoints_paths, List)
+    if len(checkpoints_paths) == 0:
+        logger.warning("Provided an empty list as checkpoint_paths")
+    assert all(
+        isinstance(ckpt, Path) and ckpt.is_file() and ckpt.suffix == ".ckpt"
+        for ckpt in checkpoints_paths
+    )
+
+    if ckpt_filter:
+        # Filter checkpoints based on the provided regex patterns
+        filtered_checkpoints = []
+        for ckpt in checkpoints_paths:
+            if any(re.search(pattern, ckpt.name) for pattern in ckpt_filter):
+                filtered_checkpoints.append(ckpt)
+        checkpoints_paths = filtered_checkpoints
+
+    # Determine device from Lightning CLI trainer
+    try:
+        device = cli.trainer.strategy.root_device
+    except AttributeError:
+        # Fallback to CPU if strategy unavailable
+        device = torch.device("cpu")
+
+    agent_maker.device = device
+
+    model_search = ModelSearch(
+        test_setup,
+        reward_function=reward_function,
+        device=device,
+    )
+
+    # Prepare data for pickling once
+    max_workers = num_workers if num_workers > 0 else env_aware_cpu_count()
+    futures = []
+    test_results: dict[tuple[int, int], list[ProbabilisticPlan]] = dict()
+    metrics: dict[tuple[int, int], dict[str, float]] = dict()
+    total_problems = len(input_data.test_problems) * len(checkpoints_paths)
+    pbar = tqdm if progress_bar else DummyPbar
+    pbar = pbar(
+        range(total_problems),
+        desc="Evaluating checkpoints",
+        unit="problem",
+        logger=logger,
+    )
+    if num_workers > 0:
+        # shared stop flag for workers
+        manager = multiprocessing.Manager()
+        stop_flag = manager.Value("b", False)
+        wid_queue = manager.Queue()  # Queue to communicate 1st the worker ids on init
+        update_queue = manager.Queue()  # Queue for pbar updates to the main thread
+        for wid in range(1, max_workers + 1):
+            wid_queue.put(wid)
+
+        # start listener thread to drain update_queue
+        listener = threading.Thread(
+            target=_listen_updates, args=(update_queue, pbar), daemon=True
+        )
+        listener.start()
+        try:
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=_init_worker,
+                initargs=(wid_queue,),
+            ) as pool:
+                agent_maker.encoder = None
+                optimal_plans = [
+                    (
+                        ActionHistoryDataPack(t.action for t in plan.transitions)
+                        if (plan := input_data.plan_by_problem.get(prob)) is not None
+                        else None
+                    )
+                    for prob in input_data.test_problems
+                ]
+
+                for ckpt in checkpoints_paths:
+                    futures.append(
+                        pool.submit(
+                            _evaluate_checkpoint,
+                            ckpt,
+                            model_search,
+                            agent_maker,
+                            encoder_factory=encoder_factory,
+                            domain_path=Path(input_data.domain.filepath),
+                            problem_paths=[
+                                Path(prob.filepath) for prob in input_data.test_problems
+                            ],
+                            optimal_plans=optimal_plans,
+                            test_setup=test_setup,
+                            detail_level=detail_level,
+                            update_queue=update_queue,
+                            stop_flag=stop_flag,
+                        )
+                    )
+
+                # collect as they finish
+                for fut in as_completed(futures):
+                    checkpoint_path, ckpt_results, epoch, step = fut.result()
+                    test_results[(epoch, step)] = ckpt_results
+                    metrics[(epoch, step)] = process_result(
+                        checkpoint_path,
+                        ckpt_results,
+                        epoch,
+                        step,
+                        output_data,
+                        cli_logger,
+                        logger_local,
+                    )
+        except KeyboardInterrupt:
+            logger.warning("Evaluation interrupted by user, stopping workers.")
+            stop_flag.value = True
+            for fut in futures:
+                fut.cancel()
+            sys.exit(1)
+    else:
+        # If no workers are specified, run in the main process
+        for checkpoint_path in checkpoints_paths:
+            _, ckpt_results, epoch, step = _evaluate_checkpoint(
+                checkpoint_path,
+                model_search,
+                agent_maker,
+                test_setup=test_setup,
+                test_instances=input_data.test_problems,
+                detail_level=detail_level,
+                optimal_plans=[
+                    input_data.plan_by_problem.get(prob)
+                    for prob in input_data.test_problems
+                ],
+                update_queue=None,
+            )
+            test_results[(epoch, step)] = ckpt_results
+            metrics[(epoch, step)] = process_result(
+                checkpoint_path,
+                ckpt_results,
+                epoch,
+                step,
+                output_data,
+                cli_logger,
+                logger_local,
+            )
+
+    logger.info(
+        "Metrics for all checkpoints:\n"
+        + "\n".join(
+            f"Checkpoint (epoch={epoch}, step={step}): "
+            + ", ".join(f"{k}: {v}" for k, v in m.items())
+            for (epoch, step), m in sorted(
+                metrics.items(), key=lambda x: (x[0][0], x[0][1])
+            )
+        )
+    )
+
+    if isinstance(cli_logger, WandbLogger) and cli_logger.experiment is not None:
+        cli_logger.finalize(status="success")
 
 
 if __name__ == "__main__":
     # torch.multiprocessing.set_sharing_strategy("file_system")
-
+    # multiprocessing.set_start_method("fork", force=True)
     import argparse
 
     from jsonargparse._util import import_object
 
+    increase_resource_limit()
     # --- Step 1: Pre-parse to extract --cli ---
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument(
@@ -327,6 +438,27 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Number of workers to use for parallel evaluation. If 0, runs in the main process.",
+    )
+    pre_parser.add_argument(
+        "--progress_bar",
+        action="store_true",
+        help="Whether to show a progress bar during evaluation.",
+    )
+    pre_parser.add_argument(
+        "--detail_level",
+        type=int,
+        default=0,
+        help="Detail level for logging: 0 for minimal, 1 for basic, 2 for detailed output.",
+    )
+
+    def comma_list(s: str) -> list[str]:
+        return [tok for tok in s.split(",") if tok]
+
+    pre_parser.add_argument(
+        "--ckpt_filter",
+        type=comma_list,
+        default=[],
+        help="Comma-separated regex filters, e.g. '--cktp_filter=epoch=5,epoch=10'",
     )
     known_args, remaining_args = pre_parser.parse_known_args()
 
@@ -348,7 +480,14 @@ if __name__ == "__main__":
     )
     cli_name = known_args.cli
     cli = import_object(cli_name)(run=False)
-    eval_model(
-        cli=cli,
-        num_workers=known_args.num_workers,
-    )
+    try:
+        eval_model(
+            cli=cli,
+            num_workers=known_args.num_workers,
+            progress_bar=known_args.progress_bar,
+            detail_level=known_args.detail_level,
+            ckpt_filter=known_args.ckpt_filter,
+        )
+    except KeyboardInterrupt:
+        logger.warning("Evaluation interrupted by user.")
+        sys.exit(1)
