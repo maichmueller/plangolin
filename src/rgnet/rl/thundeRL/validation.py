@@ -13,7 +13,7 @@ from torch import Tensor
 from torchrl.modules import ValueOperator
 
 from rgnet.algorithms import PolicyEvaluationMP
-from rgnet.logging_setup import get_logger, tqdm
+from rgnet.logging_setup import tqdm
 from rgnet.models.patched_module_dict import PatchedModuleDict
 from rgnet.rl.agents import ActorCritic
 from rgnet.rl.data import BaseDrive
@@ -648,8 +648,11 @@ class PolicyEvaluationValidation(ValidationCallback):
         )
         self._graphs: Dict[int, pyg.data.Data] = dict()
         self.message_passing: Dict[int, PolicyEvaluationMP] = dict()
-        get_logger(__name__).info("Building state space graphs for validation problem.")
-        for idx, env in tqdm(enumerate(envs), total=len(envs)):
+        for idx, env in tqdm(
+            enumerate(envs),
+            total=len(envs),
+            desc="Building state space graphs for validation problems",
+        ):
             if self.skip_dataloader(idx):
                 continue
 

@@ -8,7 +8,6 @@ from typing import Generic, Iterable, List, Optional, Sequence, Tuple, Type, Typ
 import torch
 from tensordict import NestedKey, TensorDict, TensorDictBase
 from tensordict.base import CompatibleType
-from torch.nn import Parameter
 from torchrl.data import Bounded, Categorical, Composite, NonTensor
 from torchrl.envs import EnvBase
 
@@ -61,13 +60,6 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
     """
 
     batch_locked: bool = True
-    # Default rewards
-    # The reward precedence is default reward < dead end reward < goal reward.
-    # In order to avoid unnecessary dead-end trajectories we give a custom reward
-    # instead which should be equal to an infinite trajectory.
-    default_dead_end_reward: float = -10.0  # this should be set to 1 / (1 - gamma)
-    default_goal_reward: float = 0.0
-    default_reward: float = -1.0
 
     @dataclasses.dataclass(frozen=True)
     class AcceptedKeys:
@@ -112,17 +104,6 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         # We iterate over all instances with a cyclic iterator.
         self._instance_replacement_strategy = RoundRobinReplacement(all_instances)
 
-        # We return the unit cost of one (reward=-1) for every action.
-        # We use Parameter such that device changes will move this tensor too.
-        self._default_reward_tensor = Parameter(
-            torch.full(
-                size=self.batch_size,
-                fill_value=self.default_reward,
-                dtype=torch.float,
-                device=self.device,
-            ),
-            requires_grad=False,
-        )
         self.reward_function = reward_function
         self._make_spec()
         if reset:

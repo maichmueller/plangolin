@@ -351,8 +351,6 @@ class PolicyGradientEvalCLI(PolicyGradientCLI):
             "embedding_module",
             as_positional=False,
         )
-        parser.add_argument("--ckpt_path", type=Optional[Path], default=None)
-        parser.add_argument("--detailed", type=bool, default=False)
         parser.link_arguments(
             "data_layout.output_data",
             "trainer.logger.init_args.id",

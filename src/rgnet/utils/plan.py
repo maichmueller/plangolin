@@ -174,6 +174,11 @@ class ProbabilisticPlan:
         state = self.__dict__.copy()
         state["problem"] = (domain_path, problem_path)
         state["transitions"] = transitions
+        state["optimal_transitions"] = (
+            ActionHistoryDataPack(t.action for t in self.optimal_transitions)
+            if self.optimal_transitions is not None
+            else None
+        )
         state["cycles"] = cycles
         return state
 
@@ -185,6 +190,9 @@ class ProbabilisticPlan:
         state["cycles"] = [
             cycle.reconstruct_sequence(succ_gen) for cycle in state["cycles"]
         ]
+        state["optimal_transitions"] = state[
+            "optimal_transitions"
+        ].reconstruct_sequence(succ_gen)
         self.__dict__.update(state)
 
 

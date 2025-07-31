@@ -200,23 +200,22 @@ class InferenceProcessWorker(contextlib.AbstractContextManager):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        # 1) Prevent new submissions
+        # Prevent new submissions
         self._active = False
-        # 2) Signal shutdown
+        # Signal shutdown
         self.in_q.put(SentinelType())
-        # 3) Drain remaining outputs if you care
-        #    (optional—here we just join then close)
+        # Drain remaining outputs
         self._proc.join(timeout=self.join_timeout)
         if self._proc.is_alive():
             self._proc.terminate()
             self._proc.join()
 
-        # 4) Clean up queues
+        # Clean up queues
         for q in (self.in_q, self.out_q):
             q.cancel_join_thread()
             q.close()
 
-        return False  # don’t swallow errors
+        return False
 
     @active_check
     def submit(
