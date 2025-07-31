@@ -2,6 +2,7 @@
 import torch._dynamo
 
 from rgnet.logging_setup import get_logger
+from rgnet.utils.misc import increase_resource_limit
 
 torch._dynamo.config.suppress_errors = True  # keep runtime errors from killing compile
 
@@ -20,20 +21,6 @@ CLI_REGISTRY = {
     "atom_values": AtomValuesCLI,
     "supervised_value": ValueLearningCLI,
 }
-
-
-def increase_resource_limit():
-    import resource
-
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    if soft != hard:
-        new_soft = hard
-        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
-        get_logger(__name__).info(
-            f"Changing resource limits to: [{soft = } --> {new_soft = }, {hard = }]"
-        )
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    get_logger(__name__).info(f"Resource limits: [{soft = }, {hard = }]")
 
 
 def cli_main():
@@ -56,7 +43,7 @@ def cli_main():
     import torch
 
     CLI_CLASS = CLI_REGISTRY[cli_name]
-    torch.set_float32_matmul_precision("medium")
+    # torch.set_float32_matmul_precision("highest")
     # use the default file descriptor–based sharing to avoid mmap exhaustion
     torch.multiprocessing.set_sharing_strategy("file_descriptor")
     # torch.multiprocessing.set_sharing_strategy("file_system")

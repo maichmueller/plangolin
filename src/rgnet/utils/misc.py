@@ -295,3 +295,23 @@ class ProbabilisticBuffer:
 
     def __repr__(self):
         return f"{self.__class__.__name__}(capacity={self.capacity}, buffer={list(self._buffer)})"
+
+
+class DummyPbar:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def update(self, *args, **kwargs):
+        pass
+
+    def set_description(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
