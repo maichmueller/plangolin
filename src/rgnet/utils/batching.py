@@ -151,3 +151,32 @@ class SeparatingSequentialBatchSampler(torch.utils.data.BatchSampler):
 
     def __len__(self):
         return sum(map(len, self.batch_samplers))
+
+
+def expand_sequence(
+    batch_size: Sequence[int],
+    time_size: int,
+    data: Sequence,
+) -> list:
+    """
+    Expands a flat data sequence into a nested list of shape specified by `batch_size` such that
+    the last dimension selects from `data` and each selected element is repeated `time_size` times.
+
+    If batch_size is (B1, B2, ..., Bn), then the output is a nested list where
+    ``out[b1][b2]...[bn] == [data[bn]] * time_size`` for each valid index.  The earlier dimensions
+    only control the nesting depth and duplication of the deeper structure.
+    """
+    return _expand_sequence(batch_size, time_size, data, dim=0)
+
+
+def _expand_sequence(batch_size, time_size, data, dim):
+    size = batch_size[dim]
+    if dim != len(batch_size) - 1:
+        # If we are not at the last dimension, we need to recurse
+        return [
+            _expand_sequence(batch_size, time_size, data, dim=dim + 1)
+            for _ in range(size)
+        ]
+    else:
+        # If we are at the last dimension, we can directly create the relabelling instances
+        return [[data[b]] * time_size for b in range(size)]
