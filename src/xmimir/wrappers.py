@@ -19,6 +19,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 from jinja2 import Template
 from multimethod import multimethod
 from pymimir import *
@@ -492,8 +493,10 @@ class CustomProblem(XProblem):
     ):
         super().__init__(problem.base, problem.repositories)
         self._goal = goal or super().goal()
-        self._initial = initial or tuple(super().initial_atoms())
-        self._name = name or (super().name + "_custom")
+        self._initial = initial or tuple(super().initial_literals())
+        self._name = (
+            name or f"{super().name}_custom_{np.random.default_rng().integers(1000000)}"
+        )
         self._filepath = filepath or (
             Path(tempfile.gettempdir())
             / (
