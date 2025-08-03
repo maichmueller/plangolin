@@ -89,11 +89,17 @@ def test_dead_end_transition(small_blocks, batch_size, is_dead_end, is_goal):
             ]
 
     reward: torch.Tensor = td[("next", env.keys.reward)]
-
+    reward_function: UnitReward = env.reward_function
     if is_goal:
-        expected_reward = torch.full_like(reward, fill_value=env.default_goal_reward)
+        expected_reward = torch.full_like(
+            reward, fill_value=reward_function.goal_reward
+        )
     elif is_dead_end:
-        expected_reward = torch.full_like(reward, fill_value=custom_dead_end_reward)
+        expected_reward = torch.full_like(
+            reward, fill_value=reward_function.deadend_reward
+        )
     else:
-        expected_reward = torch.full_like(reward, fill_value=env.default_reward)
+        expected_reward = torch.full_like(
+            reward, fill_value=reward_function.regular_reward
+        )
     assert torch.allclose(reward, expected_reward, atol=0.01)
