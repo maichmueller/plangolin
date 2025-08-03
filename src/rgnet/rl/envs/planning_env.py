@@ -305,9 +305,17 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
             all_done.append(done)
         return (
             torch.nested.nested_tensor(
-                all_rewards, dtype=torch.float, device=self.device
+                all_rewards,
+                dtype=torch.float,
+                device=self.device,
+                layout=torch.jagged,
             ),
-            torch.nested.nested_tensor(all_done, dtype=torch.bool, device=self.device),
+            torch.nested.nested_tensor(
+                all_done,
+                dtype=torch.bool,
+                device=self.device,
+                layout=torch.jagged,
+            ),
         )
 
     def get_applicable_transitions(
