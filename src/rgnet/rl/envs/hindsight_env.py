@@ -11,7 +11,7 @@ import xmimir as xmi
 from rgnet.utils.batching import expand_sequence
 from rgnet.utils.data import map_dim, nested_to_array
 from xmimir import XLiteral
-from xmimir.wrappers import CustomProblem, XAtom
+from xmimir.wrappers import CustomProblem
 
 from .successor_env import SuccessorEnvironment
 
@@ -23,7 +23,7 @@ class HindsightStrategy:
     """
 
     @abstractmethod
-    def __call__(self, state: xmi.XState) -> tuple[XLiteral]:
+    def __call__(self, state: xmi.XState) -> tuple[XLiteral, ...]:
         """
         Returns a list of hindsight goals for the given state.
         :param state: The current state.
@@ -32,10 +32,12 @@ class HindsightStrategy:
         ...
 
 
-class RandomSubgoalHindsightStrategy(HindsightStrategy):
+class RandomizedPropositionalHindsightStrategy(HindsightStrategy):
     """
-    A simple strategy that randomly selects a goal from the state.
-    This is a placeholder and should be replaced with a more sophisticated strategy.
+    A simple strategy that selects the largest number of satisfied goals from a state.
+
+    Includes randomization strategies to select a random fluent or derived atom from the state as a goal
+    with a certain probability. Also allows for a maximum number of conjunctions to be selected from the state.
     """
 
     def __init__(
@@ -58,20 +60,27 @@ class RandomSubgoalHindsightStrategy(HindsightStrategy):
         if self.seed is not None:
             self.rng = np.random.default_rng(self.seed)
 
-    def __call__(self, state: xmi.XState) -> tuple[XLiteral]:
+    def __call__(self, state: xmi.XState) -> tuple[XLiteral, ...]:
         """
-        Returns a random subset of goals from the state.
+        Returns hindsight goals from the state.
         :param state: The current state.
-        :return: A list containing a random subset of goal literals.
+        :return: A list containing a subset of goal literals.
         """
         satisfied_goals = tuple(state.satisfied_literals(state.problem.goal()))
         if self.rng.random() < self.random_goal_chance:
             # Select a random fluent or derived atom from the state
             atoms = tuple(state.atoms(with_statics=False))
-            random_goal: XAtom = atoms[
-                int(self.rng.choice(np.arange(0, len(atoms)), size=1, replace=False))
-            ]
-            return (XLiteral.make_hollow(atom=random_goal, negated=False),)
+            nr_atoms = len(atoms)
+            atom_indices = self.rng.choice(
+                np.arange(0, nr_atoms - 1),
+                size=self.rng.integers(
+                    1, min(self.max_conjunction, nr_atoms), endpoint=True
+                ),
+                replace=False,
+            )
+            return tuple(
+                XLiteral.make_hollow(atom=atoms[i], negated=False) for i in atom_indices
+            )
         else:
             if not satisfied_goals:
                 return state.problem.goal()

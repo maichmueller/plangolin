@@ -13,7 +13,7 @@ from .hindsight_env import (
     HERReplayBuffer,
     HindsightEnvironment,
     HindsightStrategy,
-    RandomSubgoalHindsightStrategy,
+    RandomizedPropositionalHindsightStrategy,
 )
 from .planning_env import (
     InstanceReplacementStrategy,
