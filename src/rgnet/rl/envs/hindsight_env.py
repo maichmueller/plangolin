@@ -1,7 +1,10 @@
+import itertools
 from abc import abstractmethod
 from copy import copy
-from typing import Sequence
+from functools import reduce
+from typing import Generator, Sequence
 
+import networkx as nx
 import numpy as np
 import torch
 from tensordict import TensorDict, TensorDictBase
@@ -93,6 +96,117 @@ class RandomizedPropositionalHindsightStrategy(HindsightStrategy):
                 satisfied_goals, size=nr_goals, replace=False
             )
             return tuple(selected)
+
+
+class LiftedGoalHindsightStrategy(HindsightStrategy):
+    def __init__(
+        self,
+        nr_lifted_goals: int,
+        max_subgraph_size: int,
+        seed: int = None,
+        *,
+        eq_predicate_name: str | None = None,
+    ):
+        """
+        Initializes the lifted goal hindsight strategy.
+
+        :param nr_lifted_goals: Number of lifted goals (excluding equality literals) to select from the state.
+        :param max_subgraph_size: Max size of connected component preserving sub-graphs to generate
+            for each connected component C_i.
+        :param seed: Optional seed for reproducibility.
+        """
+        self.nr_lifted_goals = nr_lifted_goals
+        self.max_subgraph_size = max_subgraph_size
+        self.eq_predicate_name = eq_predicate_name
+        self.seed = seed
+        if self.seed is not None:
+            self.rng = np.random.default_rng(self.seed)
+
+    def __call__(self, state: xmi.XState) -> tuple[XLiteral, ...]:
+        dep_graph = self.make_goal_dependency_graph(state)
+        connected_comp_graphs = [
+            dep_graph.subgraph(c).copy() for c in nx.connected_components(dep_graph)
+        ]
+
+        for subgraph_combination in itertools.product(
+            *map(self.connectedness_preserving_subgraphs_iter, connected_comp_graphs)
+        ):
+            if any(
+                len(subg) >= self.max_subgraph_size for subg in subgraph_combination
+            ):
+                continue
+            subgraph = reduce(nx.compose, subgraph_combination)
+            grounded_subgraph = self.ground_graph(subgraph, state)
+        return grounded_subgraph
+
+    def make_goal_dependency_graph(self, state: xmi.XState) -> nx.Graph:
+        """
+        Creates a dependency graph of the goals in the state.
+        """
+        eq_goals = []
+        non_eq_goals = []
+        if self.eq_predicate_name is not None:
+            for lit in state.problem.goal():
+                if lit.predicate.name == self.eq_predicate_name:
+                    eq_goals.append(lit)
+                else:
+                    non_eq_goals.append(lit)
+        else:
+            # If no eq predicate is specified, treat all goals as non-eq
+            non_eq_goals = list(state.problem.goal())
+        goals_selected = self.rng.choice(
+            non_eq_goals,
+            size=min(self.nr_lifted_goals, len(non_eq_goals)),
+            replace=False,
+        ).tolist()
+
+        objects_per_atom = [
+            set(o.get_name() for o in literal.atom.objects)
+            for literal in goals_selected
+        ]
+        edges = []
+        # Add edges between atoms based on shared objects
+        for i, objs1 in enumerate(objects_per_atom):
+            for j, objs2 in enumerate(objects_per_atom[i + 1 :], start=i + 1):
+                # Find common objects between the two atoms
+                common_objs = objs1 & objs2
+                if common_objs:
+                    edges.append((i, j, common_objs))
+        lifted_goals = self._lift_goals(goals_selected, edges)
+        graph = nx.Graph()
+        graph.add_nodes_from(lifted_goals)
+        graph.add_edges_from(
+            (lifted_goals[u], lifted_goals[v], {"objects": objs})
+            for u, v, objs in edges
+        )
+        return graph
+
+    def connectedness_preserving_subgraphs_iter(
+        self, graph: nx.Graph
+    ) -> Generator[nx.Graph, None, None]:
+        """
+        Generates lazily subgraphs of the given graph that do not increase the number of connected components.
+        """
+        edges = list(graph.edges())
+        nr_edges = len(edges)
+
+        def helper(G: nx.Graph, edge_idx: int):
+            if edge_idx == nr_edges:
+                yield G.copy()
+                return
+
+            u, v = edges[edge_idx]
+            # Always option: keep the edge
+            yield from helper(G, edge_idx + 1)
+
+            # Optionally remove it if it's not a bridge in the current graph
+            bridges = set(nx.bridges(G))
+            if (u, v) not in bridges and (v, u) not in bridges:
+                G.remove_edge(u, v)
+                yield from helper(G, edge_idx + 1)
+                G.add_edge(u, v)  # backtrack
+
+        yield from helper(graph.copy(), 0)
 
 
 class HindsightEnvironment(SuccessorEnvironment):
