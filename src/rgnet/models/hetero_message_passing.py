@@ -18,6 +18,7 @@ from rgnet.logging_setup import get_logger
 from rgnet.models.logsumexp_aggr import LogSumExpAggregation
 from rgnet.models.mixins import DeviceAwareMixin
 from rgnet.models.patched_module_dict import PatchedModuleDict
+from rgnet.utils.misc import stream_context
 
 
 class HeteroRouting(torch.nn.Module):
@@ -169,7 +170,7 @@ class FanOutMP(DeviceAwareMixin, HeteroRouting):
             sorted_out = sorted(value, key=operator.itemgetter(0))
             stacked = torch.cat(tuple(out for _, out in sorted_out), dim=1)
             update_module = self.update_modules[predicate]
-            with torch.cuda.stream(self.next_stream()):
+            with stream_context(self.next_stream()):
                 grouped[predicate] = update_module(stacked)
         self._sync_streams()
         return grouped
@@ -196,7 +197,7 @@ class ConditionalFanOutMP(FanOutMP):
                 tuple(itertools.chain((out for _, out in sorted_out), condition)), dim=1
             )
             update_module = self.update_modules[predicate]
-            with torch.cuda.stream(self.next_stream()):
+            with stream_context(self.next_stream()):
                 grouped[predicate] = update_module(stacked)
         self._sync_streams()
         return grouped

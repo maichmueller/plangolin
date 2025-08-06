@@ -8,7 +8,12 @@ from torch_geometric.data import Batch
 from torch_geometric.nn.resolver import activation_resolver
 
 from rgnet.utils.batching import batched_permutations
-from rgnet.utils.misc import KeyAwareDefaultDict, num_nodes_per_entry, tolist
+from rgnet.utils.misc import (
+    KeyAwareDefaultDict,
+    num_nodes_per_entry,
+    stream_context,
+    tolist,
+)
 from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import XAtom, atom_str_template
 
@@ -261,7 +266,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         provide_output_metadata: bool = False,
     ):
         mlp = self.valuator_by_predicate[predicate]
-        with torch.cuda.stream(self.stream_for(predicate)):
+        with stream_context(self.stream_for(predicate)):
             predicate_out = mlp(batched_permuted_embeddings)
         if provide_output_metadata:
             output_info = [

@@ -3,6 +3,7 @@ import os
 import shelve
 import shutil
 from abc import abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Type, Union
@@ -127,66 +128,53 @@ class BaseDrive(InMemoryDataset):
         )
         self.load(self.processed_paths[0])
 
-    def try_open_metabase(self, flag=None) -> bool:
+    def try_open_metabase(self, flag="c") -> bool:
         """
-        Attempts to open the metabase. Returns True if successful, False otherwise.
-        This is useful for checking if the metabase is accessible before performing operations.
+        Close any existing shelf, then open a fresh one with the given flag.
         """
-        try:
-            if not os.path.exists(self.metabase_path):
-                raise FileNotFoundError(
-                    f"Metabase at {self.metabase_path} does not exist."
-                )
-            self.metabase = shelve.open(str(self.metabase_path), flag=flag or "r")
-            is_empty = len(self.metabase) == 0
-            if is_empty:
-                logger.warning(
-                    f"Metabase at {self.metabase_path} is empty. "
-                    "This indicates a corrupted database. Deleting it and reopening with flag 'c'."
-                )
+        # Close previous shelf if open
+        if self.metabase is not None:
+            try:
                 self.metabase.close()
-                os.remove(self.metabase_path)
-                return self.try_open_metabase()
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                pass
+        try:
+            self.metabase = shelve.open(str(self.metabase_path), flag=flag)
             return True
-        except FileNotFoundError:
-            self.metabase = shelve.open(str(self.metabase_path), flag="c")
-            return True
-        except PermissionError:
-            logger.error(
-                f"Permission denied when trying to open metabase at {self.metabase_path}."
-            )
-            return False
-        except OSError as e:
-            logger.error(
-                f"OS error when trying to open metabase at {self.metabase_path}: {e}"
-            )
-            return False
-        except KeyboardInterrupt as e:
-            logger.warning("Interrupted while trying to open metabase.")
-            raise e
-        except Exception as e:
-            logger.error(f"Failed to open metabase at {self.metabase_path}: {e}")
-            return False
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            try:
+                self.metabase = shelve.open(str(self.metabase_path), flag="c")
+                return True
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                get_logger(__name__).error(
+                    f"Failed to open metabase at {self.metabase_path}: {e}"
+                )
+                return False
 
     def try_get_data(self, key: str) -> Any | dict[str, Any] | None:
         r"""Attempts to retrieve metadata from the metabase."""
-        try:
-            if key in self._data_cache:
-                # if we have already loaded this key, return the cached value
-                return self._data_cache[key]
-            self.try_open_metabase()
-            data = self.metabase[key]
-            self.metabase.close()
-            self._data_cache[key] = data
-            return data
-        except KeyError:
-            keytree = self._metabase_keytree()
-            key_parts = key.split(".")
-            for part in key_parts:
-                if part not in keytree:
-                    return None
-                keytree = keytree[part]
-            return self._retrieve_data_from_keytree(key_parts, keytree)
+        if key in self._data_cache:
+            # if we have already loaded this key, return the cached value
+            return self._data_cache[key]
+        with self.metabase_open("r"):
+            try:
+                data = self.metabase[key]
+            except KeyError:
+                keytree = self._metabase_keytree()
+                key_parts = key.split(".")
+                for part in key_parts:
+                    if part not in keytree:
+                        return None
+                    keytree = keytree[part]
+                data = self._retrieve_data_from_keytree(key_parts, keytree)
+        self._data_cache[key] = data
+        return data
 
     def _metabase_keytree(self):
         """
@@ -310,6 +298,26 @@ class BaseDrive(InMemoryDataset):
             space_options=self.space_options,
         )
 
+    @contextmanager
+    def metabase_open(self, flag="c"):
+        """
+        Context‐manager that opens a fresh shelf with the given flag,
+        yields the shelf object, and ensures it’s closed afterward.
+        """
+        # Close any existing handle
+        if self.metabase is not None:
+            try:
+                self.metabase.close()
+            except Exception:
+                pass
+        # Open a new shelf instance
+        success = self.try_open_metabase(flag=flag)
+        try:
+            yield success
+        finally:
+            self.metabase.close()
+            self.metabase = None
+
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
         return []
@@ -364,24 +372,11 @@ class BaseDrive(InMemoryDataset):
             self._save_aux_data(pyg_env=pyg_env)
         return {"pyg_env": pyg_env}
 
-    def _save_aux_data(self, _retry: bool = False, **aux_data):
+    def _save_aux_data(self, **aux_data):
         r"""Saves auxiliary data to the metabase."""
-        try:
+        with self.metabase_open(flag="w"):
             for key, value in aux_data.items():
                 self.metabase[f"aux.{key}"] = value
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            self.metabase.close()
-            if not _retry:
-                self.try_open_metabase(flag="w")
-                self._save_aux_data(_retry=True, **aux_data)
-                self.metabase.close()
-                self.try_open_metabase()
-            else:
-                raise RuntimeError(
-                    f"Failed to save auxiliary data to metabase at {self.metabase_path}. Error: {e}. "
-                )
 
     def _save_metadata(self, **extras):
         metad = self.metadata | extras
@@ -389,16 +384,9 @@ class BaseDrive(InMemoryDataset):
             "Metadata must not be a callable, "
             "it should be a dataclass/dict instance."
         )
-        try:
+        with self.metabase_open(flag="w"):
             for key, value in metad.items():
                 self.metabase[f"meta.{key}"] = value
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to save metadata to metabase at {self.metabase_path}. "
-                "Please check the file permissions or disk space."
-            ) from e
 
     def _set_desc(self):
         if hasattr(self, "problem"):
@@ -406,7 +394,10 @@ class BaseDrive(InMemoryDataset):
         else:
             _, problem = parse(self.domain_path, self.problem_path)
         self.desc = f"{self.__class__.__name__}({problem.name}, {problem.filepath}, state_space={str(self.get_space())})"
-        self.metabase["desc"] = self.desc
+        assert self.metabase is None
+        with self.metabase_open(flag="w"):
+            assert self.metabase is not None
+            self.metabase["desc"] = self.desc
 
     def _space_from_env(self):
         r"""Returns the state space from the environment."""
@@ -462,9 +453,8 @@ class BaseDrive(InMemoryDataset):
         """
         state = self.__dict__.copy()
         # remove non-pickleable attributes
-        state.pop("metabase", None)
-        state.pop("_shelves", None)
-        state.pop("_data_cache", None)
+        state["metabase"] = None
+        state["_data_cache"].clear()
         state.pop("_maybe_env", None)
         state.pop("_env", None)
         state.pop("_space", None)
@@ -478,9 +468,7 @@ class BaseDrive(InMemoryDataset):
         """
         self.__dict__.update(state)
         # reinitialize the metabase
-        self.try_open_metabase()
-        # reinitialize the data cache
-        self._data_cache = {}
+        logger.warning("state used:", state.items())
         # reinitialize the problem if it was not set
         _, self.problem = parse(self.domain_path, self.problem_path)
 

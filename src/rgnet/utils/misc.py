@@ -8,6 +8,7 @@ import pathlib
 import random
 import time
 from collections import deque
+from contextlib import contextmanager, nullcontext
 from datetime import timedelta
 from functools import singledispatch
 from inspect import signature
@@ -36,6 +37,16 @@ def get_device_cuda_if_possible(device_id: int | None = None) -> torch.device:
                 f"Requested CUDA device {device_id}, but only {torch.cuda.device_count()} are available."
             )
     return torch.device("cuda")
+
+
+@contextmanager
+def stream_context(stream):
+    if stream is not None:
+        with torch.cuda.stream(stream):
+            yield
+    else:
+        with nullcontext():
+            yield
 
 
 def time_delta_now(previous: float) -> str:

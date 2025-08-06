@@ -22,6 +22,8 @@ from rgnet.rl.reward import UnitReward
 from rgnet.utils.misc import NonTensorWrapper, tolist
 from rgnet.utils.object_embeddings import ObjectEmbedding
 
+logger = get_logger(__name__)
+
 
 def _draw_networkx_graph(graph: nx.Graph, **kwargs):
     nx.draw_networkx(
@@ -52,10 +54,11 @@ def problem_setup(
 def request_accelerator_for_test(test_name: str) -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda:0")
-    if torch.mps.is_available():
+    if torch.mps.is_available() and os.getenv("CI") != "true":
+        # MPS is not working properly on CI environments (nearly no MPS memory)
         return torch.device("mps:0")
 
-    get_logger(__name__).warning(
+    logger.warning(
         f"Tried to run device sensitive test {test_name} but accelerator was not available."
     )
     return torch.device("cpu")

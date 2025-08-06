@@ -1,9 +1,8 @@
-from test.fixtures import problem_setup
+from test.fixtures import make_fresh_flashdrive, problem_setup
 from test.test_utils import hetero_data_equal
 from typing import Callable, List, Optional
 
 import torch
-from fixtures import make_fresh_flashdrive
 from torch_geometric.data import Batch, Dataset, HeteroData
 from torch_geometric.loader import DataLoader
 

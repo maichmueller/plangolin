@@ -20,7 +20,7 @@ from rgnet.rl.envs import PlanningEnvironment
 from rgnet.rl.losses import AllActionsLoss, CriticLoss
 from rgnet.rl.search.agent_maker import AgentMaker
 from rgnet.rl.thundeRL.validation import ValidationCallback
-from rgnet.utils.misc import as_non_tensor_stack
+from rgnet.utils.misc import as_non_tensor_stack, stream_context
 from rgnet.utils.object_embeddings import ObjectEmbedding
 from xmimir import XProblem
 
@@ -107,8 +107,7 @@ class PolicyGradientLitModule(lightning.LightningModule):
 
         batches_out: list[ObjectEmbedding] = []
         for batch in (states_data, successors_flattened):
-            with torch.cuda.stream(self.next_stream()):
-                # Shape batch_size x embedding_size
+            with stream_context(self.next_stream()):
                 batches_out.append(ObjectEmbedding.from_sparse(*self.gnn(batch)))
         if self.cuda_streams is not None:
             for stream in self.cuda_streams:
