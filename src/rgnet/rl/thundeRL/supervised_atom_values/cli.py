@@ -73,7 +73,7 @@ class TestSetup:
     avoid_cycles: bool = False  # whether to avoid cycles during testing
 
 
-class AtomValuesCLI(ThundeRLCLI):
+class CLI(ThundeRLCLI):
     def __init__(
         self,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
@@ -164,7 +164,7 @@ class AtomValuesCLI(ThundeRLCLI):
         )
 
 
-class AtomValuesEvalCLI(AtomValuesCLI):
+class EvalCLI(CLI):
     def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         # fit subcommand adds this value to the config
         parser.add_class_arguments(

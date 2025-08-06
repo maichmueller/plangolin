@@ -171,7 +171,7 @@ class Collater:
     exclude_keys: Optional[List[str]] = None
 
 
-class PolicyGradientCLI(ThundeRLCLI):
+class CLI(ThundeRLCLI):
     def __init__(
         self,
         *args,
@@ -340,7 +340,7 @@ class PolicyGradientCLI(ThundeRLCLI):
         )
 
 
-class PolicyGradientEvalCLI(PolicyGradientCLI):
+class EvalCLI(CLI):
     def add_arguments_to_parser_impl(self, parser: LightningArgumentParser) -> None:
         # fit subcommand adds this value to the config
         parser.add_class_arguments(

@@ -1,2 +1,2 @@
-from .cli import PolicyGradientCLI
+from .cli import CLI, EvalCLI
 from .lit_module import PolicyGradientLitModule

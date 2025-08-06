@@ -15,7 +15,7 @@ from torch_geometric.data import Batch, HeteroData
 import rgnet
 from rgnet.rl.data import FlashDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.thundeRL import PolicyGradientCLI
+from rgnet.rl.thundeRL.policy_gradient import CLI
 
 from ..supervised.test_data import hetero_data_equal
 
@@ -29,7 +29,7 @@ def cli_main():
     logging.getLogger().setLevel(logging.INFO)
     torch.set_float32_matmul_precision("medium")
     torch.multiprocessing.set_sharing_strategy("file_system")
-    cli = PolicyGradientCLI()
+    cli = CLI()
     return cli
 
 

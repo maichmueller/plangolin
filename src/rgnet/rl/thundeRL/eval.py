@@ -479,15 +479,13 @@ if __name__ == "__main__":
         ]
     )
     cli_name = known_args.cli
-    cli = import_object(cli_name)(run=False)
-    try:
-        eval_model(
-            cli=cli,
-            num_workers=known_args.num_workers,
-            progress_bar=known_args.progress_bar,
-            detail_level=known_args.detail_level,
-            ckpt_filter=known_args.ckpt_filter,
-        )
-    except KeyboardInterrupt:
-        logger.warning("Evaluation interrupted by user.")
-        sys.exit(1)
+    cli_class = import_object(cli_name)
+    cli = cli_class(run=False)
+    logger.info(f"Running CLI: {cli_class!r}")
+    eval_model(
+        cli=cli,
+        num_workers=known_args.num_workers,
+        progress_bar=known_args.progress_bar,
+        detail_level=known_args.detail_level,
+        ckpt_filter=known_args.ckpt_filter,
+    )
