@@ -1,62 +1,56 @@
-# RGNet
-![main](https://git.rwth-aachen.de/i6/general/rgnet/badges/main/pipeline.svg?key_text=main&key_width=50)
-![develop](https://git.rwth-aachen.de/i6/general/rgnet/badges/develop/pipeline.svg?key_text=dev&key_width=50)
+<p align="center">
+  <img src="media/plangolin_logo.png" alt="plangolin_with_title" width="300px">
+</p>
 
-An open source library for Machine Learning on Planning problems.
-Core concepts include
+[![pytest](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml/badge.svg)](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml)
 
-- **Reinforcement Learning**
-- **Graph Neural Networks**
-- **Generalized Planning**
+______________________________________________________________________
+An open source research library for Machine/Reinforcement Learning on Classical Planning problems using Graph Neural Networks.
+
+This library is purely research-focused. APIs and interfaces may change.
 
 ## Installation
 
-The project can be installed via pip except pymimir. We are currently in the migration
-process but currently rely on
-the [archive/v1](https://github.com/simon-stahlberg/mimir/tree/archive/v1) branch of
-pymimir.
-On the cluster you will most likely need to clone the mimir-repository and
-run `pip install .` in the root directory of the cloned repo.
-Additional dependencies for testing and development can be installed via `pip install
--e .[dev]`.
+The project can be installed via pip `pip install .`
+
+For a development installation run `pip install -e '.[dev]'`
 
 ## Usage
 
-Currently three different use cases are implemented with varying degrees of support.
+Currently two different use cases are implemented with different degrees of support.
 
-#### 1. Supervised Learning
+#### 1. Planning problems as deterministic MDPs with behaviour-based exploration.
 
-#### 2. Reinforcement Learning with arbitrary rollout-length and arbitrarily big problems.
+This direction is the usual RL design pattern, where the agent generates data by interacting with the environment.
+A common downside of this approach is that exploration is costly in time and resources, rendering this approach slow.
 
-#### 3. An optimized RL version with one-step rollouts and a fully enumerated state space.
+The implementation is found in the `rgnet.rl` module and is based on the `torchrl` framework.
 
-- See `docs/thundeRL/README.md` for further details
+#### 2. Planning problems as deterministic MDP datasets on demand.
 
-## Roadmap
+This direction is a more efficient approach, where the agent is trained on a pre-computed dataset of planning problems.
+Here, the agent learns by loading environment data on demand from a dataset,
+essentially turning the RL problem into a hybrid supervised-RL learning problem:
+RL update rules, but supervised data loading.
 
-#TODO
+The implementation is found in the `rgnet.rl.thundeRL` module of this library,
+utilizing `pytorch-lightning` for vastly faster training and evaluation.
+See `docs/thundeRL/README.md` for further details on this.
+
+See the `examples` directory for example usage of the library for both directions.
 
 ## Techstack
 
 - [TorchRL](https://github.com/pytorch/rl): as modular open source RL framework
   - Support for `NonTensorData`: The observation space consists of complex objects.
-  - Actions vary by state and the total number is to big for masking.
+  - Irregular state-dependant action-space without apriori known upper limit (no boxes, no masking techniques applicable).
   - Aligns with the pytorch ecosystem
-- [PyTorch](https://pytorch.org/): as the deep learning framework.
-- [PyTorch-Geometric](https://github.com/pyg-team/pytorch_geometric): for graph neural
-  networks.
+- [PyTorch-Geometric](https://github.com/pyg-team/pytorch_geometric): graph neural networks basis.
 - [PyTorch Lightning](https://www.pytorchlightning.ai/): as the training framework.
   - [PyTorch Lightning CLI](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli.html) / [jsonargparse](https://jsonargparse.readthedocs.io/en/stable/index.html#jsonargparse.ArgumentParser.add_instantiator)
     as cli managing tool. Allowing clean experiment configuration with yaml files.
-- [Pymimir](https://github.com/simon-stahlberg/mimir): as underlying planning tool.
-  - Parsing PDDL files.
-  - Enumerating the grounded state space of a planning problem.
-- [Wandb](https://wandb.ai/site): for experiment tracking.
+- [Pymimir](https://github.com/simon-stahlberg/mimir): as underlying planning tool (parsing PDDLs, grounding/lifting STRIPS-states, etc.).
 
 ## Contributing
 
-#TODO
-
-## Authors and acknowledgment
-
-#TODO
+Ideas and suggestions are welcome! Please open an issue or a merge request.
