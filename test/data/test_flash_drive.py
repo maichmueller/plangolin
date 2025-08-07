@@ -5,10 +5,10 @@ from test.fixtures import (  # noqa: F401
     medium_blocks,
     small_blocks,
 )
-from test.supervised.test_data import hetero_data_equal
 
 import mockito
 import pytest
+from test_utils import hetero_data_equal
 from torch_geometric.data import HeteroData
 
 from rgnet.encoding import HeteroGraphEncoder

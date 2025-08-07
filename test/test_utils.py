@@ -3,9 +3,12 @@ import pathlib
 from typing import Dict, Set, Tuple
 
 import networkx as nx
+import torch
 from matplotlib import pyplot as plt
+from torch_geometric.data import HeteroData
 
 from rgnet.utils import ftime, import_all_from
+from rgnet.utils.misc import broadcastable
 from xmimir import XDomain, XProblem
 
 
@@ -230,3 +233,22 @@ def _debug_plotit(graph, goal_state):
 
     plt.axis("off")
     plt.show()
+
+
+def hetero_data_equal(data: HeteroData, expected: HeteroData):
+    assert isinstance(data, HeteroData) and isinstance(expected, HeteroData)
+    assert set(data.node_types) == set(expected.node_types)
+    assert set(data.edge_types) == set(expected.edge_types)
+    for key in data.node_types:
+        dx = data[key].x
+        ex = expected[key].x
+        if dx.numel() == ex.numel() == 0:
+            continue
+        if not broadcastable(dx.shape, ex.shape):
+            return False
+        if not torch.allclose(dx, ex):
+            return False
+    for edge_type in data.edge_types:
+        if not torch.equal(data[edge_type].edge_index, expected[edge_type].edge_index):
+            return False
+    return True

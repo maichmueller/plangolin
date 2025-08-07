@@ -4,6 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 from test.fixtures import medium_blocks, small_blocks  # noqa: F401, F403
+from test.test_utils import hetero_data_equal
 from typing import Any, List, Tuple
 
 import mockito
@@ -16,8 +17,6 @@ import rgnet
 from rgnet.rl.data import FlashDrive
 from rgnet.rl.envs import ExpandedStateSpaceEnv
 from rgnet.rl.thundeRL.policy_gradient import CLI
-
-from ..supervised.test_data import hetero_data_equal
 
 
 @pytest.fixture(autouse=True, scope="class")

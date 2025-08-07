@@ -1,6 +1,6 @@
 import operator
 from test.fixtures import *  # noqa: F401, F403
-from test.supervised.test_data import hetero_data_equal
+from test.test_utils import hetero_data_equal
 from typing import Callable
 
 import mockito

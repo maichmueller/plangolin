@@ -41,6 +41,9 @@ class BaseEnvAuxData:
     pyg_env: Data
 
 
+logger = get_logger(__name__)
+
+
 class BaseDrive(InMemoryDataset):
     def __init__(
         self,
@@ -109,7 +112,7 @@ class BaseDrive(InMemoryDataset):
             # desc is not explicit part of metadata, but also stored there anyway
             self.desc = metadata["desc"]
             if mismatch_desc := self._metadata_misaligned(metadata):
-                get_logger(__name__).info(
+                logger.info(
                     f"Metadata mismatch ({mismatch_desc}) for problem {self.problem_path}, forcing reload."
                 )
                 force_reload = True
@@ -137,7 +140,7 @@ class BaseDrive(InMemoryDataset):
             self.metabase = shelve.open(str(self.metabase_path), flag=flag or "r")
             is_empty = len(self.metabase) == 0
             if is_empty:
-                get_logger(__name__).warning(
+                logger.warning(
                     f"Metabase at {self.metabase_path} is empty. "
                     "This indicates a corrupted database. Deleting it and reopening with flag 'c'."
                 )
@@ -149,22 +152,20 @@ class BaseDrive(InMemoryDataset):
             self.metabase = shelve.open(str(self.metabase_path), flag="c")
             return True
         except PermissionError:
-            get_logger(__name__).error(
+            logger.error(
                 f"Permission denied when trying to open metabase at {self.metabase_path}."
             )
             return False
         except OSError as e:
-            get_logger(__name__).error(
+            logger.error(
                 f"OS error when trying to open metabase at {self.metabase_path}: {e}"
             )
             return False
         except KeyboardInterrupt as e:
-            get_logger(__name__).warning("Interrupted while trying to open metabase.")
+            logger.warning("Interrupted while trying to open metabase.")
             raise e
         except Exception as e:
-            get_logger(__name__).error(
-                f"Failed to open metabase at {self.metabase_path}: {e}"
-            )
+            logger.error(f"Failed to open metabase at {self.metabase_path}: {e}")
             return False
 
     def try_get_data(self, key: str) -> Any | dict[str, Any] | None:
@@ -245,7 +246,7 @@ class BaseDrive(InMemoryDataset):
                     f"`env` is not an instance of {PlanningEnvironment.__class__}. Given: {type(env)}"
                 )
             if env is None:
-                get_logger(__name__).warning(
+                logger.warning(
                     "ExpandedStateSpaceEnvLoader returned None, "
                     "perhaps the space is too large."
                 )
@@ -431,13 +432,11 @@ class BaseDrive(InMemoryDataset):
 
     def _get_logger(self):
         if self.logging_kwargs is not None:
-            logger = logging.getLogger(
-                f"{__name__}-thread:{self.logging_kwargs['task_id']}"
-            )
-            logger.setLevel(self.logging_kwargs["log_level"])
+            l = logging.getLogger(f"{__name__}-thread:{self.logging_kwargs['task_id']}")
+            l.setLevel(self.logging_kwargs["log_level"])
+            return l
         else:
-            logger = get_logger(__name__)
-        return logger
+            return logger
 
     def get(self, idx: int) -> BaseData:
         """

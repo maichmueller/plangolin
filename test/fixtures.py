@@ -282,11 +282,14 @@ def make_fresh_flashdrive(
     domain="blocks",
     problem="medium.pddl",
     force_reload=True,
-    attribute_getters=None,
+    encoder_class=HeteroGraphEncoder,
+    **kwargs,
 ):
     source_dir = Path("" if os.getcwd().endswith("/test") else "test/")
     data_dir = source_dir / "pddl_instances" / domain
-    problem_path = data_dir / problem
+    problem_path = data_dir / (
+        problem if problem.endswith(".pddl") else f"{problem}.pddl"
+    )
     domain_path = data_dir / "domain.pddl"
     drive = FlashDrive(
         problem_path=problem_path,
@@ -294,8 +297,8 @@ def make_fresh_flashdrive(
         reward_function=UnitReward(gamma=0.99),
         root_dir=str(tmp_path.absolute()),
         force_reload=force_reload,
-        encoder_factory=EncoderFactory(HeteroGraphEncoder),
-        attribute_getters=attribute_getters,
+        encoder_factory=EncoderFactory(encoder_class),
+        **kwargs,
     )
     return drive
 
@@ -320,10 +323,9 @@ def make_fresh_atomdrive(tmp_path, domain, problem, force_reload=True, **reward_
 def fresh_flashdrive(tmp_path, request):
     # Unpack with default
     domain, problem, *rest = request.param
-    force_reload = rest[0] if rest else True
-    return make_fresh_flashdrive(
-        tmp_path, domain=domain, problem=problem, force_reload=force_reload
-    )
+    assert len(rest) <= 1, "Only one additional argument (the kwargs) is allowed"
+    kwargs = dict(force_reload=True) | (rest[0] if rest else {})
+    return make_fresh_flashdrive(tmp_path, domain=domain, problem=problem, **kwargs)
 
 
 @pytest.fixture
@@ -337,8 +339,6 @@ def fresh_flashdrive_medium_blocks(tmp_path):
 def fresh_atomdrive(tmp_path, request):
     # Unpack with default
     domain, problem, *rest = request.param
-    force_reload = rest[0] if rest else True
-
-    return make_fresh_atomdrive(
-        tmp_path, domain=domain, problem=problem, force_reload=force_reload
-    )
+    assert len(rest) <= 1, "Only one additional argument (the kwargs) is allowed"
+    kwargs = dict(force_reload=True) | (rest[0] if rest else {})
+    return make_fresh_atomdrive(tmp_path, domain=domain, problem=problem, **kwargs)

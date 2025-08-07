@@ -1,13 +1,15 @@
-from test.fixtures import hetero_encoded_state  # noqa: F401, F403
-from test.supervised.test_data import create_dataset
+from test.fixtures import fresh_flashdrive, hetero_encoded_state  # noqa: F401, F403
 
 import pytest
 import torch.nn.functional
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
+from rgnet.encoding import HeteroGraphEncoder
 from rgnet.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
+from rgnet.rl.data.flash_drive import attr_getters
 from rgnet.utils.object_embeddings import ObjectPoolingModule
+from xmimir import parse
 
 
 @pytest.mark.parametrize(
@@ -30,10 +32,26 @@ def test_hetero_gnn(hetero_encoded_state):
     assert out.size() == (1,)
 
 
-def test_value_hetero_gnn_backward(tmp_path):
-    dataset = create_dataset("small", tmp_path)
-    batch = Batch.from_data_list(dataset)
-    encoder = dataset.state_encoder
+@pytest.mark.parametrize(
+    "fresh_flashdrive",
+    [
+        [
+            "blocks",
+            "small.pddl",
+            dict(attribute_getters={"y": attr_getters.distance_to_goal}),
+        ],
+        [
+            "blocks",
+            "medium.pddl",
+            dict(attribute_getters={"y": attr_getters.distance_to_goal}),
+        ],
+    ],
+    indirect=["fresh_flashdrive"],  # only this one is a fixture
+)
+def test_value_hetero_gnn_backward(tmp_path, fresh_flashdrive):
+    domain, problem = parse(fresh_flashdrive.domain_path, fresh_flashdrive.problem_path)
+    encoder = HeteroGraphEncoder(domain)
+    batch = Batch.from_data_list(fresh_flashdrive)
     model = ValueHeteroGNN(
         embedding_size=2,
         num_layer=1,
@@ -52,14 +70,21 @@ def test_value_hetero_gnn_backward(tmp_path):
         optim.step()
 
 
-def test_hetero_gnn_backward(tmp_path):
+@pytest.mark.parametrize(
+    "fresh_flashdrive",
+    [
+        ["blocks", "small.pddl"],
+    ],
+    indirect=["fresh_flashdrive"],  # only this one is a fixture
+)
+def test_hetero_gnn_backward(tmp_path, fresh_flashdrive):
     """Calculate the embedding for each of the small-blocks states with one-hot encoding as target.
     This test makes sure that no in-place operations are used by the GNN that would obstruct backward-passes.
     """
-    dataset = create_dataset("small", tmp_path)
-    batch = Batch.from_data_list(dataset)
+    domain, problem = parse(fresh_flashdrive.domain_path, fresh_flashdrive.problem_path)
+    encoder = HeteroGraphEncoder(domain)
+    batch = Batch.from_data_list(fresh_flashdrive)
     assert len(batch) == 5, "If this fails the underlying test data has changed!"
-    encoder = dataset.state_encoder
     model = HeteroGNN(
         embedding_size=5,
         num_layer=1,
@@ -83,10 +108,18 @@ def test_hetero_gnn_backward(tmp_path):
         optim.step()
 
 
-def test_hetero_batched(tmp_path):
-    dataset = create_dataset("small", tmp_path)
-    encoder = dataset.state_encoder
-    loader = DataLoader(dataset, batch_size=3)
+@pytest.mark.parametrize(
+    "fresh_flashdrive",
+    [
+        ["blocks", "small.pddl"],
+        ["blocks", "medium.pddl"],
+    ],
+    indirect=["fresh_flashdrive"],  # only this one is a fixture
+)
+def test_hetero_batched(tmp_path, fresh_flashdrive):
+    domain, problem = parse(fresh_flashdrive.domain_path, fresh_flashdrive.problem_path)
+    encoder = HeteroGraphEncoder(domain)
+    loader = DataLoader(fresh_flashdrive, batch_size=3)
     for batch in loader:
         model = ValueHeteroGNN(
             embedding_size=2,
