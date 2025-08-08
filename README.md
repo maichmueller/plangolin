@@ -2,8 +2,9 @@
   <img src="media/plangolin_logo.png" alt="plangolin_with_title" width="300px">
 </p>
 
-[![pytest](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml/badge.svg)](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml)
-
+[![tests-main](https://img.shields.io/github/actions/workflow/status/maichmueller/plangolin/ci.yml?branch=main&label=tests-main&style=flat&logo=github&logoColor=white)](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml?query=branch%3Amain)
+[![tests-dev](https://img.shields.io/github/actions/workflow/status/maichmueller/plangolin/ci.yml?branch=dev&label=tests-dev&style=flat&logo=github&logoColor=white)](https://github.com/maichmueller/plangolin/actions/workflows/ci.yml?query=branch%3Adev)
+[![codecov](https://codecov.io/gh/maichmueller/plangolin/graph/badge.svg?token=r71dXadEH4)](https://codecov.io/gh/maichmueller/plangolin)
 ______________________________________________________________________
 An open source research library for Machine/Reinforcement Learning on Classical Planning problems using Graph Neural Networks.
 
