@@ -9,9 +9,9 @@ import pytest
 import torch
 
 import xmimir as xmi
-from rgnet.algorithms import mdp_graph_as_pyg_data, optimal_policy
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.reward import UnitReward
+from plangolin.algorithms import mdp_graph_as_pyg_data, optimal_policy
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.reward import UnitReward
 
 
 def _placeholder_probs(space: xmi.XStateSpace):

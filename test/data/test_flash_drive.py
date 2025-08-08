@@ -11,8 +11,8 @@ import mockito
 import pytest
 from torch_geometric.data import HeteroData
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.rl.data.flash_drive import FlashDrive
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.rl.data.flash_drive import FlashDrive
 
 
 def validate_drive(drive, space):

@@ -5,9 +5,9 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from rgnet.algorithms import mdp_graph_as_pyg_data
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.utils.misc import as_non_tensor_stack
+from plangolin.algorithms import mdp_graph_as_pyg_data
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.utils.misc import as_non_tensor_stack
 from xmimir import XState, XStateSpace, XTransition
 
 from .test_state_space_env import get_expected_root_keys

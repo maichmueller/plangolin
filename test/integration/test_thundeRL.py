@@ -13,10 +13,10 @@ import torch
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch_geometric.data import Batch, HeteroData
 
-import rgnet
-from rgnet.rl.data import FlashDrive
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.thundeRL.policy_gradient import CLI
+import plangolin
+from plangolin.rl.data import FlashDrive
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.thundeRL.policy_gradient import CLI
 
 
 @pytest.fixture(autouse=True, scope="class")
@@ -80,18 +80,20 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        rgnet.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule,
+        plangolin.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule,
         "training_step",
         training_step_mock,
     )
     cli = cli_main()
-    mockito.unstub(rgnet.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule)
+    mockito.unstub(
+        plangolin.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule
+    )
     return cli
 
 
 def _create_data_setup(tmp_path):
     project_root = Path(__file__).parent.parent
-    if project_root.name == "rgnet":
+    if project_root.name == "plangolin":
         project_root = project_root / "test"
 
     data_dir = project_root / "pddl_instances" / "blocks"

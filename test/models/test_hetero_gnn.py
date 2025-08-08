@@ -5,10 +5,10 @@ import torch.nn.functional
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
-from rgnet.rl.data.flash_drive import attr_getters
-from rgnet.utils.object_embeddings import ObjectPoolingModule
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
+from plangolin.rl.data.flash_drive import attr_getters
+from plangolin.utils.object_embeddings import ObjectPoolingModule
 from xmimir import parse
 
 
@@ -97,7 +97,7 @@ def test_hetero_gnn_backward(tmp_path, fresh_flashdrive):
     pooling = ObjectPoolingModule(pooling="add")
     for i in range(3):
         optim.zero_grad()
-        from rgnet.utils.object_embeddings import ObjectEmbedding
+        from plangolin.utils.object_embeddings import ObjectEmbedding
 
         embedding: ObjectEmbedding = ObjectEmbedding.from_sparse(*model(batch))
         out = pooling(embedding)

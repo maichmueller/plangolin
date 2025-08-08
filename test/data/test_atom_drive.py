@@ -6,11 +6,11 @@ from typing import Callable
 import mockito
 from torch_geometric.data import HeteroData
 
-from rgnet.algorithms import mdp_graph_as_pyg_data
-from rgnet.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.logging_setup import tqdm
-from rgnet.rl.data.atom_drive import make_atom_ids
+from plangolin.algorithms import mdp_graph_as_pyg_data
+from plangolin.algorithms.policy_evaluation_mp import OptimalAtomValuesMP
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.logging_setup import tqdm
+from plangolin.rl.data.atom_drive import make_atom_ids
 from xmimir import XAtom
 from xmimir.iw import CollectorHook, IWSearch
 

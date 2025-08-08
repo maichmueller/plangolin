@@ -1,0 +1,476 @@
+from __future__ import annotations
+
+import datetime
+import logging
+import time
+from concurrent.futures import ProcessPoolExecutor as Pool
+from pathlib import Path
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Type,
+)
+
+import torch
+from lightning import LightningDataModule
+from lightning.pytorch.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
+from torch_geometric.loader import ImbalancedSampler
+
+import plangolin.rl.thundeRL.collate as collate  # noqa: F401
+from plangolin.encoding import GraphEncoderBase
+from plangolin.logging_setup import get_logger
+from plangolin.rl.data import BaseDrive, FlashDrive
+from plangolin.rl.data_layout import InputData
+from plangolin.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
+from plangolin.rl.reward import RewardFunction
+from plangolin.rl.thundeRL.collate import StatefulCollater
+from plangolin.utils.misc import env_aware_cpu_count
+from xmimir import Domain
+from xmimir.iw import IWStateSpace
+
+
+def set_sharing_strategy():
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+
+class ThundeRLDataModule(LightningDataModule):
+    def __init__(
+        self,
+        input_data: InputData,
+        reward_function: RewardFunction,
+        batch_size: int,
+        encoder_factory: Callable[[Domain], GraphEncoderBase],
+        *,
+        collate_fn: Callable = collate.to_transitions_batch,
+        collate_kwargs: Optional[Dict[str, Any]] = None,
+        drive_type: type[BaseDrive] = FlashDrive,
+        drive_kwargs: Optional[Dict[str, Any]] = None,
+        validation_drive_type: Optional[type[BaseDrive]] = None,
+        validation_drive_kwargs: Optional[Dict[str, Any]] = None,
+        test_drive_type: type[BaseDrive] = None,
+        test_drive_kwargs: Optional[Dict[str, Any]] = None,
+        dataloader_type: Type[DataLoader] = DataLoader,
+        validation_dataloader_type: Type[DataLoader] | None = None,
+        test_dataloader_type: Type[DataLoader] | None = None,
+        train_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        validation_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        test_dataloader_kwargs: Optional[Dict[str, Any]] = None,
+        parallel: bool = True,
+        balance_by_attrs: str | Iterable[str] | None = None,
+        max_cpu_count: Optional[int] = None,
+        skip: bool = False,
+        exit_after_processing: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.data = input_data
+        self.reward_function = reward_function
+        self.batch_size = batch_size
+        self.parallel = parallel
+        self.drive_type = drive_type
+        self.validation_drive_type = validation_drive_type or drive_type
+        self.test_drive_type = test_drive_type or drive_type
+        self.drive_kwargs = drive_kwargs or dict()
+        self.validation_drive_kwargs = validation_drive_kwargs or self.drive_kwargs
+        self.test_drive_kwargs = test_drive_kwargs or dict()
+        self.dataloader_type = dataloader_type
+        self.validation_dataloader_type = validation_dataloader_type or dataloader_type
+        self.test_dataloader_type = test_dataloader_type or dataloader_type
+        self.train_dataloader_kwargs = (
+            dict(num_workers=6)
+            | (train_dataloader_kwargs or dict())
+            | dict(batch_size=batch_size)
+        )  # do not override batch_size arg silently
+        self.validation_dataloader_kwargs = dict(
+            num_workers=2,
+            batch_size=batch_size,
+        ) | (validation_dataloader_kwargs or dict())
+        self.test_dataloader_kwargs = dict(
+            num_workers=2,
+            batch_size=batch_size,
+        ) | (test_dataloader_kwargs or dict())
+        self.encoder_factory = encoder_factory
+        if balance_by_attrs is None:
+            balance_by_attrs = []
+        elif isinstance(balance_by_attrs, str):
+            if balance_by_attrs == "":
+                balance_by_attrs = []
+            else:
+                balance_by_attrs = [balance_by_attrs]
+        else:
+            balance_by_attrs = list(balance_by_attrs)
+        self.balance_by_attrs = balance_by_attrs
+        self.max_cpu_count = max_cpu_count
+        self.exit_after_processing = exit_after_processing
+        self.dataset: ConcatDataset | None = None  # late init in prepare_data()
+        self.validation_sets: Sequence[Dataset] = []
+        self.test_sets: Sequence[Dataset] = []
+        self.collate_fn = collate_fn
+        self.collate_kwargs = collate_kwargs or dict()
+        self.envs: Mapping[Path, ExpandedStateSpaceEnv] = LazyEnvLookup(
+            input_data.problem_paths + (input_data.validation_problem_paths or []),
+            self.get_env,
+        )
+        # whether to skip the data preparation step completely (e.g. for testing)
+        self.skip = skip
+        # defaulted, to be overridden by trainer on setup
+        self.device = torch.device("cpu")
+        self._data_prepared = False
+
+    def _make_collate(self):
+        kwargs = self.collate_kwargs.copy()
+        from_datamodule = kwargs.pop("from_datamodule", None)
+        if from_datamodule is not None:
+            assert isinstance(from_datamodule, dict)
+            for key, attr in from_datamodule.items():
+                if isinstance(attr, str):
+                    kwargs[key] = getattr(self, attr)
+                elif isinstance(attr, list):
+                    obj = self
+                    for nested_attr in attr:
+                        obj = getattr(obj, nested_attr)
+                    kwargs[key] = obj
+                else:
+                    raise ValueError(
+                        f"Invalid type for attribute '{key}': {type(attr)}. Expected str or list."
+                    )
+        return StatefulCollater(self.collate_fn, **kwargs)
+
+    def get_env(self, problem: Path | int) -> ExpandedStateSpaceEnv:
+        try:
+            prob = self.data.problems[
+                (
+                    self.data.problem_paths.index(problem)
+                    if isinstance(problem, Path)
+                    else problem
+                )
+            ]
+        except ValueError:
+            prob = self.data.validation_problems[
+                (
+                    self.data.validation_problem_paths.index(problem)
+                    if isinstance(problem, Path)
+                    else problem
+                )
+            ]
+        space = self.data.get_or_load_space(prob)
+        if (iw_search := self.drive_kwargs.get("iw_search")) is not None:
+            return ExpandedStateSpaceEnv(
+                IWStateSpace(
+                    iw_search,
+                    space,
+                    **self.drive_kwargs.get("iw_options", dict()),
+                ),
+                reward_function=self.reward_function,
+                reset=True,
+            )
+        else:
+            return ExpandedStateSpaceEnv(space, reset=True)
+
+    def load_datasets(
+        self,
+        problem_paths: Sequence[Path],
+        drive_types: Sequence[Type[BaseDrive]] | None = None,
+        drive_types_kwargs: Sequence[Dict[str, Any]] | None = None,
+    ) -> Dict[Path, Dataset]:
+        nr_total = len(problem_paths)
+        completed = 0
+
+        def update(dataset):
+            nonlocal completed
+            completed += 1
+            get_logger(__name__).info(
+                f"Finished loading {completed}/{nr_total} problems - Most recent loaded: {dataset.problem_path.stem} "
+                f"(#{len(dataset)} states)."
+            )
+
+        datasets: Dict[Path, BaseDrive] = dict()
+        drive_types = drive_types or [self.drive_type] * len(
+            problem_paths
+        )  # assume all the same drive type if missing
+        drive_types_kwargs = drive_types_kwargs or [self.drive_kwargs] * len(
+            problem_paths
+        )  # assume all the same drive kwargs if missing
+        assert len(drive_types) == len(problem_paths) == len(drive_types_kwargs)
+        drive_extra_kwargs = dict(
+            domain_path=self.data.domain_path,
+            reward_function=self.reward_function,
+            logging_kwargs=None,
+            encoder_factory=self.encoder_factory,
+        )
+        start_time = time.time()
+        if self.parallel and len(problem_paths) > 1:
+            pool_size = min(
+                env_aware_cpu_count(),
+                len(problem_paths),
+                self.max_cpu_count or float("inf"),
+            )
+            with Pool(max_workers=pool_size, initializer=set_sharing_strategy) as pool:
+                get_logger(__name__).info(
+                    f"Loading #{len(problem_paths)} problems in parallel using {pool_size} threads."
+                )
+                futures: Dict[Path, any] = {}
+                for i, (problem_path, drive_t, drive_kw) in enumerate(
+                    zip(problem_paths, drive_types, drive_types_kwargs)
+                ):
+                    merged_kwargs = drive_kw | drive_extra_kwargs
+                    task_kwargs = merged_kwargs | dict(
+                        problem_path=problem_path,
+                        root_dir=str(self.data.dataset_dir / problem_path.stem),
+                        show_progress=drive_kw.get("show_progress", False),
+                        logging_kwargs=dict(log_level=logging.root.level, task_id=i),
+                    )
+                    future = pool.submit(drive_t, **task_kwargs)
+                    future.add_done_callback(lambda fut: update(fut.result()))
+                    futures[problem_path] = future
+                for problem_path, future in futures.items():
+                    datasets[problem_path] = future.result()
+        else:
+            for problem_path, drive_t, drive_kw in zip(
+                problem_paths, drive_types, drive_types_kwargs
+            ):
+                drive = drive_t(
+                    **(
+                        drive_kw
+                        | drive_extra_kwargs
+                        | dict(
+                            problem_path=problem_path,
+                            root_dir=str(self.data.dataset_dir / problem_path.stem),
+                            show_progress=drive_kw.get("show_progress", True),
+                            env=self.envs(problem_path),
+                        )
+                    ),
+                )
+                update(drive)
+                datasets[problem_path] = drive
+
+        elapsed = time.time() - start_time
+        hours, remainder = divmod(
+            datetime.timedelta(seconds=elapsed).total_seconds(), 3600
+        )
+        minutes, seconds = divmod(remainder, 60)
+        get_logger(__name__).info(
+            f"Loading problems took {hours:.0f} hours, {minutes:.0f} minutes, {seconds:.0f} seconds."
+        )
+        return datasets
+
+    def prepare_data(self) -> None:
+        """
+        This method needs to be called before fit/validation/etc.
+        The datasets for all training / validation problems are loaded or newly constructed.
+        If `parallel` was specified, the datasets will be loaded using multiprocessing.
+        This will typically be slower if the datasets already exist and can be loaded directly.
+        NOTE it is important for the validation problems to be in the same order as in
+        :attr: `InputData.validation_problem_paths`!
+        """
+        if self._data_prepared or self.skip:
+            return
+
+        train_prob_paths: List[Path] = self.data.problem_paths
+        validation_prob_paths: List[Path] = self.data.validation_problem_paths or []
+        test_problem_paths: List[Path] = self.data.test_problem_paths or []
+        problem_paths = train_prob_paths + validation_prob_paths + test_problem_paths
+        get_logger(__name__).info(f"Using #{len(problem_paths)} problems in total.")
+        training_string = "-NONE-"
+        validation_string = "-NONE-"
+        test_string = "-NONE-"
+        if train_prob_paths:
+            training_string = "\n".join(p.stem for p in train_prob_paths)
+        if validation_prob_paths:
+            validation_string = "\n".join(p.stem for p in validation_prob_paths)
+        if test_problem_paths:
+            test_string = "\n".join(p.stem for p in test_problem_paths)
+
+        get_logger(__name__).info(f"Problems used for TRAINING:\n{training_string}")
+        get_logger(__name__).info(f"Problems used for VALIDATION:\n{validation_string}")
+        get_logger(__name__).info(f"Problems used for TESTING:\n{test_string}")
+
+        # the actual work intensive part of this function is loading the datasets
+        datasets: Dict[Path, Dataset] = self.load_datasets(
+            problem_paths,
+            drive_types=[self.drive_type] * len(train_prob_paths)
+            + [self.validation_drive_type] * len(validation_prob_paths)
+            + [self.test_drive_type] * len(test_problem_paths),
+            drive_types_kwargs=[self.drive_kwargs] * len(train_prob_paths)
+            + [self.validation_drive_kwargs] * len(validation_prob_paths)
+            + [self.test_drive_kwargs] * len(test_problem_paths),
+        )
+        if train_prob_paths:
+            desc = "\n".join(str(datasets[p]) for p in train_prob_paths)
+            get_logger(__name__).info(f"Loaded TRAINING datasets:\n{desc}")
+        if validation_prob_paths:
+            desc = "\n".join(str(datasets[p]) for p in validation_prob_paths)
+            get_logger(__name__).info(f"Loaded VALIDATION datasets:\n{desc}")
+        if test_problem_paths:
+            desc = "\n".join(str(datasets[p]) for p in self.data.test_problem_paths)
+            get_logger(__name__).info(f"Loaded TEST datasets:\n{desc}")
+        self.dataset = ConcatDataset(
+            [datasets[train_problem] for train_problem in train_prob_paths]
+        )
+        if validation_prob_paths:
+            self.validation_sets = [
+                datasets[val_problem] for val_problem in validation_prob_paths
+            ]
+
+        self._data_prepared = True
+        if self.exit_after_processing:
+            get_logger(__name__).info(
+                "Stopping after data processing desired. Exiting now."
+            )
+            exit(0)
+
+    def _imbalanced_sampler(self) -> ImbalancedSampler | None:
+        """
+        Creates an `ImbalancedSampler` for the training datasets based on the attributes in `self.balance_by_attrs`.
+
+        Note that this sampler is not magic and cannot balance a dataset that does not represent the joint distribution
+        of multiple attributes in its totality.
+        For example, if you have a dataset with two attributes, `#Objects` and `#DistanceToGoal`, a 2D Histogram with
+        counts of X := #DistanceToGoal, Y := #Objects may look like this:
+
+          Y
+        7 | ..:**##########***::...
+        6 | ..:*########****:::....
+        5 | .:*#####**:::::::...---
+        4 | .:******:::::....------
+        3 | .::::.....-------------
+        2 | .....------------------
+
+            0     5     10    15    20   X
+
+        Legend:
+          '-' : 0
+          '.' : 10–100
+          ':' : 100–1'000
+          '*' : 1'000–10'000
+          '#' : > 10'000
+
+        The problem is that there are e.g. no samples with `#Objects` < 4  and `#DistanceToGoal` > 10. This implies that
+        oversampling to balance the distances to goal will lead to unbalancing in object counts, because you cannot find
+        a counter-sample (15, 2) for a sample (15, 6). This data would need to be synthesized.
+        In consequence, the sampler will not be able to balance the dataset over both attributes, you can only balance
+        multiple attributes if the dataset contains all combinations of the attributes, otherwise the data is slightly
+        skewed in both attributes.
+        """
+        if self.balance_by_attrs:
+            class_tensors = [
+                torch.cat([getattr(dataset, attr) for dataset in self.train_datasets])
+                for attr in self.balance_by_attrs
+            ]
+            label_matrix = torch.stack(class_tensors, dim=1)
+
+            # shift negatives → non-negative so bincount works
+            for col in range(label_matrix.shape[1]):
+                mn = label_matrix[:, col].min()
+                if mn < 0:
+                    # Account for e.g. deadend state labels being -1
+                    # (values <0 are incompatible with bincount inside `ImbalancedSampler`)
+                    # Adding the min to each distance (label) doesn't change the relative class counts,
+                    # so does not change the sampling
+                    label_matrix[:, col] += -mn
+
+            # Factor each unique row → a class index
+            # unique_rows is [#unique × #attrs], joint_labels is [num_samples]
+            unique_rows, joint_labels = torch.unique(
+                label_matrix, dim=0, return_inverse=True
+            )
+            return ImbalancedSampler(dataset=joint_labels)
+        else:
+            return None
+
+    @property
+    def train_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.dataset.datasets
+
+    @property
+    def validation_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.validation_sets
+
+    @property
+    def test_datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return self.test_sets
+
+    @property
+    def datasets(self):
+        if not self._data_prepared:
+            self.prepare_data()
+        return (
+            self.train_datasets
+            + list(self.validation_datasets)
+            + list(self.test_datasets)
+        )
+
+    def _sanitize_dataloader_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        # remove any key value combination that are not valid for DataLoader
+        if (
+            kwargs.get("persistent_workers", False)
+            and kwargs.get("num_workers", 0) == 0
+        ):
+            # raises ValueError otherwise
+            kwargs["persistent_workers"] = False
+        return kwargs
+
+    def train_dataloader(self, **kwargs) -> TRAIN_DATALOADERS:
+        sampler = self._imbalanced_sampler()
+        defaults = (
+            dict(
+                sampler=sampler,
+                batch_size=self.batch_size,
+                shuffle=sampler is None,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+            )
+            | self.train_dataloader_kwargs
+        )
+        return self.dataloader_type(
+            self.dataset,
+            **self._sanitize_dataloader_kwargs(defaults | kwargs),
+        )
+
+    def val_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
+        # Order of dataloader has to be equal to order of validation problems in `InputData`.
+        defaults = (
+            dict(
+                shuffle=False,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+                drop_last=False,
+            )
+            | self.validation_dataloader_kwargs
+        )
+        kwargs = self._sanitize_dataloader_kwargs(defaults | kwargs)
+        return [
+            self.validation_dataloader_type(dataset, **kwargs)
+            for dataset in self.validation_sets
+        ]
+
+    def test_dataloader(self, **kwargs) -> EVAL_DATALOADERS:
+        # Order of dataloader should be equal to order of test problems in `InputData`.
+        defaults = (
+            dict(
+                shuffle=False,
+                collate_fn=self._make_collate(),
+                pin_memory=True,
+            )
+            | self.test_dataloader_kwargs
+        )
+        return [
+            self.test_dataloader_type(
+                dataset,
+                **self._sanitize_dataloader_kwargs(defaults | kwargs),
+            )
+            for dataset in self.test_sets
+        ]

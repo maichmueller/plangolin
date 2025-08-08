@@ -1,4 +1,4 @@
-from test.fixtures import (  # noqa: 401
+from test.fixtures import (  # noqa: F401
     embedding_mock,
     expanded_state_space_env,
     small_blocks,
@@ -24,11 +24,11 @@ from torchrl.objectives import A2CLoss, ValueEstimators
 from torchrl.objectives.value import TD0Estimator
 from torchrl.trainers import Trainer
 
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.losses import ActorCriticLoss
-from rgnet.rl.rollout_collector import RolloutCollector
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.embedding import EmbeddingModule, NonTensorTransformedEnv
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.losses import ActorCriticLoss
+from plangolin.rl.rollout_collector import RolloutCollector
 
 
 def test_step_function():
@@ -142,7 +142,6 @@ def test_update_during_reset():
 
 
 def test_value_estimators_td0():
-
     prediction = torch.randn(size=(2, 5, 1))
     next_prediction = prediction[:, :5, :]
 

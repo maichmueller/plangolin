@@ -6,7 +6,7 @@ import torch
 from torch_geometric.data import Batch, Dataset, HeteroData
 from torch_geometric.loader import DataLoader
 
-from rgnet.rl.data.flash_drive import attr_getters
+from plangolin.rl.data.flash_drive import attr_getters
 
 
 class EmptyDataset(Dataset):

@@ -6,8 +6,8 @@ import torch
 from tensordict import LazyStackedTensorDict, NonTensorData, NonTensorStack, TensorDict
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.losses import AllActionsLoss, AllActionsValueEstimator
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.losses import AllActionsLoss, AllActionsValueEstimator
 
 
 class TestAllActionsLoss:

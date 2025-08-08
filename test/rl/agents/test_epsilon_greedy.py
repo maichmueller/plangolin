@@ -1,13 +1,13 @@
 import math
-from test.fixtures import small_blocks
+from test.fixtures import small_blocks  # noqa: F401
 
 import mockito
 import pytest
 import torch
 
-from rgnet.rl.agents import EGreedyModule, EpsilonAnnealing
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.utils.misc import as_non_tensor_stack
+from plangolin.rl.agents import EGreedyModule, EpsilonAnnealing
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.utils.misc import as_non_tensor_stack
 
 
 def test_step_epsilon():

@@ -13,15 +13,15 @@ from tensordict import LazyStackedTensorDict, NonTensorStack, TensorDict
 from torch import tensor
 from torchrl.modules import ValueOperator
 
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.envs import MultiInstanceStateSpaceEnv, PlanningEnvironment
-from rgnet.rl.losses import AllActionsValueEstimator
-from rgnet.rl.losses.all_actions_estimator import (
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.envs import MultiInstanceStateSpaceEnv, PlanningEnvironment
+from plangolin.rl.losses import AllActionsValueEstimator
+from plangolin.rl.losses.all_actions_estimator import (
     EnvironmentBasedRewardProvider,
     KeyBasedProvider,
 )
-from rgnet.utils.misc import as_non_tensor_stack
-from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
+from plangolin.utils.misc import as_non_tensor_stack
+from plangolin.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def _object_embedding_of(single_dim_embedding: List[float]):

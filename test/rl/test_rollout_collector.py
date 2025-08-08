@@ -11,16 +11,16 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 
 import xmimir as xmi
-from rgnet.rl.envs.expanded_state_space_env import (
+from plangolin.rl.envs.expanded_state_space_env import (
     ExpandedStateSpaceEnv,
     InitialStateReset,
     IteratingReset,
     MultiInstanceStateSpaceEnv,
     WeightedRandomReset,
 )
-from rgnet.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
-from rgnet.rl.rollout_collector import RolloutCollector, build_from_spaces
-from rgnet.utils.misc import as_non_tensor_stack, tolist
+from plangolin.rl.envs.planning_env import PlanningEnvironment, RoundRobinReplacement
+from plangolin.rl.rollout_collector import RolloutCollector, build_from_spaces
+from plangolin.utils.misc import as_non_tensor_stack, tolist
 from xmimir import XStateSpace
 
 

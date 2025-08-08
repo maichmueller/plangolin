@@ -10,10 +10,10 @@ import pytest
 import torch
 from tensordict import NonTensorStack
 
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.utils.misc import tolist
-from rgnet.utils.object_embeddings import ObjectEmbedding
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.utils.misc import tolist
+from plangolin.utils.object_embeddings import ObjectEmbedding
 
 
 @pytest.fixture

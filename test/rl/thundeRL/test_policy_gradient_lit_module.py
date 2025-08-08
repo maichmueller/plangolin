@@ -5,12 +5,12 @@ import torch.optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet.models import HeteroGNN, PyGHeteroModule
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.losses import ActorCriticLoss
-from rgnet.rl.thundeRL import PolicyGradientLitModule
-from rgnet.rl.thundeRL.collate import to_transitions_batch
-from rgnet.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
+from plangolin.models import HeteroGNN, PyGHeteroModule
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.losses import ActorCriticLoss
+from plangolin.rl.thundeRL import PolicyGradientLitModule
+from plangolin.rl.thundeRL.collate import to_transitions_batch
+from plangolin.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 
 def test_training_step(fresh_flashdrive_medium_blocks, medium_blocks):

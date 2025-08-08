@@ -3,13 +3,13 @@ from test.fixtures import *  # noqa: F401, F403
 
 import torch.utils.data
 
-from rgnet.rl.envs import SuccessorEnvironment
-from rgnet.rl.thundeRL.collate import (
+from plangolin.rl.envs import SuccessorEnvironment
+from plangolin.rl.thundeRL.collate import (
     StatefulCollater,
     to_iw_transitions_batch,
     to_transitions_batch,
 )
-from rgnet.utils.batching import batched
+from plangolin.utils.batching import batched
 from xmimir import XSuccessorGenerator, XTransition, iw
 from xmimir.iw import RandomizedExpansion
 
@@ -49,9 +49,9 @@ def test_iw_transitions_batch(tmp_path, medium_blocks):
         problem="medium.pddl",
         force_reload=False,
         attribute_getters={
-            "action_history": "rgnet.rl.data.flash_drive.attr_getters.action_history_datapack",
-            "domain_path": "rgnet.rl.data.flash_drive.attr_getters.domain_path",
-            "problem_path": "rgnet.rl.data.flash_drive.attr_getters.problem_path",
+            "action_history": "plangolin.rl.data.flash_drive.attr_getters.action_history_datapack",
+            "domain_path": "plangolin.rl.data.flash_drive.attr_getters.domain_path",
+            "problem_path": "plangolin.rl.data.flash_drive.attr_getters.problem_path",
         },
     )
 

@@ -5,8 +5,8 @@ import pytest
 import torch
 
 import xmimir as xmi
-from rgnet.rl.envs.planning_env import PlanningEnvironment
-from rgnet.rl.reward import UnitReward
+from plangolin.rl.envs.planning_env import PlanningEnvironment
+from plangolin.rl.reward import UnitReward
 from xmimir import XLiteral, XState, XStateSpace
 
 

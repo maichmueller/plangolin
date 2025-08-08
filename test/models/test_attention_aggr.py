@@ -2,7 +2,7 @@ from test.fixtures import *
 
 import torch
 
-from rgnet.models.attention_aggr import AttentionAggregation
+from plangolin.models.attention_aggr import AttentionAggregation
 
 
 def test_attention_aggr():

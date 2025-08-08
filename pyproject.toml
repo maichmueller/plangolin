@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = 'rgnet'
+name = 'plangolin'
 version = '0.1'
 authors = [
     { name = 'Michael Aichmueller', email = 'michael.aichmueller@ml.rwth-aachen.de' },
@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.urls]
-Source = 'https://git.rwth-aachen.de/i6/general/rgnet'
+Source = 'https://git.rwth-aachen.de/i6/general/plangolin'
 
 [tool.black]
 include = '\.pyi?$'

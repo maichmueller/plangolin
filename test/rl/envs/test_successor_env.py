@@ -5,9 +5,9 @@ import mockito
 import torch
 
 import xmimir as xmi
-from rgnet.rl.envs import SuccessorEnvironment
-from rgnet.rl.reward import UnitReward
-from rgnet.utils.misc import tolist
+from plangolin.rl.envs import SuccessorEnvironment
+from plangolin.rl.reward import UnitReward
+from plangolin.utils.misc import tolist
 
 
 def create_successor_env(

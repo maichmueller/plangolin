@@ -1,11 +1,11 @@
-from test.fixtures import embedding_mock, small_blocks
+from test.fixtures import embedding_mock, small_blocks  # noqa: F401
 
 import mockito
 import pytest
 import torch.nn
 
-from rgnet.rl.agents import ValueModule
-from rgnet.rl.envs import ExpandedStateSpaceEnv, InitialStateReset
+from plangolin.rl.agents import ValueModule
+from plangolin.rl.envs import ExpandedStateSpaceEnv, InitialStateReset
 
 
 @pytest.mark.parametrize("embedding_size", [2])

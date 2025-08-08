@@ -1,10 +1,9 @@
 from tensordict import NonTensorStack
 
-from rgnet.utils.misc import as_non_tensor_stack
+from plangolin.utils.misc import as_non_tensor_stack
 
 
 def test_as_non_tensor_stack():
-
     sequence = ["a", "b"]
     stack = as_non_tensor_stack(sequence)
     assert isinstance(stack, NonTensorStack)

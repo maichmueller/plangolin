@@ -7,8 +7,8 @@ from mockito import arg_that, mock, when
 from torch_geometric.data import Batch
 from torch_geometric.nn import SumAggregation
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.models.hetero_message_passing import FanInMP, FanOutMP, SelectMP
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.models.hetero_message_passing import FanInMP, FanOutMP, SelectMP
 
 
 def get_enc_initial_and_goal(problem: str = "small"):

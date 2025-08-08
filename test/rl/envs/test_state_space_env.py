@@ -5,8 +5,8 @@ import pytest
 import torch
 from tensordict import NestedKey, NonTensorStack, TensorDict
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.envs.planning_env import PlanningEnvironment
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.envs.planning_env import PlanningEnvironment
 
 
 def create_state_space(batch_size, blocks, seed=42):

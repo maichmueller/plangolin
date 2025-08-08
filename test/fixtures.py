@@ -9,18 +9,18 @@ import torch
 from matplotlib import pyplot as plt
 
 import xmimir as xmi
-from rgnet.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
-from rgnet.encoding.base_encoder import EncoderFactory, GraphEncoderBase
-from rgnet.encoding.ilg_hetero_encoder import ILGHeteroGraphEncoder
-from rgnet.logging_setup import get_logger
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.data import FlashDrive
-from rgnet.rl.data.atom_drive import AtomDrive
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
-from rgnet.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
-from rgnet.rl.reward import UnitReward
-from rgnet.utils.misc import NonTensorWrapper, tolist
-from rgnet.utils.object_embeddings import ObjectEmbedding
+from plangolin.encoding import ColorGraphEncoder, DirectGraphEncoder, HeteroGraphEncoder
+from plangolin.encoding.base_encoder import EncoderFactory, GraphEncoderBase
+from plangolin.encoding.ilg_hetero_encoder import ILGHeteroGraphEncoder
+from plangolin.logging_setup import get_logger
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.data import FlashDrive
+from plangolin.rl.data.atom_drive import AtomDrive
+from plangolin.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from plangolin.rl.envs import ExpandedStateSpaceEnv, MultiInstanceStateSpaceEnv
+from plangolin.rl.reward import UnitReward
+from plangolin.utils.misc import NonTensorWrapper, tolist
+from plangolin.utils.object_embeddings import ObjectEmbedding
 
 logger = get_logger(__name__)
 

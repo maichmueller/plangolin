@@ -4,9 +4,9 @@ import mockito
 import pytest
 import torch
 
-from rgnet.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.utils.object_embeddings import ObjectEmbedding
+from plangolin.rl.embedding import EmbeddingTransform, NonTensorTransformedEnv
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.utils.object_embeddings import ObjectEmbedding
 
 from .envs.test_state_space_env import get_expected_next_keys, get_expected_root_keys
 

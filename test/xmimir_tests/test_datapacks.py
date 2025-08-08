@@ -3,7 +3,7 @@ from test.fixtures import medium_blocks  # noqa: F401, F403
 
 import numpy as np
 
-from rgnet.logging_setup import get_logger
+from plangolin.logging_setup import get_logger
 from xmimir import (
     ActionDataPack,
     ActionHistoryDataPack,

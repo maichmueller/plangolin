@@ -1,8 +1,8 @@
-from test.fixtures import direct_encoded_state
+from test.fixtures import direct_encoded_state  # noqa: F401
 
 import pytest
 
-from rgnet.encoding import DirectGraphEncoder
+from plangolin.encoding import DirectGraphEncoder
 
 
 @pytest.mark.parametrize(

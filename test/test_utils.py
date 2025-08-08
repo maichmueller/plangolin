@@ -7,8 +7,8 @@ import torch
 from matplotlib import pyplot as plt
 from torch_geometric.data import HeteroData
 
-from rgnet.utils import ftime, import_all_from
-from rgnet.utils.misc import broadcastable
+from plangolin.utils import ftime, import_all_from
+from plangolin.utils.misc import broadcastable
 from xmimir import XDomain, XProblem
 
 

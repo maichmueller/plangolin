@@ -13,10 +13,10 @@ import torch
 from torch_geometric.data import HeteroData
 
 import xmimir as xmi
-from rgnet.encoding.hetero_encoder import HeteroGraphEncoder
-from rgnet.encoding.ilg_hetero_encoder import ILGHeteroGraphEncoder
-from rgnet.logging_setup import get_logger
-from rgnet.utils import import_all_from
+from plangolin.encoding.hetero_encoder import HeteroGraphEncoder
+from plangolin.encoding.ilg_hetero_encoder import ILGHeteroGraphEncoder
+from plangolin.logging_setup import get_logger
+from plangolin.utils import import_all_from
 
 
 @pytest.mark.parametrize(

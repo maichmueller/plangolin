@@ -1,7 +1,7 @@
 ## ThundeRL
 
-- Located in `rgnet/rl/thundeRL`
-- Entrypoint found at `rgnet/rl/thundeRL/entrypoint.py`
+- Located in `plangolin/rl/thundeRL`
+- Entrypoint found at `plangolin/rl/thundeRL/entrypoint.py`
 - Optimized RL approach based on the assumption of **small training problems**: The problems are small enough to be fully enumerated as
    state space. For example, Blocksworld only has blocks objects, hence predicates scale only with the number of blocks given. The number of states that can be enumerated scales as the following:
   - 4 blocks:     125 states
@@ -31,7 +31,7 @@ interaction.
 ### General Setup
 
 1. **Dataset Construction**
-    - For each training problem, create a dataset (child-class of `rgnet.rl.data.Drive`), which can be
+    - For each training problem, create a dataset (child-class of `plangolin.rl.data.Drive`), which can be
       reused across multiple experiments. For example, for the notion of learning a policy using a Policy Gradient approach,
       the dataset-class (`FlashDrive`) implements the following steps:
     - **State Space Enumeration**: Enumerate the state space and create a data point
@@ -63,7 +63,7 @@ interaction.
         - `ProbsStoreCallback`: Store transition probabilities for each state for later
           analysis.
 4. **Testing**: Test the agent behavior on a set of test problems
-   using `rgnet.rl.thundeRL.eval.py`.
+   using `plangolin.rl.thundeRL.eval.py`.
 
 #### Additional benefits
 
@@ -77,8 +77,8 @@ Store the config files below e.g. in `my_experiment/config.yaml` and `my_experim
 Then run the following command:
 
 ```bash
-python -m rgnet.rl.thundeRL.entrypoint
---cli rgnet.rl.thundeRL.policy_gradient.CLI
+python -m plangolin.rl.thundeRL.entrypoint
+--cli plangolin.rl.thundeRL.policy_gradient.CLI
 --config my_experiment/config.yaml
 --config my_experiment/data.yaml
 ```
@@ -114,7 +114,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      project: rgnet
+      project: plangolin
       group: reproduce
   callbacks:
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor

@@ -21,8 +21,8 @@ from typing import (
 import torch
 from multimethod import multimethod
 
-from rgnet.logging_setup import get_logger, tqdm
-from rgnet.utils.misc import KeyAwareDefaultDict, env_aware_cpu_count, return_true
+from plangolin.logging_setup import get_logger, tqdm
+from plangolin.utils.misc import KeyAwareDefaultDict, env_aware_cpu_count, return_true
 
 # from .extensions import *
 from .wrappers import *

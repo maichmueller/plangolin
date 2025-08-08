@@ -14,7 +14,7 @@ encoder:
   class_path: HeteroGraphEncoder
 
 collate:
-  func: rgnet.rl.thundeRL.to_transitions_batch
+  func: plangolin.rl.thundeRL.to_transitions_batch
 
 reward:
   class_path: FlatReward
@@ -42,7 +42,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      project: rgnet
+      project: plangolin
       group: rl-test
       offline: True
 

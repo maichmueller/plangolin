@@ -7,9 +7,9 @@ from test.fixtures import (  # noqa: F401, F403
 import numpy as np
 from torch_geometric.data import Batch
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.models.atom_valuator import AtomValuator
-from rgnet.models.hetero_gnn import HeteroGNN
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.models.atom_valuator import AtomValuator
+from plangolin.models.hetero_gnn import HeteroGNN
 
 
 def test_atom_valuator(small_blocks, medium_blocks):

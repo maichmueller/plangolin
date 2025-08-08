@@ -11,7 +11,7 @@ Please try to provide a minimal example to reproduce the bug. Error messages and
 Please use the markdown code blocks for both code and stack traces.
 
 ```python
-import rgnet
+import plangolin
 ```
 
 ```bash

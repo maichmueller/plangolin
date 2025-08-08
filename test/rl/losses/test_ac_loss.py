@@ -12,15 +12,15 @@ from torch.distributions import Categorical
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from rgnet.encoding import HeteroGraphEncoder
-from rgnet.rl.agents import ActorCritic
-from rgnet.rl.embedding import (
+from plangolin.encoding import HeteroGraphEncoder
+from plangolin.rl.agents import ActorCritic
+from plangolin.rl.embedding import (
     EmbeddingTransform,
     NonTensorTransformedEnv,
     build_hetero_embedding_and_gnn,
 )
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.losses import ActorCriticLoss
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.losses import ActorCriticLoss
 
 
 @pytest.fixture

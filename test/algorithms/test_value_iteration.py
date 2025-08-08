@@ -3,14 +3,14 @@ from test.fixtures import fresh_flashdrive, medium_blocks  # noqa: F401, F403
 import pytest
 import torch
 
-from rgnet.algorithms import (
+from plangolin.algorithms import (
     ValueIterationMP,
     bellman_optimal_values,
     mdp_graph_as_pyg_data,
     optimal_policy,
 )
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.reward import UnitReward
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.reward import UnitReward
 
 
 @pytest.mark.parametrize(

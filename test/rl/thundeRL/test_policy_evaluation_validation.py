@@ -10,9 +10,9 @@ from mockito import arg_that, mock, spy2, verify, when
 from tensordict import TensorDict
 from torch import Tensor
 
-from rgnet.rl.envs import ExpandedStateSpaceEnv
-from rgnet.rl.reward import UnitReward
-from rgnet.rl.thundeRL.validation import PolicyEvaluationValidation
+from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.reward import UnitReward
+from plangolin.rl.thundeRL.validation import PolicyEvaluationValidation
 from xmimir.iw import IWSearch, IWStateSpace
 
 
