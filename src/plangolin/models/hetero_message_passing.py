@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import itertools
 import operator
+from abc import ABC
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -21,7 +22,7 @@ from plangolin.models.patched_module_dict import PatchedModuleDict
 from plangolin.utils.misc import stream_context
 
 
-class HeteroRouting(torch.nn.Module):
+class HeteroRouting(torch.nn.Module, ABC):
     """
     Handles heterogeneous message passing very similar to pyg.nn.HeteroConv.
     Instead of specifying a convolution for each EdgeType more generic rules can be used.

@@ -50,6 +50,26 @@ def simple_mlp(
 
 
 class RelationalGNN(PyGHeteroModule):
+    """
+    RelationalGNN is a Graph Neural Network designed for learning over relational (heterogeneous) graphs,
+    where nodes represent objects and atoms (predicates with arguments), and edges encode relationships
+    between them. It performs iterative message passing between objects and atoms, using predicate-specific
+    MLPs to aggregate and propagate information. The primary use case is to compute object embeddings in
+    planning instances through their atom-relationships.
+
+    Core Functionality:
+      - Initializes object and atom embeddings.
+      - For each layer, passes messages from objects to atoms (using predicate-specific message modules),
+        then from atoms back to objects (using aggregation), and updates object embeddings.
+      - Supports customizable aggregation functions, activation functions, and predicate module construction.
+      - Handles variable arity predicates and flexible initialization, including random initialization.
+
+    Usage:
+      - Instantiate with embedding size, number of layers, object type id, arity dictionary, and optional customizations.
+      - Call forward() with x_dict (node features), edge_index_dict (edges), and optional batch or info dicts.
+      - Returns object embeddings and their batch indices for downstream tasks.
+    """
+
     def __init__(
         self,
         embedding_size: int,
@@ -256,6 +276,20 @@ class RelationalGNN(PyGHeteroModule):
 
 
 class ValueRelationalGNN(RelationalGNN):
+    """
+    ValueRelationalGNN extends RelationalGNN to provide a value prediction mechanism over graphs.
+    After computing object embeddings via relational message passing, it applies a readout MLP and
+    a pooling operation to produce a scalar value for each input graph/state.
+
+    Purpose:
+      - Useful for tasks such as value estimation in reinforcement learning or evaluating graph-level properties.
+      - Aggregates object embeddings into a single value per graph using a configurable pooling strategy.
+
+    Usage:
+      - Instantiate like RelationalGNN with additional control over the pooling method.
+      - Call forward() to get a tensor of predicted values for each graph in the batch.
+    """
+
     def __init__(
         self,
         embedding_size: int,
@@ -293,6 +327,22 @@ class ValueRelationalGNN(RelationalGNN):
 
 
 class ILGRelationalGNN(RelationalGNN):
+    """
+    ILGRelationalGNN is a variant of RelationalGNN that incorporates an additional condition input
+    (e.g., atom status) into each predicate-specific MLP. This allows the GNN to reduce overall MLP count
+    by sharing parameters between predicates p and their augmentations (e.g., goal-predicates p_goal,
+    [un-]satisfied goal predicates p_sat_goal, ...).
+
+    Differences from RelationalGNN:
+      - Increases the embedding size by 1 to accommodate the condition input.
+      - Uses ConditionalFanOutMP for message passing with condition-dependent updates.
+      - Expects and propagates a condition tensor through the network for each atom.
+
+    Purpose:
+      - Identical to RelationalGNN but smaller footprint for scenarios where predicates have multiple variations
+        and potential learning benefit from parameter sharing.
+    """
+
     def __init__(self, embedding_size: int, *args, **kwargs):
         # +1 embedding size to add a condition input for each MLP corresponding to the atom status.
         super().__init__(
