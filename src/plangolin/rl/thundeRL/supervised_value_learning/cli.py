@@ -5,7 +5,7 @@ import torch
 from lightning.pytorch.cli import OptimizerCallable
 
 # avoids specifying full class_path for model.gnn in cli
-from plangolin.models import HeteroGNN, VanillaGNN  # noqa: F401
+from plangolin.models import RelationalGNN, VanillaGNN  # noqa: F401
 from plangolin.rl.thundeRL.cli_config import *
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 

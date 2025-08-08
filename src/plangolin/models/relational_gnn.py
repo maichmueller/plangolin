@@ -49,7 +49,7 @@ def simple_mlp(
     return torch.nn.Sequential(*layers)
 
 
-class HeteroGNN(PyGHeteroModule):
+class RelationalGNN(PyGHeteroModule):
     def __init__(
         self,
         embedding_size: int,
@@ -134,7 +134,7 @@ class HeteroGNN(PyGHeteroModule):
         skip_zero_arity_predicates: bool = True,
     ):
         """
-        Initializes the modules for the HeteroGNN.
+        Initializes the modules for the RelationalGNN.
         """
         if predicate_module_factory is None:
             # One MLP per predicate (goal-predicates included)
@@ -255,7 +255,7 @@ class HeteroGNN(PyGHeteroModule):
         return x_dict, edge_index_dict
 
 
-class ValueHeteroGNN(HeteroGNN):
+class ValueRelationalGNN(RelationalGNN):
     def __init__(
         self,
         embedding_size: int,
@@ -292,7 +292,7 @@ class ValueHeteroGNN(HeteroGNN):
         return self.readout(self.pooling(object_embeddings)).view(-1)
 
 
-class ILGHeteroGNN(HeteroGNN):
+class ILGRelationalGNN(RelationalGNN):
     def __init__(self, embedding_size: int, *args, **kwargs):
         # +1 embedding size to add a condition input for each MLP corresponding to the atom status.
         super().__init__(
@@ -313,7 +313,7 @@ class ILGHeteroGNN(HeteroGNN):
         skip_zero_arity_predicates: bool = True,
     ):
         """
-        Initializes the modules for the HeteroGNN.
+        Initializes the modules for the RelationalGNN.
         """
         if predicate_module_factory is None:
             # One MLP per predicate (goal-predicates included)

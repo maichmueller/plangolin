@@ -16,7 +16,7 @@ from torch import Tensor
 from torchrl.modules.tensordict_module import ValueOperator
 
 import xmimir as xmi
-from plangolin.models.hetero_gnn import simple_mlp
+from plangolin.models.relational_gnn import simple_mlp
 from plangolin.rl.embedding import EmbeddingModule
 from plangolin.utils.misc import NonTensorWrapper, as_non_tensor_stack, tolist
 from plangolin.utils.object_embeddings import (

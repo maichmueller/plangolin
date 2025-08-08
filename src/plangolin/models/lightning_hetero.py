@@ -12,7 +12,7 @@ from torch import Tensor
 from torch.nn import L1Loss, MSELoss
 from torch.nn.modules.loss import _Loss
 
-from .hetero_gnn import ValueHeteroGNN
+from .relational_gnn import ValueRelationalGNN
 
 
 class LightningHetero(LightningModule):
@@ -45,7 +45,7 @@ class LightningHetero(LightningModule):
         elif not isinstance(loss_function, _Loss):
             raise ValueError(f"Unknown loss function: {loss_function}")
 
-        self.model = ValueHeteroGNN(
+        self.model = ValueRelationalGNN(
             embedding_size,
             num_layer=num_layer,
             obj_type_id=obj_type_id,
@@ -57,7 +57,7 @@ class LightningHetero(LightningModule):
 
     @staticmethod
     def add_model_args(parent_parser: ArgumentParser) -> ArgumentParser:
-        parser = parent_parser.add_argument_group("HeteroGNN")
+        parser = parent_parser.add_argument_group("RelationalGNN")
         parser.add_argument(
             "--embedding_size",
             type=int,

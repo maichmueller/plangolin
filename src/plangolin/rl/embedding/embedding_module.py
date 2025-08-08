@@ -7,7 +7,7 @@ from torch_geometric.nn import Aggregation
 
 import xmimir as xmi
 from plangolin.encoding import GraphEncoderBase, HeteroGraphEncoder
-from plangolin.models import HeteroGNN, PyGHeteroModule, PyGModule
+from plangolin.models import PyGHeteroModule, PyGModule, RelationalGNN
 from plangolin.models.mixins import DeviceAwareMixin
 from plangolin.utils.misc import NonTensorWrapper, tolist
 from plangolin.utils.object_embeddings import ObjectEmbedding
@@ -66,7 +66,7 @@ def build_hetero_embedding_and_gnn(
     aggr: str | Aggregation | None = None,
     **kwargs,
 ):
-    gnn = HeteroGNN(
+    gnn = RelationalGNN(
         embedding_size=embedding_size,
         num_layer=num_layer,
         aggr=aggr,

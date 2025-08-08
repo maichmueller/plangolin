@@ -18,7 +18,7 @@ from torch_geometric.data import Batch
 
 from plangolin.encoding import GraphEncoderBase
 from plangolin.logging_setup import get_logger, tqdm
-from plangolin.models import HeteroGNN
+from plangolin.models import RelationalGNN
 from plangolin.models.atom_valuator import AtomValuator, EmbeddingAndValuator
 from plangolin.models.pyg_module import PyGHeteroModule, PyGModule
 from plangolin.rl.agents import AtomValueActor
@@ -79,7 +79,7 @@ class AtomValuesLitModule(lightning.LightningModule):
         if share_predicate_modules:
             # if we want to share the MLPs, we need to ensure that the AtomValuator's MLPs are shared
             # with the GNN's predicate modules.
-            if isinstance(self.gnn, HeteroGNN):
+            if isinstance(self.gnn, RelationalGNN):
                 # the valuator's mlps are a subset of the GNN's predicate modules, dont test the other way around
                 valuators = atom_valuator.valuator_by_predicate
                 for predicate in valuators:
@@ -90,7 +90,7 @@ class AtomValuesLitModule(lightning.LightningModule):
                     ]
             else:
                 get_logger(__name__).warning(
-                    "Sharing MLPs is only supported for HeteroGNN instances. Silently ignoring."
+                    "Sharing MLPs is only supported for RelationalGNN instances. Silently ignoring."
                 )
         self.embedder_and_valuator = EmbeddingAndValuator(
             gnn=self.gnn, atom_valuator=self.atom_valuator

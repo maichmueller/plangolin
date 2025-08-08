@@ -5,7 +5,7 @@ import torch.optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import ValueEstimators
 
-from plangolin.models import HeteroGNN, PyGHeteroModule
+from plangolin.models import PyGHeteroModule, RelationalGNN
 from plangolin.rl.agents import ActorCritic
 from plangolin.rl.losses import ActorCriticLoss
 from plangolin.rl.thundeRL import PolicyGradientLitModule
@@ -16,7 +16,7 @@ from plangolin.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModu
 def test_training_step(fresh_flashdrive_medium_blocks, medium_blocks):
     """
     Integration test for the training step of the PolicyGradientModule.
-    Mocked: HeteroGNN, ActorCritic, ValueOperator
+    Mocked: RelationalGNN, ActorCritic, ValueOperator
     Tested: ActorCriticLoss, PolicyGradientModule
     Tests he exact loss of PolicyGradientModule::training_step.
     Setup:
@@ -103,7 +103,7 @@ def test_training_step(fresh_flashdrive_medium_blocks, medium_blocks):
             return current_embeddings
         return successor_embeddings
 
-    gnn_mock = mockito.mock(HeteroGNN)
+    gnn_mock = mockito.mock(RelationalGNN)
     mockito.when(gnn_mock).__call__(...).thenAnswer(gnn_forward)
 
     value_net_mock = ObjectPoolingModule(pooling="add")

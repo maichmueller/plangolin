@@ -48,7 +48,7 @@ interaction.
       flattening successor states into a single batch object.
     - Run the agent using `PolicyGradientModule`:
         1. Compute the embeddings of the current states and successor states with
-           a `HeteroGNN`
+           a `RelationalGNN`
         2. Use the `ActorCritic` agent to compute the transition probabilities and
            action index.
         3. Select the reward and done signal for the sampled action.

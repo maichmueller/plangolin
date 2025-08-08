@@ -6,7 +6,7 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
 from plangolin.encoding import HeteroGraphEncoder
-from plangolin.models.hetero_gnn import HeteroGNN, ValueHeteroGNN
+from plangolin.models.relational_gnn import RelationalGNN, ValueRelationalGNN
 from plangolin.rl.data.flash_drive import attr_getters
 from plangolin.utils.object_embeddings import ObjectPoolingModule
 from xmimir import parse
@@ -21,7 +21,7 @@ def test_hetero_gnn(hetero_encoded_state):
     graph, encoder = hetero_encoded_state
     data = encoder.to_pyg_data(graph)
 
-    model = ValueHeteroGNN(
+    model = ValueRelationalGNN(
         embedding_size=2,
         num_layer=1,
         aggr="sum",
@@ -52,7 +52,7 @@ def test_value_hetero_gnn_backward(tmp_path, fresh_flashdrive):
     domain, problem = parse(fresh_flashdrive.domain_path, fresh_flashdrive.problem_path)
     encoder = HeteroGraphEncoder(domain)
     batch = Batch.from_data_list(fresh_flashdrive)
-    model = ValueHeteroGNN(
+    model = ValueRelationalGNN(
         embedding_size=2,
         num_layer=1,
         aggr="sum",
@@ -85,7 +85,7 @@ def test_hetero_gnn_backward(tmp_path, fresh_flashdrive):
     encoder = HeteroGraphEncoder(domain)
     batch = Batch.from_data_list(fresh_flashdrive)
     assert len(batch) == 5, "If this fails the underlying test data has changed!"
-    model = HeteroGNN(
+    model = RelationalGNN(
         embedding_size=5,
         num_layer=1,
         aggr="sum",
@@ -121,7 +121,7 @@ def test_hetero_batched(tmp_path, fresh_flashdrive):
     encoder = HeteroGraphEncoder(domain)
     loader = DataLoader(fresh_flashdrive, batch_size=3)
     for batch in loader:
-        model = ValueHeteroGNN(
+        model = ValueRelationalGNN(
             embedding_size=2,
             num_layer=1,
             aggr="sum",

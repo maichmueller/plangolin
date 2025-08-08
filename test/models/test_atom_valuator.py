@@ -9,7 +9,7 @@ from torch_geometric.data import Batch
 
 from plangolin.encoding import HeteroGraphEncoder
 from plangolin.models.atom_valuator import AtomValuator
-from plangolin.models.hetero_gnn import HeteroGNN
+from plangolin.models.relational_gnn import RelationalGNN
 
 
 def test_atom_valuator(small_blocks, medium_blocks):
@@ -26,7 +26,7 @@ def test_atom_valuator(small_blocks, medium_blocks):
     data = Batch.from_data_list(pyg_states)
 
     feature_size = 5
-    gnn = HeteroGNN(
+    gnn = RelationalGNN(
         embedding_size=feature_size,
         num_layer=1,
         aggr="sum",

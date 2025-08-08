@@ -17,7 +17,7 @@ from plangolin.encoding import (  # noqa: F401
 )
 
 # avoids specifying full class_path for model.gnn in cli
-from plangolin.models import HeteroGNN, VanillaGNN  # noqa: F401
+from plangolin.models import RelationalGNN, VanillaGNN  # noqa: F401
 from plangolin.rl.agents import ActorCritic
 from plangolin.rl.embedding import EmbeddingModule
 from plangolin.rl.losses import (  # noqa: F401
