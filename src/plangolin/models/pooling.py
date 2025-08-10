@@ -13,7 +13,7 @@ from torch_geometric.nn.aggr import (
     SumAggregation,
 )
 
-from plangolin.models.attention_aggr import AttentionAggregation
+from plangolin.models.aggr import AttentionAggregation
 
 
 class GlobalPool(ABC, torch.nn.Module):
@@ -66,6 +66,10 @@ class GlobalMaxPool(GlobalPoolFromAggregation):
 class GlobalAddPool(GlobalPoolFromAggregation):
     def __init__(self):
         super().__init__(SumAggregation())
+
+
+class GlobalSumPool(GlobalAddPool):
+    pass
 
 
 class GlobalSortPool(GlobalPoolFromAggregation):

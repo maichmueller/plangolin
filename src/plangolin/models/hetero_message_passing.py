@@ -16,7 +16,7 @@ from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.typing import Adj, EdgeType, OptPairTensor
 
 from plangolin.logging_setup import get_logger
-from plangolin.models.logsumexp_aggr import LogSumExpAggregation
+from plangolin.models.aggr import LogSumExpAggregation
 from plangolin.models.mixins import DeviceAwareMixin
 from plangolin.models.patched_module_dict import PatchedModuleDict
 from plangolin.utils.misc import stream_context

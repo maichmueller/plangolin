@@ -2,7 +2,6 @@ import itertools
 from typing import Any, Callable, Iterable, NamedTuple, Optional, Sequence
 
 import torch
-import torch_geometric.nn
 from torch import Tensor
 from torch_geometric.data import Batch
 from torch_geometric.nn.resolver import activation_resolver
@@ -17,7 +16,6 @@ from plangolin.utils.misc import (
 from xmimir import XCategory, XDomain, XPredicate
 from xmimir.wrappers import XAtom, atom_str_template
 
-from .attention_aggr import AttentionPooling
 from .mixins import DeviceAwareMixin
 from .mlp import ArityMLPFactory
 from .patched_module_dict import PatchedModuleDict

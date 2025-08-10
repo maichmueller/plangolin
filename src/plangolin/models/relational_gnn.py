@@ -12,12 +12,12 @@ from torch_geometric.typing import Adj
 
 from plangolin.encoding.hetero_encoder import PredicateEdgeType
 from plangolin.logging_setup import get_logger
+from plangolin.models.aggr import LogSumExpAggregation
 from plangolin.models.hetero_message_passing import (
     ConditionalFanOutMP,
     FanInMP,
     FanOutMP,
 )
-from plangolin.models.logsumexp_aggr import LogSumExpAggregation
 from plangolin.models.pyg_module import PyGHeteroModule
 from plangolin.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
