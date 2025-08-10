@@ -19,7 +19,8 @@ from xmimir.wrappers import XAtom, atom_str_template
 from .mixins import DeviceAwareMixin
 from .mlp import ArityMLPFactory
 from .patched_module_dict import PatchedModuleDict
-from .pyg_module import PyGModule
+from .pooling import GlobalPool, GlobalSumPool
+from .pyg_module import PyGHeteroModule, PyGModule
 
 
 class OutputInfo(NamedTuple):
@@ -32,9 +33,10 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         self,
         predicates: Iterable[XPredicate] | XDomain,
         predicate_module_factory: Callable[[str, int], torch.nn.Module] | None = None,
-        pooling: str = "sum",
-        activation: str = "mish",
         feature_size: int = 64,
+        out_feature_size: int = 1,
+        activation: str = "mish",
+        pooling: GlobalPool = None,
         assert_output: bool = False,
         do_sync: bool = True,
     ):
@@ -75,30 +77,14 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
                 pred: torch.nn.Sequential(
                     predicate_module_factory(pred, arity),
                     activation_resolver(activation),
-                    torch.nn.Linear(feature_size * (arity + 1), 1),
+                    torch.nn.Linear(feature_size * (arity + 1), out_feature_size),
                 )
                 for pred, arity in self.arity_dict.items()
             }
         )
-        match pooling:
-            case "sum":
-                self.pooling = torch_geometric.nn.global_add_pool
-            case "add":
-                self.pooling = torch_geometric.nn.global_add_pool
-            case "mean":
-                self.pooling = torch_geometric.nn.global_mean_pool
-            case "max":
-                self.pooling = torch_geometric.nn.global_max_pool
-            case "attention":
-                self.pooling = AttentionPooling(
-                    feature_size=feature_size, num_heads=10, split_features=True
-                )
-            case _:
-                raise ValueError(
-                    f"Unknown state pooling function: {pooling}. "
-                    f"Choose from [sum, add, max, mean, attention]."
-                )
+        self.pooling = pooling or GlobalSumPool()
         self.feature_size = feature_size
+        self.out_feature_size = out_feature_size
         self.assert_output = assert_output
         self.streams: dict[str, torch.cuda.Stream] = dict()
         self._do_sync = do_sync
@@ -171,7 +157,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         pooled_emb_batch = self.pooling(
             x=embeddings,
             batch=batch_info,
-            size=(info_dict or {}).get("batch_size", None),
+            dim_size=(info_dict or {}).get("batch_size", None),
         )
         if (
             isinstance(object_names, Sequence)
@@ -194,10 +180,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
 
         atom_permutations = KeyAwareDefaultDict(
             lambda arity: self._all_embedding_permutations(
-                object_emb_per_state,
-                object_names,
-                arity,
-                pooled_emb_batch,
+                arity, object_emb_per_state, object_names, pooled_emb_batch
             )
         )  # cache for already computed permutations, may be unused
 
@@ -279,9 +262,9 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
 
     def _all_embedding_permutations(
         self,
+        arity,
         object_emb_per_state: Sequence[Tensor],
         object_names: Sequence[Sequence[str]] | Sequence[str],
-        arity,
         aggr_state_embeddings: Tensor,
     ) -> tuple[Tensor, list[int], list[list[str]]]:
         flattened_permuted_emb = []
@@ -393,7 +376,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
 
 
 class EmbeddingAndValuator(torch.nn.Module):
-    def __init__(self, gnn: PyGModule, atom_valuator: AtomValuator):
+    def __init__(self, gnn: PyGModule | PyGHeteroModule, atom_valuator: AtomValuator):
         super().__init__()
         self.gnn = gnn
         self.atom_valuator = atom_valuator
