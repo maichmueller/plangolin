@@ -52,6 +52,7 @@ class VanillaGNN(PyGModule):
         x: Tensor,
         edge_index: Adj,
         batch: Optional[Tensor] = None,
+        **kwargs,
     ):
         for layer in self.layers:
             x = layer(x, edge_index, batch)
