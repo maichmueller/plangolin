@@ -12,12 +12,15 @@ import torch_geometric as pyg
 
 from xmimir import Object, XAtom, XDomain, XLiteral, XState, gather_objects
 
-GraphT = TypeVar("GraphT", nx.Graph, nx.DiGraph)
+GraphT = TypeVar("GraphT", nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
 
 
 class GraphEncoderBase(ABC, Generic[GraphT]):
     """
-    The state-graph encoder base class into an associated state-graph.
+    Base class for encoders that map planning states to NetworkX graphs and back.
+
+    Subclasses must specify the concrete graph type via `GraphEncoderBase[nx.GraphType]` and implement `_encode` and
+    `to_pyg_data`.
     """
 
     _graph_t: Any
@@ -43,6 +46,7 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
 
     @property
     def domain(self):
+        """Return the planning domain associated with this encoder."""
         return self._domain
 
     @abstractmethod
@@ -50,16 +54,17 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
 
     def encode(self, state: XState | Iterable[XAtom | XLiteral], **kwargs) -> GraphT:
         """
-        Encodes the state/atoms/literals into a networkx-graph representation.
+        Encode a state (or explicit atoms/literals) into a NetworkX graph of type `GraphT`.
 
         Parameters
         ----------
-        state: XState | Iterable[XAtom] | Iterable[XLiteral],
-            the state to encode as a graph.
+        state : XState | Iterable[XAtom | XLiteral]
+            Either an `XState` or an iterable of atoms/literals.
 
         Returns
         -------
-        nx.Graph or nx.DiGraph
+        GraphT
+            The encoded graph. For `XState`, goal literals are appended to the atoms prior to encoding.
         """
 
         if isinstance(state, XState):
@@ -83,6 +88,9 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
     def _contained_objects(
         items: Sequence[XAtom | XLiteral],
     ) -> list[Object]:
+        """
+        Collect and lexicographically sort all objects appearing in the given atoms/literals.
+        """
         if len(items) == 0:
             warnings.warn(
                 "Received empty atom/literal sequence. Check if the state or goal is empty."
@@ -98,14 +106,17 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
     @abstractmethod
     def to_pyg_data(self, encoded_graph: GraphT) -> pyg.data.Data | pyg.data.HeteroData:
         """
-        Converts the encoded state into a torch-geometric data object.
+        Convert an encoded graph into a PyG data object.
+
         Parameters
         ----------
-        encoded_graph: GraphT, the graph to convert.
+        encoded_graph : GraphT
+            The graph to convert.
 
         Returns
         -------
-        pyg.data.Data
+        torch_geometric.data.Data | torch_geometric.data.HeteroData
+            A homogeneous or heterogeneous PyG graph, depending on the encoder.
         """
         ...
 
@@ -118,9 +129,9 @@ class GraphEncoderBase(ABC, Generic[GraphT]):
 
     def as_factory(self) -> EncoderFactory:
         """
-        Returns an EncoderFactory for this encoder.
-        This is used to create a new instance of the encoder with the same parameters, e.g. when needing to
-        multiprocess with the same encoding.
+        Return a lightweight factory that recreates this encoder without copying the domain.
+
+        Useful for multiprocessing or (de)serialization of encoder configuration.
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement `as_factory` method."

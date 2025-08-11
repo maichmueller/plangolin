@@ -41,19 +41,28 @@ class AtomStatus(Enum):
 
 class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
     """
-    An encoder to represent states as heterogeneous graphs with objects and atoms as vertices
-    and edges (i, j) whenever an atom p(..., i, j, ...) holds in the state.
+    Encode a planning state as a heterogeneous graph (Instance‑Learning Graph, ILG).
 
-    The heterogeneous aspect is that there are different types of nodes:
-    object nodes and atom nodes of a number of different predicate types.
-    Objects are connected only to atom nodes, while atom nodes are connected to object nodes in turn.
-    Merely, arity 0 predicates are connected to themselves, i.e. they have a self-loop to retain representation (e.g.,
-    for GNNs that consider globally aggregating nodes).
+    Nodes
+    -----
+    - **Objects**: one node per object, node type `obj_type_id` (default: `"obj"`). Feature `x` has shape `[*, 2]`.
+    - **Atoms**: one node per ground atom (including missing goal atoms), node type equals the predicate name. Feature `x`
+      has shape `[*, arity + 1]` and is filled with the integer value of `AtomStatus`.
 
-    Follows the Instance-Learning Graph (ILG) approach[1]. In particular, each atom receives a colour (feature)
-    depending on its status (see `AtomStatus` enum) and no separate goal atoms are created.
+    Edges
+    -----
+    - For an atom `p(o0, ..., ok-1)`, connect each argument object to the atom with label `position = i`.
+    - Arity‑0 predicates receive a self‑loop (with `position = -1`) so GNNs can aggregate them.
+    - For PyG, we materialize **both directions**: `(obj -> atom)` and `(atom -> obj)` for each position.
 
-    References:
+    Notes
+    -----
+    - Follows the ILG approach (see [1]). Goals are encoded via the `AtomStatus` colour of the atom; we do not create
+      separate goal nodes.
+    - Edge types are keyed by `(src_type, position, dst_type)` so each positional incidence becomes its own relation.
+
+    References
+    ----------
     [1] https://arxiv.org/abs/2403.16508
     """
 
@@ -93,6 +102,11 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         )
 
     def as_factory(self) -> EncoderFactory:
+        """
+        Return a lightweight factory that recreates this encoder without copying the domain.
+
+        Useful for multiprocessing or (de)serialization of encoder configuration.
+        """
         return EncoderFactory(
             encoder_class=self.__class__,
             kwargs={
@@ -186,6 +200,16 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
 
     @check_encoded_by_this
     def to_pyg_data(self, graph: GraphT) -> HeteroData:
+        """
+        Convert the encoded NetworkX `MultiGraph` into `torch_geometric.data.HeteroData`.
+
+        Sets `x` per node type as follows:
+        - Objects: shape `(num_objects, 2)`, zeros.
+        - Predicate nodes: shape `(num_atoms_of_pred, arity+1)`, all entries equal to the atom's `AtomStatus` value.
+
+        For edges, builds `edge_index` tensors per key `(src_type, position, dst_type)` and also inserts reverse edges.
+        Adds empty tensors for any missing node or edge types to keep batching robust.
+        """
         del graph.graph["encoding"]
         del graph.graph["state"]
         nodes_dict: Dict[NodeType, List[Node]] = defaultdict(list)
@@ -221,13 +245,14 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                     x[i].fill_(status.value)
             data[node_type].x = x
 
-        # Add dummy entry for node-types that don't appear in this state
+        # Add dummy entry for node-types that do not appear in this state
         # https://github.com/pyg-team/pytorch_geometric/issues/9233
         for unused_node_type in self.arity_dict.keys() - nodes_dict.keys():
-            data[unused_node_type].x = torch.empty(0, dtype=torch.float32)
+            arity = self.arity_dict[unused_node_type]
+            data[unused_node_type].x = torch.empty((0, arity + 1), dtype=torch.float32)
         if self.obj_type_id not in nodes_dict:
             get_logger(__name__).warning(f"No object in graph ({graph})")
-            data[self.obj_type_id].x = torch.empty(0, dtype=torch.float32)
+            data[self.obj_type_id].x = torch.empty((0, 2), dtype=torch.float32)
 
         # Group edges by src, position, dst
         edge_dict: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
@@ -253,25 +278,33 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                 )
 
         # Stack grouped edge_indices and add to data
-        for edge_type, node_type in edge_dict.items():
-            # HeteroData want Tuple[str,str,str] as edge keys
-            data[edge_type].edge_index = torch.stack(node_type, dim=1)
+        for edge_type, indices in edge_dict.items():
+            # HeteroData wants Tuple[str, str, str] as edge keys
+            data[edge_type].edge_index = torch.stack(indices, dim=1)
 
         # Add dummy entry for edge-types that don't appear in this state
-        for unused_edge_type in self.all_edge_types - edge_dict.keys():
+        for unused_edge_type in set(self.all_edge_types) - set(edge_dict.keys()):
             data[unused_edge_type].edge_index = torch.empty(2, 0, dtype=torch.long)
 
         return data
 
     def from_pyg_data(self, data: HeteroData) -> GraphT:
         """
-        Reconstruct a graph from a HeteroData object.
-        Every node has a type attribute, either self.obj_type_id or a predicate name.
-        Node names are the concatenation of the type and the index in the feature matrix.
-        Edge labels are the position in the atom.
-        The returned graph is not the exact same as one returned by encode, but isomorphic.
-        :param data: HeteroData object encoded with this encoder.
-        :return: The networkx graph as described above.
+        Reconstruct a NetworkX graph from `HeteroData` produced by this encoder.
+
+        Node types are either the object type (`obj_type_id`) or predicate names. Object names are restored from
+        `data.object_names`. Edge labels store the argument position used in the atom. Arity‑0 predicates are reconstructed
+        with a self‑loop `position = -1`.
+
+        Parameters
+        ----------
+        data : HeteroData
+            Graph encoded with this encoder.
+
+        Returns
+        -------
+        nx.MultiGraph
+            A graph isomorphic (up to node naming) to the one produced by `encode`.
         """
         graph = self._graph_t(encoding=self)
         assert all(pred in data.node_types for pred in self.arity_dict.keys())
@@ -298,8 +331,6 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
         for edge_type in data.edge_types:
             if edge_type in edge_types:
                 raise ValueError(f"Duplicate edge type found ({edge_type}).")
-            if edge_type in edge_types:
-                continue
             edge_types.add(edge_type)
             src_tensor, dst_tensor = data.edge_index_dict[edge_type]
             src, rel, dst = edge_type
@@ -307,12 +338,12 @@ class ILGHeteroGraphEncoder(GraphEncoderBase[nx.MultiGraph]):
                 src_idx = src_idx.item()
                 dst_idx = dst_idx.item()
                 if src != self.obj_type_id:
-                    src_status = data.x_dict[src].flatten()[0].item()
+                    src_status = data.x_dict[src][src_idx, 0].item()
                     atoms[(src, src_idx, src_status)][int(rel)] = (
                         obj_names[dst_idx] if dst_idx >= 0 else None
                     )
                 elif dst != self.obj_type_id:
-                    dst_status = data.x_dict[dst].flatten()[0].item()
+                    dst_status = data.x_dict[dst][dst_idx, 0].item()
                     atoms[(dst, dst_idx, dst_status)][int(rel)] = (
                         obj_names[src_idx] if src_idx >= 0 else None
                     )

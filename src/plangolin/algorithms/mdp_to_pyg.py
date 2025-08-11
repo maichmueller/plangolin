@@ -10,12 +10,31 @@ from xmimir import StateType
 @cache
 def mdp_graph_as_pyg_data(nx_state_space_graph: nx.DiGraph):
     """
-    Convert the networkx graph into a directed pytorch_geometric graph.
-    The reward for each transition is stored in edge_attr[:, 0].
-    The transition probabilities are stored in edge_attr[:, 1].
-    The node features are stored as usual in graph.x.
-    The first dimension is the node value (starting with 0).
-    The second node feature dimension is one, if the node is a goal state.
+    Convert a NetworkX state‑space `DiGraph` to a PyTorch Geometric `Data` object.
+
+    Edge attributes (column order as created by `from_networkx(..., group_edge_attrs=["reward", "probs", "done", "idx"])`):
+    - `edge_attr[:, 0]`: reward (float)
+    - `edge_attr[:, 1]`: transition probability (float)
+    - `edge_attr[:, 2]`: terminal flag (bool cast to float)
+    - `edge_attr[:, 3]`: traversal index (int). Edges are re-ordered to be increasing in this index to
+      preserve the original traversal order.
+
+    Node-level attributes set on the returned graph:
+    - `x`: shape `[num_nodes]`, initial value per state. Goal states are initialized to their immediate goal
+      reward (often `0.0`), all other states to `0.0`.
+    - `goals`: `BoolTensor[num_nodes]`, `True` for goal states.
+    - `gamma`: optional float scalar copied from `nx_state_space_graph.graph['gamma']` if present.
+
+    Notes
+    -----
+    - The result is memoized via `functools.cache` keyed by the input graph object identity.
+    - Only the first two edge-attribute columns (reward, probability) are required by the message‑passing
+      modules in this package; the others are retained for bookkeeping.
+
+    Returns
+    -------
+    torch_geometric.data.Data
+        The PyG graph with ordered `edge_index/edge_attr`, `x`, `goals`, and optional `gamma`.
     """
     pyg_graph = torch_geometric.utils.from_networkx(
         nx_state_space_graph, group_edge_attrs=["reward", "probs", "done", "idx"]

@@ -166,9 +166,7 @@ def test_atom_dist_mp_module(request, problem):
     mp_module(pyg_env.to(device))
     print(f"Time taken for MP module: {time.time() - start:.2f} seconds")
     for state in space:
-        dist_tensor = getattr(pyg_env, OptimalAtomValuesMP.default_attr_name)[
-            state.index
-        ]
+        dist_tensor = getattr(pyg_env, mp_module.attr_name)[state.index]
         validate_atom_values(
             lambda atom_str: -dist_tensor[mp_module.atom_to_index[atom_str]].item(),
             space,
@@ -198,7 +196,7 @@ def test_atom_dist_mp_module_manual_graph():
         gamma=1.0, atom_to_index_map=atom_to_index_map, aggr="min"
     )
     mp_module(pyg_graph)
-    final_distances = pyg_graph[OptimalAtomValuesMP.default_attr_name]
+    final_distances = pyg_graph[mp_module.attr_name]
     expected = torch.tensor(
         [[2, 1, 0], [1, 0, 2], [0, 2, 1], [torch.inf, torch.inf, torch.inf]],
         dtype=torch.float,

@@ -7,36 +7,33 @@ from torch import Tensor
 from torch.nn.functional import l1_loss
 from torch_geometric.nn.conv import MessagePassing
 
+from plangolin.models.mixins import DeviceAwareMixin
 from plangolin.utils.reshape import unsqueeze_right_like
 
 
 # MessagePassing interface defines message_and_aggregate and edge_update, which are
 # marked abstract but should only be overwritten if needed.
 # noinspection PyMethodOverriding, PyAbstractClass
-class PolicyEvaluationMP(MessagePassing):
+class PolicyEvaluationMP(DeviceAwareMixin, MessagePassing):
     r"""
-    Implements Policy evaluation as a Pytorch Geometric message passing function.
-    Can be executed on cpu or an accelerator.
+    Policy evaluation as a PyTorch Geometric `MessagePassing` layer.
 
-    Note: Policy evaluation follows the Bellman equation:
+    Implements the Bellman expectation backup
 
     .. math::
-        V(s) = \sum_{a} \sum_{s'} \pi(a|s) P(s'|s,a) [R(s,a,s') + \gamma V(s')]
-             = \sum_{s'} \pi(s'|s) [R(s,s') + \gamma V(s')]
+        V(s) = \sum_{s'} \pi(s'\mid s)\,[R(s,s') + \gamma V(s')]
 
-    where :math:`V(s)` is the value of state :math:`s`, :math:`P(s'|s,a)` is the transition probability from state
-    :math:`s` to state :math:`s'` from action :math:`a`, and :math:`R(s,a,s')` is the reward for taking action :math:`a`
-    in state :math:`s` and ending up in state :math:`s'`.
-    Our MDPs are assumed deterministic, thus actions coincide with successor states (second line).
-    In this setting we consider policies to be mappings of states to successor states (and not actions),
-    effectively collapsing the transition probabilities and the policy into one.
+    assuming deterministic MDPs where actions coincide with successor states (policy maps states to successors).
 
-    Assumes the input Data object has the following attributes:
-    - edge_attr: Tensor of shape [num_edges, 2] containing transition probabilities and rewards
-                 edge_attr[:, 0] = rewards
-                 edge_attr[:, 1] = transition probabilities
-    - node_attr: Tensor of shape [num_nodes] containing the initial state values
-    - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
+    **Input requirements**
+    - `data.edge_attr`: tensor with at least two columns. Only `edge_attr[:, 0]` (reward) and `edge_attr[:, 1]`
+      (transition probability) are used; additional columns are ignored.
+    - `data.x`: tensor of shape `[num_nodes, ...]` containing the current value estimate (any shape that broadcasts
+      across messages is supported). By default, this module initializes `x` to zeros.
+    - `data.goals`: `BoolTensor[num_nodes]` indicating terminal/goal states. Goal states keep their current value.
+
+    The resulting values are returned and, if `cache=True`, stored on the `Data` object under
+    `self.attr_name` (default: `"policy_values"`).
     """
 
     default_attr_name = "policy_values"
@@ -48,23 +45,26 @@ class PolicyEvaluationMP(MessagePassing):
         difference_threshold: float | None = 0.001,
         *,
         flow="target_to_source",
-        attr_name: str | None = None,
+        attr_name: str = default_attr_name,
         aggr: str = "sum",
     ):
         super().__init__(aggr=aggr, node_dim=0, flow=flow)
-        self.register_buffer("gamma", torch.as_tensor(gamma))
+        self.gamma = gamma
         self.num_iterations = num_iterations
         self.difference_threshold = difference_threshold
-        self.attr_name = attr_name or self.default_attr_name
-
-    @property
-    def device(self):
-        """
-        Returns the device of the module.
-        """
-        return self.gamma.device
+        self.attr_name = attr_name
 
     def forward(self, data: pyg.data.Data, cache: bool = True) -> Tensor:
+        """
+        Run fixed‑point iteration until the stopping criterion is met, optionally caching the result on `data`.
+
+        Parameters
+        ----------
+        data : pyg.data.Data
+            Graph with `edge_index`, `edge_attr`, `x`, and `goals`.
+        cache : bool, default True
+            If `True`, store the result under `data.<attr_name>` and return the cached value on subsequent calls.
+        """
         if cache and hasattr(data, self.attr_name):
             return getattr(data, self.attr_name)
         values = self._iterate(data)
@@ -80,6 +80,10 @@ class PolicyEvaluationMP(MessagePassing):
         pass
 
     def _iterate(self, data):
+        """
+        Perform iterative message passing until `num_iterations` is reached or the L1 change falls below
+        `difference_threshold` (if set).
+        """
         assert isinstance(data.x, torch.Tensor)
         assert data.edge_attr.ndim >= 2
         assert data.edge_index.shape[-1] == data.edge_attr.shape[0]
@@ -100,6 +104,12 @@ class PolicyEvaluationMP(MessagePassing):
     def _break_condition(
         self, layer_nr: int, features: Tensor, new_features: Tensor, **kwargs
     ):
+        """
+        Stopping rule for the value‑iteration loop.
+
+        Returns `True` if the maximum number of iterations is reached, or if the mean absolute difference between
+        consecutive value tensors (ignoring `inf` at matching positions) is below `difference_threshold`.
+        """
         if layer_nr >= self.num_iterations:
             return True
         if self.difference_threshold is None:
@@ -114,9 +124,19 @@ class PolicyEvaluationMP(MessagePassing):
         )
 
     def _init_features(self, data):
+        """
+        Initialize the value tensor. Default: zeros like `data.x`.
+        """
         return torch.zeros_like(data.x)
 
     def message(self, x_j: Tensor, edge_attr: Tensor) -> Tensor:
+        """
+        Bellman expectation message from successor `j` to source `i`:
+
+        `P(s'\mid s) * (R(s,s') + gamma * V(s'))`
+
+        Expects `edge_attr[:, 0]` to hold rewards and `edge_attr[:, 1]` transition probabilities.
+        """
         reward, transition_prob = edge_attr[:, 0], edge_attr[:, 1]
         reward, transition_prob = (
             unsqueeze_right_like(reward, x_j),
@@ -125,37 +145,31 @@ class PolicyEvaluationMP(MessagePassing):
         return transition_prob * (reward + self.gamma * x_j)
 
     def update(self, inputs: Tensor, x: Tensor, data: pyg.data.Data) -> Tensor:
+        """
+        Keep existing values at goal states; otherwise accept the aggregated backup.
+        """
         return torch.where(unsqueeze_right_like(data.goals, inputs), x, inputs)
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
 class ValueIterationMP(PolicyEvaluationMP):
     r"""
-    Implements Value Iteration as a Pytorch Geometric message passing function.
-    Can be executed on cpu or an accelerator.
+    Value iteration as a PyTorch Geometric `MessagePassing` layer.
 
-    Note: Value Iteration is follows the formula:
-
-    .. math::
-        V(s) = \max_{a} \sum_{s'} P(s'|s,a) [R(s,a,s') + \gamma V(s')]
-             = \max_{s'} [R(s,s') + \gamma V(s')]
-
-    where V(s) is the value of state s, P(s'|s,a) is the transition probability from state s to state s'.
-    Therefore, we can reuse the same message passing module as for policy evaluation.
-    The only difference is that we need to use the max operator instead of the sum operator and implicitly assume that
-    the policy in use is:
+    Implements the Bellman optimality backup
 
     .. math::
-        \pi(s'|s) = \argmax_{s'} [R(s,s') + \gamma V(s')]
+        V(s) = \max_{s'} [R(s,s') + \gamma V(s')]
 
-    Hence, to emulate this we need the transition "probabilities" to be merely a weight of 1.0 for all edges.
-    We enforce this by setting the transition probabilities to 1.0 actively in the message method.
+    by using `aggr='max'` and messages of the form `R(s,s') + \gamma V(s')`. Transition probabilities are
+    ignored for this optimal-control case.
 
-    Assumes the input Data object has the following attributes:
-    - edge_attr: Tensor of shape [num_edges, 2] containing rewards
-                 edge_attr[:, 0] = rewards
-    - node_attr: Tensor of shape [num_nodes] containing the initial state values
-    - goals: BoolTensor of shape [num_nodes] with goals[i] == space.is_goal_state(space.get_states()[i])
+    **Input requirements**
+    - `data.edge_attr`: only `edge_attr[:, 0]` (reward) is used; other columns are ignored.
+    - `data.x`: initial value estimate per node (default initialization is zeros).
+    - `data.goals`: goal mask used by `PolicyEvaluationMP.update` (goal nodes keep their value).
+
+    The resulting values are returned and, if `cache=True`, stored under `"bellman_optimal_values"` by default.
     """
 
     default_attr_name = "bellman_optimal_values"
@@ -179,15 +193,21 @@ class ValueIterationMP(PolicyEvaluationMP):
 # noinspection PyMethodOverriding, PyAbstractClass
 class OptimalPolicyMP(ValueIterationMP):
     r"""
-    Implements Optimal Policy as a Pytorch Geometric message passing function.
-    Can be executed on cpu or an accelerator.
+    Greedy policy extraction scaffolding based on one Bellman‑optimality backup.
 
-    Note: Optimal Policy follows the formula:
+    This class initializes values using a provided `ValueIterationMP` (or a default instance), and performs a single
+    max‑aggregation backup. **It currently returns the per‑state maximal action value, not the argmax indices**. To obtain
+    the actual greedy policy (successor selection), track argmax indices during aggregation or run a separate selection
+    step over outgoing edges using the same scores.
 
-    .. math::
-        \pi(s'|s) = \argmax_{s'} [R(s,s') + \gamma V(s')]
-
-    where V(s) is the value of state s. In a deterministic MDP, actions coincide with successor states.
+    Parameters
+    ----------
+    value_iteration_mp : ValueIterationMP, optional
+        Module used to compute/initialize the value function prior to the greedy backup.
+    num_iterations : int, default 1
+        A single iteration is sufficient for the greedy backup.
+    difference_threshold : float | None, default None
+        Unused in this class.
     """
 
     default_attr_name = "optimal_policy"
@@ -212,11 +232,8 @@ class OptimalPolicyMP(ValueIterationMP):
 
     def _iterate(self, data: pyg.data.Data) -> Tensor:
         """
-        Computes the optimal policy for the given data object.
-
-        Assumes the input Data object has the following attributes:
-        - edge_attr: Tensor of shape [num_edges, 2] containing rewards in the first entry
-                     edge_attr[:, 0] = rewards
+        Not implemented: this method is intentionally left as documentation. The class currently relies on the
+        parent `MessagePassing` machinery with a single greedy backup and does not compute argmax indices.
         """
 
     def _init_features(self, data):
@@ -237,19 +254,37 @@ class OptimalPolicyMP(ValueIterationMP):
 # noinspection PyMethodOverriding, PyAbstractClass
 class OptimalAtomValuesMP(ValueIterationMP):
     r"""
-    Implements Atom Distance as a Pytorch Geometric message passing function.
-    Can be executed on cpu or an accelerator.
+    Propagate per‑state values for propositional atoms using optimal backups.
 
-    Note: Atom Distance follows the formula:
+    Let `x[s, p]` denote the value (e.g., distance or reward) of making atom `p` true starting from state `s`.
+    For each atom `p` that is already true in `s`, `x[s, p] = 0`. For other atoms, messages apply
 
     .. math::
-        \forall p not true in s: d(s, p) = \min_{s'} \{ d(s, s') : p is true in s' \}
+        x[s, p] = \operatorname{agg}_{s' \in N(s)} \bigl( R(s,s') + \gamma\, x[s', p] \bigr),
 
-    where d(s, p) is the distance from state s to atom p. In a deterministic MDP, actions coincide with successor states.
+    where `agg` is `min` (costs) or `max` (rewards). Unreachable atoms remain at `+/- inf` depending on the choice of
+    aggregation.
 
-    We expect an incoming data object to either have pre-initialized x values or to have the attribute atoms_per_state,
-    which is a list[list[XAtom]] of atoms that are true in the respective state.
-    The length of this attribute would have to be the number of states to propagate messages for.
+    **Input requirements**
+    - If `data.x` is not pre‑initialized to shape `[num_states, num_atoms]`, provide `data.atoms_per_state`, a sequence of
+      iterables listing atoms true in each state. The mapping from atom to column index is given by `atom_to_index_map`.
+
+    Parameters
+    ----------
+    gamma : float, default 1.0
+        Discount factor.
+    num_iterations : int, default 1000
+        Maximum number of iterations.
+    difference_threshold : float | None, default 1e-5
+        L1 threshold for early stopping; set `None` to disable.
+    known_atom_reward : float, default 0.0
+        Reserved for future use (e.g., shaping known atoms); currently unused.
+    atom_to_index_map : dict[str, int]
+        Maps `str(atom)` to column index in the value matrix.
+    aggr : {"min", "max"}, default "max"
+        Aggregation direction: `"min"` for costs, `"max"` for rewards.
+    flow : {"target_to_source", "source_to_target"}
+        Message flow passed to `MessagePassing`.
     """
 
     default_attr_name = "atom_values"
@@ -330,13 +365,11 @@ class OptimalAtomValuesMP(ValueIterationMP):
         dim_size: Optional[int] = None,
     ) -> Tensor:
         """
-        PyG's aggregation module calls scatter into a new torch.zeros tensor. Any target index not
-        mentioned in `index` will not aggregate any values and will hence be set to the existing
-        value at the tensor to write to, i.e., the 0-tensor. This will see any values that reflect
-        our init_reward (i.e., +- inf) be set to 0.0, which casts errors into future message-passes.
-        By ensuring that every index is mentioned in the aggregation with a value from our `init_reward`,
-        we can ensure that the aggregation will not be set to 0.0 by default.
-        Note this only works for the min/max aggregation, as the sum aggregation would result in inf's then.
+        Ensure that nodes with no incoming messages keep their sentinel value (±inf).
+
+        PyG aggregates into a fresh zeros tensor; indices that receive no messages would default to `0.0`. We append one
+        synthetic message per node equal to the sentinel `init_reward`, so min/max aggregation preserves the intended value
+        for isolated nodes. (This trick is not suitable for sum aggregation.)
         """
         extended_inputs = torch.cat(
             (
@@ -356,6 +389,9 @@ class OptimalAtomValuesMP(ValueIterationMP):
         return super().aggregate(extended_inputs, extended_index, ptr, dim_size)
 
     def update(self, inputs: Tensor, x: Tensor = None) -> Tensor:
+        """
+        Element‑wise combine the aggregated backup with the previous values via `min` or `max`, depending on `aggr`.
+        """
         return self.updater_func(inputs, x)
 
 

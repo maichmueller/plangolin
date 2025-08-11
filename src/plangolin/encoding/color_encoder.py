@@ -45,7 +45,7 @@ class ColorGraphEncoder(GraphEncoderBase[nx.Graph]):
         super().__init__(domain)
         self.node_factory = node_factory
         self.predicate_nodes_enabled = enable_global_predicate_nodes
-        self._feature_map = feature_map or FeatureMap(domain)
+        self._feature_map = feature_map or FeatureMap(domain.predicates())
 
     def __eq__(self, other: ColorGraphEncoder):
         return (

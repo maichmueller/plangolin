@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from enum import Enum
+from enum import Enum, auto
 from functools import cache, singledispatchmethod
-from typing import Any, Dict, Generator, Iterable, Iterator, NamedTuple, Optional
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    Iterable,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Sequence,
+)
 
 import numpy as np
 
-from xmimir import XAtom, XDomain, XLiteral, XPredicate
+from xmimir import XAtom, XLiteral, XPredicate
 
 
 class FeatureKey(NamedTuple):
@@ -20,16 +29,28 @@ class FeatureKey(NamedTuple):
 
 class FeatureMode(Enum):
     # mere integer naming the category
-    categorical = 0
+    categorical = auto()
     # one-hot vector encoding
-    one_hot = 1
+    one_hot = auto()
     # combinatorial encoding of features in a vector of user-determined length
-    combinatorial = 2
+    combinatorial = auto()
     # structural encoding of the features (1st layer: predicate, 2nd layer: pos, 3rd layer: goal, 4th layer: negated)
-    structural = 3
+    structural = auto()
 
 
 class FeatureMap:
+    """
+    Map (predicate, position, goal/negation) combinations to fixed‑length feature vectors.
+
+    Supports three encoding modes:
+    - `categorical`: integer ids
+    - `one_hot`: one‑hot vectors (length equals the number of distinct feature keys)
+    - `combinatorial`: binary superposition of up to `enc_len` unit vectors; capable of representing up to
+      `2**enc_len - 1` distinct non‑zero codes
+
+    When `ignore_arg_position=True`, argument positions are collapsed and only a single position per predicate is used.
+    """
+
     @cache
     def __new__(cls, *args, **kwargs):
         obj = super().__new__(cls)
@@ -38,8 +59,7 @@ class FeatureMap:
 
     def __init__(
         self,
-        domain: XDomain | None = None,
-        predicates: tuple[XPredicate] | None = None,
+        predicates: tuple[XPredicate] | Sequence[tuple[str, int]],
         mode: FeatureMode = FeatureMode.categorical,
         enc_len: Optional[int] = None,
         ignore_arg_position: bool = False,
@@ -47,11 +67,12 @@ class FeatureMap:
         if self.needs_initialization:
             if not isinstance(mode, FeatureMode):
                 raise ValueError(f"{mode = } not instance of {FeatureMode}.")
-            self._predicates = domain.predicates() if domain else predicates
+            self._predicates = tuple(
+                (p.name, p.arity) if isinstance(p, XPredicate) else p
+                for p in predicates
+            )
             if not self._predicates:
-                raise ValueError(
-                    f"No predicates given. Passed arguments for domain and predicates:\n{repr(domain)}\n{repr(predicates)}"
-                )
+                raise ValueError(f"No predicates given.")
             self._predicate_map = {p: i for i, p in enumerate(self._predicates)}
             self._mode = mode
             self._enc_len = enc_len
@@ -81,8 +102,7 @@ class FeatureMap:
         return self._enc_len
 
     def _key_gen(self) -> Iterator[FeatureKey]:
-        for pred in self._predicates:
-            arity = pred.arity
+        for pred, arity in self._predicates:
             for pos in (
                 range(0, max(1, arity)) if not self._ignore_arg_position else (None,)
             ):
@@ -92,7 +112,7 @@ class FeatureMap:
                     (True, True),
                 ):
                     yield FeatureKey(
-                        pred.name, pos if arity > 0 else None, is_goal, is_negated
+                        pred, pos if arity > 0 else None, is_goal, is_negated
                     )
 
     def _build(self, mode: FeatureMode, encoding_len: Optional[int] = None):
@@ -109,8 +129,8 @@ class FeatureMap:
                 feature_iter = feature_gen()
             case FeatureMode.one_hot:
                 encoding_len = sum(
-                    3 * max(1, pred.arity * (not self._ignore_arg_position))
-                    for pred in self._predicates
+                    3 * max(1, arity * (not self._ignore_arg_position))
+                    for _, arity in self._predicates
                 )
                 none_feature = np.zeros(encoding_len, dtype=np.int8)
                 feature_iter = np.eye(encoding_len, dtype=np.int8)
@@ -119,7 +139,7 @@ class FeatureMap:
                 feature_iter.flags.writeable = False
             case FeatureMode.combinatorial:
                 required_nr_states = sum(
-                    3 * max(1, pred.arity) for pred in self._predicates
+                    3 * max(1, arity) for _, arity in self._predicates
                 )
                 if encoding_len is None:
                     encoding_len, _ = divmod(required_nr_states, 2)
@@ -213,16 +233,3 @@ class FeatureMap:
         if pos is None or self._ignore_arg_position:
             return None
         return pos
-
-    def __getstate__(self):
-        # Exclude the cache from the state
-        state = self.__dict__.copy()
-        state["_predicate_map"] = {}
-        for i, p in enumerate(self._predicates):
-            hollow_p = XPredicate.make_hollow(p.name, p.arity, p.component)
-            hollow_p.__hash__ = p.semantic_hash
-            state["_predicate_map"][hollow_p] = i
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)

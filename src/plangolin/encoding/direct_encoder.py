@@ -57,7 +57,7 @@ class DirectGraphEncoder(GraphEncoderBase[nx.DiGraph]):
         super().__init__(domain)
         self.node_factory = node_factory
         self._feature_map = feature_map or FeatureMap(
-            domain,
+            domain.predicates(),
             mode=FeatureMode.one_hot,
             ignore_arg_position=True,
         )

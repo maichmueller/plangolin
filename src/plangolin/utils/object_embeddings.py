@@ -15,30 +15,34 @@ class ObjectEmbedding:
     dense_embedding: Tensor
     padding_mask: Tensor
 
+    default_padding_value: float = 0.0
+
     def __init__(
         self,
         dense_embedding: Tensor,
         padding_mask: Tensor,
+        padding_value: float = default_padding_value,
     ) -> None:
         """
-        An abstraction for object embeddings of a batch with potentially different numbers of objects per element.
+        Wrap dense per-object embeddings together with a validity mask.
 
-        These masks are created when using `torch_geometric`'s `to_dense_batch` function.
-        If all batch-elements have the same number of objects, the padding mask is a
-        boolean tensor of shape [N, O] with all True values.
-        If the number of objects varies, the padding mask is a boolean tensor of shape [N, O]
-        with False values at the padded locations.
-        A padding mask M highlights at entry M[n, o] whether the object embedding
-        at object-index `o` of batch-element `n` is a real (True) or padded embedding (False).
+        The mask indicates which object positions are real and which are padding.
+        A truthy entry means a real embedding at that position.
 
-        :param dense_embedding: The dense object embeddings.
-            Shape: [N, O, (F, ...)], where...
-                N is the number elements (states) in a batch,
-                O is the number of objects,
-                F is the embedding feature shape (e.g. a single dimension of size F).
-        :param padding_mask: A boolean mask indicating which object embeddings are real and which are paddings.
-            A truthy value means a real embedding at this location.
-            Shape: [N, O] with dtype bool.
+        Args:
+            dense_embedding:
+                Tensor of shape ``[N, O, *F]`` or ``[N, *F]``. If 2D, it is promoted to
+                ``[N, 1, *F]`` internally.
+            padding_mask:
+                Boolean tensor of shape ``[N, O]`` or broadcastable to that shape. If it has
+                fewer than 2 dimensions, it is unsqueezed on the right to match
+                ``dense_embedding`` in the first two dims.
+
+        Raises:
+            ValueError:
+                If ``dense_embedding`` has fewer than 2 dimensions or if the first two
+                dimensions of ``dense_embedding`` and ``padding_mask`` do not match after
+                broadcasting.
         """
         padding_dim = padding_mask.ndim
         if (dim_diff := 2 - padding_dim) > 0:
@@ -52,6 +56,7 @@ class ObjectEmbedding:
             dense_embedding = dense_embedding.unsqueeze(1)
         self.dense_embedding = dense_embedding
         self.padding_mask = padding_mask
+        self.padding_value = padding_value
         self._assert_dim_match(0, 1)
 
     def _assert_dim_match(self, *dims: int):
@@ -159,6 +164,18 @@ class ObjectEmbedding:
     def from_tensordict(tensordict: TensorDict) -> ObjectEmbedding:
         return ObjectEmbedding(
             tensordict["dense_embedding"], tensordict["padding_mask"]
+        )
+
+    @staticmethod
+    def from_masked_tensor(
+        masked_tensor: torch.masked.MaskedTensor,
+        padding_value: float = default_padding_value,
+    ) -> ObjectEmbedding:
+        padding_mask = masked_tensor.get_mask()
+        return ObjectEmbedding(
+            dense_embedding=masked_tensor.masked_fill(~padding_mask, padding_value),
+            padding_mask=padding_mask,
+            padding_value=padding_value,
         )
 
     @staticmethod

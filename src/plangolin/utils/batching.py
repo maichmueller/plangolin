@@ -61,22 +61,42 @@ def batched_permutations(
     with_replacement: bool = False,
 ) -> Generator[PermutedDataBatch[T], None, None]:
     """
-    Yields batches of all permutations of rows (dim=0) of a 2D tensor or 1D sequences.
+    Generate batches of index-ordered permutations of the first dimension of `x`.
+
+    For a tensor input, rows (dim=0) are permuted. For a sequence input, elements are
+    selected by index. Order matters; without replacement this is equivalent to
+    `itertools.permutations(range(N), r=arity)`, with replacement to
+    `itertools.product(range(N), repeat=arity)`.
 
     Args:
-        x: torch.Tensor,
-            A 2D tensor (rows will be permuted) or 1D tensor sequence of equal length.
-        arity: int,
-            Number of objects per permutation.
-        batch_size: int,
-            Number of permutations per batch.
-        transform: Callable,
-            A function to transform the data before yielding it.
-        with_replacement: bool,
-            If True, allows for repeated elements in the permutations.
+        x:
+            Either
+            - a tensor with shape ``[N, ...]`` where the first dimension is permuted, or
+            - a sequence of length ``N`` whose elements are indexed.
+        arity:
+            Length of each permutation tuple ``p = (i0, ..., i_{arity-1})``.
+        batch_size:
+            Number of permutations per yielded batch. If ``None``, stream all permutations
+            in a single batch.
+        transform:
+            Function applied to each permuted slice before yielding. It receives:
+            - for tensor input: ``x[p]`` with shape ``[arity, ...]``
+            - for sequence input: ``[x[i] for i in p]``
+            and must return an object of the same 'container kind' (tensor or list).
+        with_replacement:
+            If ``True``, indices may repeat within a permutation.
 
     Yields:
-        torch.Tensor: A tensor of shape (≤batch_size, rows, cols).
+        PermutedDataBatch:
+            An object with fields:
+            - ``permutations: list[tuple[int, ...]]`` of length ``<= batch_size``
+            - ``data: list[Tensor | T]`` transformed per permutation
+            - ``arity: int`` equal to the provided ``arity``
+
+    Notes:
+        - If ``arity > N`` and ``with_replacement=False``, the generator yields nothing.
+        - Total number of permutations is ``P(N, arity) = N!/(N-arity)!`` without replacement,
+          and ``N**arity`` with replacement. Use ``batch_size`` to bound memory.
     """
 
     def yield_batch(batch_: list[PermutedData[T]]) -> PermutedDataBatch[T]:

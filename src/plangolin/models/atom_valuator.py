@@ -312,7 +312,13 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
         aggr_state_embeddings: Tensor,
     ) -> tuple[Tensor, list[int], list[list[str]]]:
         """
-        Returns the batched embeddings for the given atoms.
+        Build a batched embedding matrix for the subset of atoms matching `predicate`.
+
+        Returns `(batched_permuted_emb, state_association, atom_objects)` where:
+        - `batched_permuted_emb` has shape `[num_states * num_atoms_for_predicate, feature_size * (arity + 1)]` and
+          concatenates `[state_agg_emb || object_embs]` per row.
+        - `state_association` repeats each state index `num_atoms_for_predicate` times.
+        - `atom_objects` lists the object names used for each atom row (for metadata).
         """
         arity = self.arity_dict[predicate]
         atom_indices, atom_objects = zip(
@@ -361,7 +367,7 @@ class AtomValuator(DeviceAwareMixin, torch.nn.Module):
     def __getstate__(self):
         # Custom getstate to handle the streams
         state = self.__dict__.copy()
-        state["_streams"] = None
+        state["streams"] = None
         return state
 
     def __setstate__(self, state):
