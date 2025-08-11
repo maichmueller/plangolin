@@ -4,7 +4,7 @@ from test.fixtures import *  # noqa: F401, F403
 import torch.utils.data
 
 from plangolin.rl.envs import SuccessorEnvironment
-from plangolin.rl.thundeRL.collate import (
+from plangolin.rl.panorama.collate import (
     StatefulCollater,
     to_iw_transitions_batch,
     to_transitions_batch,

@@ -5,8 +5,8 @@ from . import (
     embedding,
     envs,
     losses,
+    panorama,
     reward,
-    thundeRL,
     torchrl_patches,
     trainer,
 )

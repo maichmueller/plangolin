@@ -18,8 +18,8 @@ from plangolin.models.pyg_module import PyGHeteroModule, PyGModule
 from plangolin.rl.agents import ActorCritic
 from plangolin.rl.envs import PlanningEnvironment
 from plangolin.rl.losses import AllActionsLoss, CriticLoss
+from plangolin.rl.panorama.validation import ValidationCallback
 from plangolin.rl.search.agent_maker import AgentMaker
-from plangolin.rl.thundeRL.validation import ValidationCallback
 from plangolin.utils.misc import as_non_tensor_stack, stream_context
 from plangolin.utils.object_embeddings import ObjectEmbedding
 from xmimir import XProblem

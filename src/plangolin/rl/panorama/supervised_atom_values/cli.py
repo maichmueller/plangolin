@@ -6,7 +6,7 @@ from lightning.pytorch.cli import OptimizerCallable
 
 # avoids specifying full class_path for model.gnn in cli
 from plangolin.models import RelationalGNN, VanillaGNN  # noqa: F401
-from plangolin.rl.thundeRL.cli_config import *
+from plangolin.rl.panorama.cli_config import *
 from xmimir import XCategory, XPredicate
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
@@ -73,7 +73,7 @@ class TestSetup:
     avoid_cycles: bool = False  # whether to avoid cycles during testing
 
 
-class CLI(ThundeRLCLI):
+class CLI(PanoramaCLI):
     def __init__(
         self,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
@@ -91,7 +91,7 @@ class CLI(ThundeRLCLI):
     ) -> None:
         super().__init__(
             AtomValuesLitModule,
-            ThundeRLDataModule,
+            PanoramaDataModule,
             save_config_callback,
             save_config_kwargs,
             trainer_class,

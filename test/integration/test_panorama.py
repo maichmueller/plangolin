@@ -16,7 +16,7 @@ from torch_geometric.data import Batch, HeteroData
 import plangolin
 from plangolin.rl.data import FlashDrive
 from plangolin.rl.envs import ExpandedStateSpaceEnv
-from plangolin.rl.thundeRL.policy_gradient import CLI
+from plangolin.rl.panorama.policy_gradient import CLI
 
 
 @pytest.fixture(autouse=True, scope="class")
@@ -65,7 +65,7 @@ class PolicyGradientLitModuleMock:
         return torch.rand((1,), requires_grad=True)
 
 
-def launch_thundeRL(
+def launch_panorama(
     args: List[str], training_step_mock, input_dir, dataset_dir, output_dir
 ):
     # split arguments that contain spaces
@@ -80,13 +80,13 @@ def launch_thundeRL(
     sys.argv = ["run_lightning_fast.py"] + args
 
     mockito.patch(
-        plangolin.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule,
+        plangolin.rl.panorama.policy_gradient.lit_module.PolicyGradientLitModule,
         "training_step",
         training_step_mock,
     )
     cli = cli_main()
     mockito.unstub(
-        plangolin.rl.thundeRL.policy_gradient.lit_module.PolicyGradientLitModule
+        plangolin.rl.panorama.policy_gradient.lit_module.PolicyGradientLitModule
     )
     return cli
 
@@ -239,7 +239,7 @@ def test_full_epoch_data_collection(tmp_path, width):
         Path(__file__).parent / f"config.yaml",
         (Path(__file__).parent / f"config{f'-w{width}'}.yaml") if width > 0 else "",
     ]
-    cli = launch_thundeRL(
+    cli = launch_panorama(
         ["fit"]
         + [f"--config {config_file}" for config_file in config_files if config_file],
         mock.training_step_mock,

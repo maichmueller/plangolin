@@ -14,7 +14,7 @@ from torch_geometric.data import Batch
 
 from plangolin.logging_setup import get_logger
 from plangolin.models.pyg_module import PyGHeteroModule, PyGModule
-from plangolin.rl.thundeRL.validation import ValidationCallback
+from plangolin.rl.panorama.validation import ValidationCallback
 
 
 class ValueLearningLitModule(lightning.LightningModule):

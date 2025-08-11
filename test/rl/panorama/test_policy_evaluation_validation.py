@@ -11,8 +11,8 @@ from tensordict import TensorDict
 from torch import Tensor
 
 from plangolin.rl.envs import ExpandedStateSpaceEnv
+from plangolin.rl.panorama.validation import PolicyEvaluationValidation
 from plangolin.rl.reward import UnitReward
-from plangolin.rl.thundeRL.validation import PolicyEvaluationValidation
 from xmimir.iw import IWSearch, IWStateSpace
 
 

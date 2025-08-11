@@ -23,14 +23,14 @@ from lightning.pytorch.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADER
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torch_geometric.loader import ImbalancedSampler
 
-import plangolin.rl.thundeRL.collate as collate  # noqa: F401
+import plangolin.rl.panorama.collate as collate  # noqa: F401
 from plangolin.encoding import GraphEncoderBase
 from plangolin.logging_setup import get_logger
 from plangolin.rl.data import BaseDrive, FlashDrive
 from plangolin.rl.data_layout import InputData
 from plangolin.rl.envs import ExpandedStateSpaceEnv, LazyEnvLookup
+from plangolin.rl.panorama.collate import StatefulCollater
 from plangolin.rl.reward import RewardFunction
-from plangolin.rl.thundeRL.collate import StatefulCollater
 from plangolin.utils.misc import env_aware_cpu_count
 from xmimir import Domain
 from xmimir.iw import IWStateSpace
@@ -40,7 +40,7 @@ def set_sharing_strategy():
     torch.multiprocessing.set_sharing_strategy("file_system")
 
 
-class ThundeRLDataModule(LightningDataModule):
+class PanoramaDataModule(LightningDataModule):
     def __init__(
         self,
         input_data: InputData,

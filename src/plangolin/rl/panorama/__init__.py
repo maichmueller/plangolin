@@ -1,6 +1,6 @@
-from .cli_config import ThundeRLCLI
+from .cli_config import PanoramaCLI
 from .collate import to_transitions_batch
-from .data_module import ThundeRLDataModule
+from .data_module import PanoramaDataModule
 from .policy_gradient import PolicyGradientLitModule
 from .policy_gradient.cli import CLI as PolicyGradientCLI
 from .policy_gradient.cli import EvalCLI as PolicyGradientEvalCLI

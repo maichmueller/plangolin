@@ -34,9 +34,9 @@ Here, the agent learns by loading environment data on demand from a dataset,
 essentially turning the RL problem into a hybrid supervised-RL learning problem:
 RL update rules, but supervised data loading.
 
-The implementation is found in the `plangolin.rl.thundeRL` module of this library,
+The implementation is found in the `plangolin.rl.panorama` module of this library,
 utilizing `pytorch-lightning` for vastly faster training and evaluation.
-See `docs/thundeRL/README.md` for further details on this.
+See `docs/panorama/README.md` for further details on this.
 
 See the `examples` directory for example usage of the library for both directions.
 

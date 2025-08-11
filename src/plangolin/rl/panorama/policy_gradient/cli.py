@@ -27,16 +27,16 @@ from plangolin.rl.losses import (  # noqa: F401
     CriticLoss,
 )
 from plangolin.rl.losses.all_actions_estimator import KeyBasedProvider
-from plangolin.rl.thundeRL.cli_config import *
-from plangolin.rl.thundeRL.policy_gradient.lit_module import (
+from plangolin.rl.panorama.cli_config import *
+from plangolin.rl.panorama.policy_gradient.lit_module import (
     ActorCriticAgentMaker,
     PolicyGradientLitModule,
 )
-from plangolin.rl.thundeRL.utils import wandb_id_resolver
+from plangolin.rl.panorama.utils import wandb_id_resolver
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
-from plangolin.rl.thundeRL.validation import (  # noqa: F401
+from plangolin.rl.panorama.validation import (  # noqa: F401
     CriticValidation,
     PolicyEntropy,
     PolicyValidation,
@@ -171,7 +171,7 @@ class Collater:
     exclude_keys: Optional[List[str]] = None
 
 
-class CLI(ThundeRLCLI):
+class CLI(PanoramaCLI):
     def __init__(
         self,
         *args,

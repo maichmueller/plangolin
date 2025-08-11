@@ -8,12 +8,12 @@ from torchrl.envs.utils import set_exploration_type
 
 from plangolin.rl.embedding import NonTensorTransformedEnv
 from plangolin.rl.envs import PlanningEnvironment, SuccessorEnvironment
+from plangolin.rl.panorama.policy_gradient.cli import TestSetup
 from plangolin.rl.reward import RewardFunction
 from plangolin.rl.search.env_transforms import (
     CycleAvoidingTransform,
     NoTransitionTruncationTransform,
 )
-from plangolin.rl.thundeRL.policy_gradient.cli import TestSetup
 from plangolin.utils.plan import Plan, ProbabilisticPlan, analyze_cycles, compute_return
 from xmimir import XProblem, XState, XSuccessorGenerator, iw
 

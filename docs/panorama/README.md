@@ -1,7 +1,7 @@
-## ThundeRL
+## Panorama
 
-- Located in `plangolin/rl/thundeRL`
-- Entrypoint found at `plangolin/rl/thundeRL/entrypoint.py`
+- Located in `plangolin/rl/panorama`
+- Entrypoint found at `plangolin/rl/panorama/entrypoint.py`
 - Optimized RL approach based on the assumption of **small training problems**: The problems are small enough to be fully enumerated as
    state space. For example, Blocksworld only has blocks objects, hence predicates scale only with the number of blocks given. The number of states that can be enumerated scales as the following:
   - 4 blocks:     125 states
@@ -44,7 +44,7 @@ interaction.
     5. The done flag for each successor state.
 2. **Training Loop**
     - Iterate over each state of each training problem once per epoch.
-    - Use a custom collate function (`thundeRL.collate.collate_fn`) to create batches by
+    - Use a custom collate function (`panorama.collate.collate_fn`) to create batches by
       flattening successor states into a single batch object.
     - Run the agent using `PolicyGradientModule`:
         1. Compute the embeddings of the current states and successor states with
@@ -63,7 +63,7 @@ interaction.
         - `ProbsStoreCallback`: Store transition probabilities for each state for later
           analysis.
 4. **Testing**: Test the agent behavior on a set of test problems
-   using `plangolin.rl.thundeRL.eval.py`.
+   using `plangolin.rl.panorama.eval.py`.
 
 #### Additional benefits
 
@@ -77,8 +77,8 @@ Store the config files below e.g. in `my_experiment/config.yaml` and `my_experim
 Then run the following command:
 
 ```bash
-python -m plangolin.rl.thundeRL.entrypoint
---cli plangolin.rl.thundeRL.policy_gradient.CLI
+python -m plangolin.rl.panorama.entrypoint
+--cli plangolin.rl.panorama.policy_gradient.CLI
 --config my_experiment/config.yaml
 --config my_experiment/data.yaml
 ```

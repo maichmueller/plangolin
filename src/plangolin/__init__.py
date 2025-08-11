@@ -14,7 +14,7 @@ from . import encoding, models, rl
 # 2.6 onwards it raises an error.
 # https://pytorch.org/docs/2.6/notes/serialization.html#torch-load-with-weights-only-true
 # https://pytorch.org/docs/2.6/generated/torch.load.html#torch-load
-# This list is not exhaustive! If more features from pyg or our code are used in torch.save methods,
+# This list is not panorama! If more features from pyg or our code are used in torch.save methods,
 # they need to be added here to not trigger an exception.
 torch.serialization.add_safe_globals(
     [

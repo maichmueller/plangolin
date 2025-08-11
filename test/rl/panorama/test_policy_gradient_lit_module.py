@@ -8,8 +8,8 @@ from torchrl.objectives import ValueEstimators
 from plangolin.models import PyGHeteroModule, RelationalGNN
 from plangolin.rl.agents import ActorCritic
 from plangolin.rl.losses import ActorCriticLoss
-from plangolin.rl.thundeRL import PolicyGradientLitModule
-from plangolin.rl.thundeRL.collate import to_transitions_batch
+from plangolin.rl.panorama import PolicyGradientLitModule
+from plangolin.rl.panorama.collate import to_transitions_batch
 from plangolin.utils.object_embeddings import ObjectEmbedding, ObjectPoolingModule
 
 

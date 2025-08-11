@@ -14,7 +14,7 @@ encoder:
   class_path: HeteroGraphEncoder
 
 collate:
-  func: plangolin.rl.thundeRL.to_transitions_batch
+  func: plangolin.rl.panorama.to_transitions_batch
 
 reward:
   class_path: FlatReward

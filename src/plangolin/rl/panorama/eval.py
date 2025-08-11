@@ -19,12 +19,12 @@ import xmimir
 from plangolin.encoding import EncoderFactory
 from plangolin.logging_setup import get_logger, null_logger, tqdm
 from plangolin.rl.data_layout import InputData, OutputData
+from plangolin.rl.panorama import PanoramaCLI
+from plangolin.rl.panorama.policy_gradient.cli import TestSetup
+from plangolin.rl.panorama.utils import default_checkpoint_format, resolve_checkpoints
 from plangolin.rl.reward import RewardFunction
 from plangolin.rl.search.agent_maker import AgentMaker
 from plangolin.rl.search.model_search import ModelSearch
-from plangolin.rl.thundeRL import ThundeRLCLI
-from plangolin.rl.thundeRL.policy_gradient.cli import TestSetup
-from plangolin.rl.thundeRL.utils import default_checkpoint_format, resolve_checkpoints
 from plangolin.utils.misc import DummyPbar, env_aware_cpu_count
 from plangolin.utils.plan import Plan, ProbabilisticPlan
 from plangolin.utils.system import exit_if_orphaned, increase_resource_limit
@@ -225,7 +225,7 @@ def _evaluate_checkpoint(
 
 
 def eval_model(
-    cli: ThundeRLCLI,
+    cli: PanoramaCLI,
     num_workers: int = 0,
     progress_bar: bool = True,
     detail_level: int = 0,

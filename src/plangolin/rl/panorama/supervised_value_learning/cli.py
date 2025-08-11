@@ -6,7 +6,7 @@ from lightning.pytorch.cli import OptimizerCallable
 
 # avoids specifying full class_path for model.gnn in cli
 from plangolin.models import RelationalGNN, VanillaGNN  # noqa: F401
-from plangolin.rl.thundeRL.cli_config import *
+from plangolin.rl.panorama.cli_config import *
 from xmimir.iw import IWSearch, IWStateSpace  # noqa: F401,F403
 
 from .lit_module import ValueLearningLitModule
@@ -49,7 +49,7 @@ class WandbExtraParameter:
     log_code: bool = False  # whether to save the code as wandb artifact
 
 
-class ValueLearningCLI(ThundeRLCLI):
+class ValueLearningCLI(PanoramaCLI):
     def __init__(
         self,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
@@ -67,7 +67,7 @@ class ValueLearningCLI(ThundeRLCLI):
     ) -> None:
         super().__init__(
             ValueLearningLitModule,
-            ThundeRLDataModule,
+            PanoramaDataModule,
             save_config_callback,
             save_config_kwargs,
             trainer_class,

@@ -27,9 +27,9 @@ from plangolin.rl.data import *  # noqa: F401
 # avoids specifying full class_path for model.gnn in cli
 from plangolin.rl.data_layout import InputData, OutputData
 from plangolin.rl.losses import *  # noqa: F401
+from plangolin.rl.panorama.data_module import PanoramaDataModule
+from plangolin.rl.panorama.validation import *  # noqa: F401
 from plangolin.rl.reward import *  # noqa: F401
-from plangolin.rl.thundeRL.data_module import ThundeRLDataModule
-from plangolin.rl.thundeRL.validation import *  # noqa: F401
 
 # Import before the cli makes it possible to specify only the class and not the
 # full class path for model.validation_hooks in the cli config.
@@ -64,11 +64,11 @@ class ValueEstimatorConfig:
         self.estimator_type = estimator_type
 
 
-class ThundeRLCLI(LightningCLI):
+class PanoramaCLI(LightningCLI):
     def __init__(
         self,
         lit_module_class: Type[lightning.LightningModule],
-        lit_data_module_class: Type[lightning.LightningDataModule] = ThundeRLDataModule,
+        lit_data_module_class: Type[lightning.LightningDataModule] = PanoramaDataModule,
         save_config_callback: Optional[Type[SaveConfigCallback]] = SaveConfigCallback,
         save_config_kwargs: Optional[Dict[str, Any]] = None,
         trainer_class: Union[Type[Trainer], Callable[..., Trainer]] = Trainer,
@@ -220,9 +220,9 @@ class ThundeRLCLI(LightningCLI):
 
     @final
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        # while we are not at the root of CLI dependency (ThundeRLCLI), we ask all parents to define their arguments
+        # while we are not at the root of CLI dependency (PanoramaCLI), we ask all parents to define their arguments
         # also note: super() is not used here, as we want to call the parent class of `self`, not the
-        # parent class of ThundeRLCLI.
+        # parent class of PanoramaCLI.
         classes = [
             cls
             for cls in type(self).mro()

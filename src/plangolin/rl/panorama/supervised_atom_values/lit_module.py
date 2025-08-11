@@ -26,8 +26,8 @@ from plangolin.rl.embedding import NonTensorTransformedEnv
 from plangolin.rl.embedding.embedding_module import EncodingModule
 from plangolin.rl.embedding.transform import EncodingTransform
 from plangolin.rl.envs import PlanningEnvironment
+from plangolin.rl.panorama.validation import ValidationCallback
 from plangolin.rl.search.agent_maker import AgentMaker
-from plangolin.rl.thundeRL.validation import ValidationCallback
 from plangolin.utils.inference_worker import (
     InferenceProcessWorker,
     LoadWeights,
