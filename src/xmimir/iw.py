@@ -21,8 +21,38 @@ from typing import (
 import torch
 from multimethod import multimethod
 
-from plangolin.logging_setup import get_logger, tqdm
-from plangolin.utils.misc import KeyAwareDefaultDict, env_aware_cpu_count, return_true
+
+# lazy imports to avoid cross-package circular imports with `plangolin`
+def _get_logger():
+    try:
+        from plangolin.logging_setup import get_logger as _gl
+
+        return _gl
+    except Exception:
+        import logging
+
+        return lambda name: logging.getLogger(name)
+
+
+def _tqdm(iterable, **kwargs):
+    try:
+        from plangolin.logging_setup import tqdm as _t
+
+        return _t(iterable, **kwargs)
+    except Exception:
+        return iterable
+
+
+def _env_aware_cpu_count():
+    try:
+        from plangolin.utils.misc import env_aware_cpu_count as _eac
+
+        return _eac()
+    except Exception:
+        import os
+
+        return os.cpu_count()
+
 
 # from .extensions import *
 from .wrappers import *
@@ -322,6 +352,10 @@ class CollectorHook:
         self.nodes.append(node)
 
 
+def return_true(*args, **kwargs) -> bool:
+    return True
+
+
 class IWSearch:
     """
     Performs an Iterative Width Search IW(k) of a specific expansion strategy and width k.
@@ -367,8 +401,10 @@ class IWSearch:
         atom_tuples_to_avoid: Iterable[tuple[XAtom, ...]] | None = None,
         novel_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
         goal_hook: Callable[[ExpansionNode], None] = lambda *a, **kw: ...,
-        expansion_budget: Callable[[int], bool] = return_true,
+        expansion_budget: Callable[[int], bool] | None = None,
     ) -> List[ExpansionNode]:
+        if expansion_budget is None:
+            expansion_budget = return_true
         if novelty_condition is None:
             novelty_condition = Novelty(self.width, successor_generator.problem)
 
@@ -530,7 +566,7 @@ def _check_timeout(
     if nr_transitions >= max_transitions or elapsed >= max_time:
         hours = elapsed.total_seconds() / 3600
         minutes = int((hours % 1) * 60)
-        get_logger(__name__).info(
+        _get_logger()(__name__).info(
             f"Stopping Criterion reached for instance {problem_name}. "
             f"Transition buffer size: {nr_transitions} / {max_transitions}, "
             f"time elapsed: {hours}h {minutes}m "
@@ -640,10 +676,9 @@ class IWStateSpace(XStateSpace):
         self.max_time = max_time
         self.chunk_size = chunk_size
         self.pbar = pbar
+        available_cpus = _env_aware_cpu_count()
         self.n_cpus = (
-            min(n_cpus, env_aware_cpu_count())
-            if n_cpus != "auto"
-            else env_aware_cpu_count()
+            min(n_cpus, available_cpus) if n_cpus != "auto" else available_cpus
         )
         if self._serialized_transitions:
             for state in self:
@@ -716,7 +751,7 @@ class IWStateSpace(XStateSpace):
             self._build()
             return
 
-        num_workers = min(env_aware_cpu_count(), self.n_cpus, len(chunks))
+        num_workers = min(_env_aware_cpu_count(), self.n_cpus, len(chunks))
         for state in self:
             self.iw_fwd_transitions[state] = []
             self.iw_bkwd_transitions[state] = []
@@ -738,7 +773,7 @@ class IWStateSpace(XStateSpace):
         ) as executor:
             iterable = executor.map(IWStateSpace.worker_build_transitions, chunks)
             progress_iterable = (
-                tqdm(
+                _tqdm(
                     iterable,
                     total=len(chunks),
                     desc=f"Building IWStateSpace({Path(self.problem.filepath).stem}) - #Proc: {num_workers}",
@@ -780,7 +815,7 @@ class IWStateSpace(XStateSpace):
         iterable = enumerate(self)
         for i, state in (
             pbar := (
-                tqdm(
+                _tqdm(
                     iterable,
                     desc=f"Building IWStateSpace({Path(self.problem.filepath).stem})",
                     total=len(self),
@@ -911,6 +946,8 @@ class IWStateSpace(XStateSpace):
         if heuristic is None:
             if start.semantic_eq(self.initial_state):
                 # If the start state is the initial state, we can use the precomputed distances.
+                from plangolin.utils.misc import KeyAwareDefaultDict
+
                 heuristic = KeyAwareDefaultDict(
                     lambda index: self.state_info[self[index]].distance_from_initial
                 )
@@ -925,7 +962,7 @@ class IWStateSpace(XStateSpace):
         )
 
     def shortest_forward_distances_from_state(self, state: int | XState) -> list[float]:
-        get_logger(__name__).warning(
+        _get_logger()(__name__).warning(
             "The method `shortest_forward_distances_from_state` uses primitive action distances."
         )
         return super().shortest_forward_distances_from_state(state)
@@ -1044,8 +1081,8 @@ if __name__ == "__main__":
         # IWSearch(2),
         IWSearch(2, depth_1_is_novel=False),
         state_space,
-        # n_cpus=mp.cpu_count(),
-        n_cpus=1,
+        n_cpus=_env_aware_cpu_count(),
+        # n_cpus=1,
         chunk_size=300,
     )
     elapsed = datetime.fromtimestamp(time.time()) - start_time
