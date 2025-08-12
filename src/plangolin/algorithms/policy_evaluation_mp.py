@@ -214,27 +214,30 @@ class OptimalPolicyMP(ValueIterationMP):
 
     def __init__(
         self,
-        *args,
-        aggr=None,
         value_iteration_mp: Optional[ValueIterationMP] = None,
-        num_iterations: int = 1,  # a single iteration is enough
-        difference_threshold: float | None = None,  # not used
+        *args,
         **kwargs,
     ):
-        super().__init__(
+        super().__init__(1.0)
+        self.value_iteration_mp = value_iteration_mp or ValueIterationMP(
             *args,
-            aggr=aggr,
-            num_iterations=num_iterations,
-            difference_threshold=difference_threshold,
             **kwargs,
         )
-        self.value_iteration_mp = value_iteration_mp or ValueIterationMP(self.gamma)
+        self._is_first_iter = True
 
-    def _iterate(self, data: pyg.data.Data) -> Tensor:
+    def _reset(self):
         """
-        Not implemented: this method is intentionally left as documentation. The class currently relies on the
-        parent `MessagePassing` machinery with a single greedy backup and does not compute argmax indices.
+        Reset the internal state of the module.
         """
+        self._is_first_iter = True
+
+    def _break_condition(
+        self, layer_nr: int, features: Tensor, new_features: Tensor, **kwargs
+    ) -> bool:
+        # we only run one iteration, so we always break
+        first_iter = self._is_first_iter
+        self._is_first_iter = False
+        return not first_iter
 
     def _init_features(self, data):
         return self.value_iteration_mp(data)
@@ -246,9 +249,90 @@ class OptimalPolicyMP(ValueIterationMP):
         ptr: Optional[Tensor] = None,
         dim_size: Optional[int] = None,
     ) -> Tensor:
-        return torch.empty_like(inputs).scatter_reduce(
-            0, index, inputs, reduce="amax", include_self=False
+        """
+        Return per-node argmax **global message indices** for the backup scores in `inputs`.
+
+        Two passes:
+          1) node-wise max value;
+          2) among edges equal to that max, pick smallest global edge id (stable argmax).
+        Nodes with no incoming messages return -1.
+        """
+        if dim_size is None:
+            raise ValueError(
+                "dim_size must be provided to compute per-node argmax indices."
+            )
+
+        # this is the PyG way to compute argmax indices using pytorch_scatter's scatter_max. Unfortunately, pytorch
+        # scatter does not provide any argreduce functionality, so we have to implement it ourselves. In the future,
+        # I hope to replace the implementation below with a line like this from pure pytorch.
+        # TODO: replace with scatter_argmax or similar once pytorch supports argmax indices.
+        # _, argmax = scatter_max(inputs, index, dim=0, dim_size=dim_size)
+        # return argmax
+
+        # Accept [E] or [E,1] inputs -> squeeze to [E]
+        if inputs.ndim == 2 and inputs.size(1) == 1:
+            vals = inputs.squeeze()
+        elif inputs.ndim == 1:
+            vals = inputs
+        else:
+            raise ValueError(
+                f"Expected scalar per-edge inputs; got shape {tuple(inputs.shape)}"
+            )
+
+        # max per node
+        max_per_node = torch.full(
+            (dim_size,),
+            float("-inf"),
+            dtype=vals.dtype,
+            device=vals.device,
         )
+        max_per_node.scatter_reduce_(0, index, vals, reduce="amax", include_self=True)
+
+        # argmax via amin of masked edge ids
+        is_max = vals == max_per_node.index_select(0, index)
+        edge_ids = torch.arange(vals.numel(), device=index.device, dtype=torch.long)
+        long_max = torch.iinfo(torch.long).max
+        masked_ids = torch.where(is_max, edge_ids, torch.full_like(edge_ids, long_max))
+
+        arg_idx = torch.full(
+            (dim_size,), long_max, dtype=torch.long, device=index.device
+        )
+        arg_idx.scatter_reduce_(0, index, masked_ids, reduce="amin", include_self=True)
+
+        # no-incoming edge -> -1
+        no_incoming = torch.isinf(max_per_node) & (max_per_node < 0)
+
+        # Convert global edge ids to per-state local ids (0..deg(s)-1)
+        out = arg_idx.clone()
+        out[no_incoming] = -1
+        valid = ~no_incoming
+        # Convert global edge ids to per-state local ids (0..deg(s)-1)
+        if valid.any():
+            if ptr is not None:
+                # Fast path with CSR pointers: local = global_edge_id - ptr[state]
+                state_ids = torch.arange(dim_size, device=out.device)
+                out[valid] = out[valid] - ptr[state_ids[valid]].to(out.dtype)
+            else:
+                # Derive local positions per edge even if edges are not grouped by state
+                nr_transitions = vals.numel()
+                order = torch.argsort(index, stable=True)
+                sorted_idx = index[order]
+                pos_sorted = torch.arange(nr_transitions, device=index.device)
+                first_pos_per_node = torch.full(
+                    (dim_size,), nr_transitions, dtype=torch.long, device=index.device
+                )
+                first_pos_per_node.scatter_reduce_(
+                    0, sorted_idx, pos_sorted, reduce="amin", include_self=True
+                )
+                local_sorted = pos_sorted - first_pos_per_node.index_select(
+                    0, sorted_idx
+                )
+                local_per_edge = torch.empty(
+                    nr_transitions, dtype=torch.long, device=index.device
+                )
+                local_per_edge[order] = local_sorted
+                out[valid] = local_per_edge[out[valid]]
+        return out
 
 
 # noinspection PyMethodOverriding, PyAbstractClass
