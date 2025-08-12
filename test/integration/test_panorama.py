@@ -225,6 +225,7 @@ def _validate_done_reward_num_transitions(
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("width", [0, 1, 2])
 def test_full_epoch_data_collection(tmp_path, width):
     """Run a full epoch of the training setup including small and medium blocks.

@@ -1291,9 +1291,7 @@ class XStateSpace(MimirWrapper[StateSpace], Sequence[XState]):
         forward: bool = True,
     ) -> list[XTransition]:
         """
-        A* from the initial state to `target`, using
-            h(s) = max(0, dists_from_start[target.index] - dists_from_start[s.index])
-        which by the directed‐graph triangle inequality never overestimates cost(s→target).
+        A* from the initial state to `target`, using heuristic h(s.index) to guide the search.
 
         Parameters
         ----------

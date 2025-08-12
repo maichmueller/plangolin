@@ -90,6 +90,7 @@ def _expected_optimal_atom_values(space, state=None) -> dict[int, dict[XAtom, fl
     return expected_values
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("problem", "fresh_atomdrive"),
     [
@@ -106,6 +107,7 @@ def test_process(problem, fresh_atomdrive, request):
     validate_drive(fresh_atomdrive, problem[0])
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("problem", "fresh_atomdrive"),
     [

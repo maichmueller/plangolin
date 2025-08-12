@@ -73,7 +73,7 @@ class PlanningEnvironment(EnvBase, Generic[InstanceType], metaclass=abc.ABCMeta)
         terminated: NestedKey = "terminated"
         truncated: NestedKey = "truncated"
 
-    default_keys = AcceptedKeys()
+    default_keys: AcceptedKeys = AcceptedKeys()
 
     def __init__(
         self,
